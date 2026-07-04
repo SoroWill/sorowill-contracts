@@ -68,7 +68,7 @@ cargo clippy --all-targets
 
 ## Testnet Deployment
 
-The deployed contract ID for Stellar Testnet is recorded in [`deployments/testnet.json`](./deployments/testnet.json) and updated automatically by the `deploy-testnet` CI workflow on every push to `main`:
+The deployed contract ID for Stellar Testnet is recorded in [`deployments/testnet.json`](./deployments/testnet.json), updated manually whenever a new version is deployed:
 
 ```json
 {
