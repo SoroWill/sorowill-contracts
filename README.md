@@ -7,6 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Stellar Testnet](https://img.shields.io/badge/Stellar-Testnet-08b5e5?logo=stellar)](https://developers.stellar.org/docs/networks)
 
+**Live app: [sorowill.vercel.app](https://sorowill.vercel.app/)**
+
 ## What is SoroWill
 
 SoroWill is a trustless, on-chain inheritance protocol for Stellar Soroban. It lets anyone lock USDC (or any SEP-41 compliant token) into a smart contract, name beneficiaries with percentage splits, and set a check-in period. If the owner stops checking in, the contract automatically releases the funds to the beneficiaries after a grace period — no lawyer, no court, no middleman.
@@ -41,7 +43,7 @@ rustup target add wasm32v1-none
 cargo install --locked stellar-cli --features opt
 
 # Clone and test
-git clone git@github-icentedward76:icentedward76-sketch/sorowill-contracts.git
+git clone https://github.com/SoroWill/sorowill-contracts.git
 cd sorowill-contracts
 cargo test
 cargo clippy --all-targets
