@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "SoroWill: trustless on-chain inheritance and dead man's switch protocol for Stellar Soroban"
-repository = "https://github.com/icentedward76-sketch/sorowill-contracts"
+repository = "https://github.com/SoroWill/sorowill-contracts"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

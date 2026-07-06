@@ -1,3 +1,5 @@
+<img src="./docs/logo.svg" alt="SoroWill" width="56" height="56" />
+
 # SoroWill Contracts
 
 **Trustless on-chain inheritance on Stellar Soroban**
