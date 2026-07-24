@@ -365,6 +365,26 @@ fn test_top_up_increases_balance() {
 
     client.top_up(&will_id, &owner, &500_000);
 
+    use soroban_sdk::{testutils::Events, symbol_short, TryIntoVal};
+    let events = env.events().all();
+    let mut found = false;
+    for event in events.iter() {
+        if !event.1.is_empty() {
+            if let Ok(topic0) = event.1.get(0).unwrap().try_into_val(&env) {
+                let topic0_sym: soroban_sdk::Symbol = topic0;
+                if topic0_sym == symbol_short!("topup") {
+                    found = true;
+                    assert_eq!(event.0, client.address.clone());
+                    let topic1: u64 = event.1.get(1).unwrap().try_into_val(&env).unwrap();
+                    assert_eq!(topic1, will_id);
+                    let data: (Address, i128, i128) = event.2.try_into_val(&env).unwrap();
+                    assert_eq!(data, (owner.clone(), 500_000_i128, 1_500_000_i128));
+                }
+            }
+        }
+    }
+    assert!(found, "topup event not found");
+
     let will = client.get_will(&will_id);
     assert_eq!(will.balance, 1_500_000);
 }
