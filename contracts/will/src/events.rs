@@ -71,6 +71,14 @@ pub fn beneficiaries_updated(env: &Env, will_id: u64, owner: &Address) {
         .publish((symbol_short!("benefup"), will_id), owner.clone());
 }
 
+/// Published when the owner tops up the will's balance.
+pub fn top_up(env: &Env, will_id: u64, owner: &Address, amount: i128, new_balance: i128) {
+    env.events().publish(
+        (symbol_short!("topup"), will_id),
+        (owner.clone(), amount, new_balance),
+    );
+}
+
 /// Published each time a guardian votes to trigger an early release.
 pub fn guardian_voted(env: &Env, will_id: u64, guardian: &Address, votes_so_far: u32) {
     env.events().publish(
