@@ -16,7 +16,7 @@ use soroban_sdk::{
 
 use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
-const DAY: u64 = 86_400;
+
 
 fn setup<'a>() -> (Env, WillContractClient<'a>, Address, Address) {
     let env = Env::default();
@@ -32,10 +32,6 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, Address) {
     let client = WillContractClient::new(&env, &contract_id);
 
     (env.clone(), client, owner, token_address)
-}
-
-fn advance(env: &Env, days: u64) {
-    env.ledger().with_mut(|l| l.timestamp += days * DAY);
 }
 
 /// Regression test for issue #187: `merge_wills` should decrement the active

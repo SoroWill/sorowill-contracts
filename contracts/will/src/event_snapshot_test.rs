@@ -740,7 +740,7 @@ fn test_multi_token_event_snapshot_with_mixed_allocations() {
         },
     ];
 
-    let tokens = vec![
+    let _tokens = vec![
         &env,
         (token_a.clone(), 2_000_000_i128),
         (token_b.clone(), 1_500_000_i128),
