@@ -16,7 +16,7 @@ use soroban_sdk::{
 
 use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
-const DAY: u64 = 86_400;
+
 
 fn setup<'a>() -> (Env, WillContractClient<'a>, Address, Address) {
     let env = Env::default();
@@ -32,10 +32,6 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, Address) {
     let client = WillContractClient::new(&env, &contract_id);
 
     (env.clone(), client, owner, token_address)
-}
-
-fn advance(env: &Env, days: u64) {
-    env.ledger().with_mut(|l| l.timestamp += days * DAY);
 }
 
 /// Regression test for issue #187: `merge_wills` should decrement the active
@@ -57,7 +53,7 @@ fn merge_wills_decrements_active_count() {
     let stats_before = client.get_protocol_stats();
     assert_eq!(stats_before.active_will_count, 2, "should have 2 active wills");
 
-    client.merge_wills(&will_id_a, &will_id_b, &owner);
+    client.merge_wills(&owner, &will_id_a, &will_id_b);
 
     let stats_after = client.get_protocol_stats();
     assert_eq!(
@@ -85,14 +81,38 @@ fn merge_wills_multiple_decrements() {
     let stats_start = client.get_protocol_stats();
     assert_eq!(stats_start.active_will_count, 3, "should have 3 active wills");
 
-    client.merge_wills(&will_1, &will_2, &owner);
+    client.merge_wills(&owner, &will_1, &will_2);
     let stats_after_first = client.get_protocol_stats();
     assert_eq!(stats_after_first.active_will_count, 2, "after first merge, should have 2 active wills");
 
-    client.merge_wills(&will_1, &will_3, &owner);
+    client.merge_wills(&owner, &will_1, &will_3);
     let stats_after_second = client.get_protocol_stats();
     assert_eq!(
         stats_after_second.active_will_count, 1,
         "after second merge, should have 1 active will"
     );
+}
+
+#[test]
+fn merge_wills_rejects_different_owners() {
+    let (env, client, owner_a, token_address) = setup();
+    let owner_b = Address::generate(&env);
+    StellarAssetClient::new(&env, &token_address).mint(&owner_b, &1_000_000_000);
+
+    let beneficiary = Address::generate(&env);
+    let beneficiaries: SorobanVec<Beneficiary> = vec![
+        &env,
+        Beneficiary {
+            address: beneficiary,
+            allocation: Allocation::Percentage(10_000),
+        },
+    ];
+    let tokens_a: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 100_000)];
+    let tokens_b: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 100_000)];
+
+    let will_a = client.create_will(&owner_a, &tokens_a, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_b = client.create_will(&owner_b, &tokens_b, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+
+    let res = client.try_merge_wills(&owner_a, &will_a, &will_b);
+    assert_eq!(res, Err(Ok(crate::WillError::NotSameOwner.into())));
 }

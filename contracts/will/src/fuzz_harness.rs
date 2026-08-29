@@ -463,7 +463,7 @@ fn assert_created_will(
         check(
             scenario
                 .client
-                .get_wills_by_beneficiary(&beneficiary.address)
+                .get_wills_by_beneficiary(&beneficiary.address, &None, &100)
                 .iter()
                 .any(|indexed| indexed.id == will_id),
             input,
@@ -561,7 +561,7 @@ pub fn run_update_beneficiaries(input: &UpdateBeneficiariesInput) -> Vec<Outcome
             check(
                 scenario
                     .client
-                    .get_wills_by_beneficiary(&beneficiary.address)
+                    .get_wills_by_beneficiary(&beneficiary.address, &None, &100)
                     .iter()
                     .any(|indexed| indexed.id == neighbour_id),
                 input,
@@ -675,7 +675,7 @@ fn assert_updated_beneficiaries(
         check(
             scenario
                 .client
-                .get_wills_by_beneficiary(&beneficiary.address)
+                .get_wills_by_beneficiary(&beneficiary.address, &None, &100)
                 .iter()
                 .any(|indexed| indexed.id == will_id),
             input,
@@ -696,7 +696,7 @@ fn assert_updated_beneficiaries(
         check(
             !scenario
                 .client
-                .get_wills_by_beneficiary(&old.address)
+                .get_wills_by_beneficiary(&old.address, &None, &100)
                 .iter()
                 .any(|indexed| indexed.id == will_id),
             input,

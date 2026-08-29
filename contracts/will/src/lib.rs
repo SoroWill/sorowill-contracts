@@ -108,13 +108,19 @@ mod merge_rounding_test;
 #[cfg(test)]
 mod merge_fixed_amount_test;
 
+#[cfg(test)]
+mod archive_will_test;
+
+#[cfg(test)]
+mod entrypoint_coverage_test;
+
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Bytes, Env, Map, Vec,
 };
 
 pub use errors::WillError;
 pub use types::{
-    Allocation, Beneficiary, Guardian, GuardianVoteReason, HashedBeneficiary, ProtocolStats, Will,
+    Allocation, Beneficiary, Guardian, GuardianConsent, GuardianVoteReason, HashedBeneficiary, ProtocolStats, Will,
     WillStatus, WillStatusTransition,
 };
 
@@ -2030,7 +2036,10 @@ impl WillContract {
         }
 
         let mut will_a = load_owned(&env, will_id_a, &owner);
-        let mut will_b = load_owned(&env, will_id_b, &owner);
+        let mut will_b = load_will(&env, will_id_b);
+        if will_b.owner != owner {
+            panic_with_error!(&env, WillError::NotSameOwner);
+        }
 
         assert_status(&env, &will_a, WillStatus::Active, WillError::WillNotBothActive);
         assert_status(&env, &will_b, WillStatus::Active, WillError::WillNotBothActive);
@@ -2842,7 +2851,7 @@ fn merge_beneficiaries(env: &Env, will_a: &Will, will_b: &Will) -> Vec<Beneficia
             for (addr, existing_alloc) in beneficiary_allocations.iter() {
                 if addr == beneficiary.address {
                     // If either the existing or new allocation is FixedAmount, preserve it
-                    let merged_alloc = match (existing_alloc, beneficiary.allocation) {
+                    let merged_alloc = match (existing_alloc.clone(), beneficiary.allocation.clone()) {
                         (Allocation::FixedAmount(amt_a), Allocation::FixedAmount(amt_b)) => {
                             Allocation::FixedAmount(amt_a + amt_b)
                         },
@@ -2862,7 +2871,7 @@ fn merge_beneficiaries(env: &Env, will_a: &Will, will_b: &Will) -> Vec<Beneficia
                 beneficiary_allocations = updated_allocations;
             } else {
                 beneficiary_shares.push_back((beneficiary.address.clone(), share));
-                beneficiary_allocations.push_back((beneficiary.address.clone(), beneficiary.allocation));
+                beneficiary_allocations.push_back((beneficiary.address.clone(), beneficiary.allocation.clone()));
             }
         }
     }
@@ -2872,18 +2881,16 @@ fn merge_beneficiaries(env: &Env, will_a: &Will, will_b: &Will) -> Vec<Beneficia
     // Preserve FixedAmount allocations where applicable.
     let mut merged_beneficiaries: Vec<Beneficiary> = Vec::new(env);
     let mut total_bp: u32 = 0;
-    let mut total_fixed: i128 = 0;
     let count = beneficiary_shares.len();
 
     for (i, (addr, share)) in beneficiary_shares.iter().enumerate() {
         // Find the original allocation type for this beneficiary
         let original_allocation = beneficiary_allocations.iter()
-            .find(|(a, _)| a == addr)
+            .find(|(a, _)| a == &addr)
             .map(|(_, alloc)| alloc);
 
         let allocation = match original_allocation {
             Some(Allocation::FixedAmount(amt)) => {
-                total_fixed += amt;
                 Allocation::FixedAmount(amt)
             },
             _ => {

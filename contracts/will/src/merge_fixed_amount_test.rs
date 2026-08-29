@@ -14,7 +14,7 @@ use soroban_sdk::{
     vec, Address, Env, Vec as SorobanVec,
 };
 
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatus};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
 const DAY: u64 = 86_400;
 
@@ -84,7 +84,7 @@ fn merge_preserves_fixed_amount_allocation() {
     let will_a = client.create_will(&owner, &will_a_tokens, &will_a_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
     let will_b = client.create_will(&owner, &will_b_tokens, &will_b_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
 
-    client.merge_wills(&will_a, &will_b, &owner);
+    client.merge_wills(&owner, &will_a, &will_b);
 
     // Check that the merged will has both beneficiaries
     let merged_will = client.get_will(&will_a);
@@ -131,19 +131,19 @@ fn merge_preserves_all_fixed_amounts() {
         Beneficiary { address: fixed_a.clone(), allocation: Allocation::FixedAmount(amount_a) },
         Beneficiary { address: fixed_b.clone(), allocation: Allocation::FixedAmount(amount_b) },
     ];
-    let will_1_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 500_000i128)];
+    let will_1_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 300_000i128)];
 
     let will_2_beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
         Beneficiary { address: fixed_a.clone(), allocation: Allocation::FixedAmount(amount_a) },
         Beneficiary { address: fixed_b.clone(), allocation: Allocation::FixedAmount(amount_b) },
     ];
-    let will_2_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 500_000i128)];
+    let will_2_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 300_000i128)];
 
     let will_1 = client.create_will(&owner, &will_1_tokens, &will_1_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
     let will_2 = client.create_will(&owner, &will_2_tokens, &will_2_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
 
-    client.merge_wills(&will_1, &will_2, &owner);
+    client.merge_wills(&owner, &will_1, &will_2);
 
     let merged_will = client.get_will(&will_1);
 

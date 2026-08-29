@@ -14,7 +14,7 @@ use soroban_sdk::{
     vec, Address, Env, Vec as SorobanVec,
 };
 
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatus};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
 const DAY: u64 = 86_400;
 
@@ -82,7 +82,7 @@ fn merge_beneficiaries_preserves_small_share() {
     let will_a = client.create_will(&owner, &will_a_tokens, &will_a_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
     let will_b = client.create_will(&owner, &will_b_tokens, &will_b_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
 
-    client.merge_wills(&will_a, &will_b, &owner);
+    client.merge_wills(&owner, &will_a, &will_b);
 
     release(&env, &client, will_a);
 
@@ -126,7 +126,7 @@ fn merge_multiple_small_shares_preserved() {
     let will_a = client.create_will(&owner, &will_a_tokens, &will_a_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
     let will_b = client.create_will(&owner, &will_b_tokens, &will_b_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
 
-    client.merge_wills(&will_a, &will_b, &owner);
+    client.merge_wills(&owner, &will_a, &will_b);
 
     release(&env, &client, will_a);
 
