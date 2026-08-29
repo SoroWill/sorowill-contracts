@@ -32,6 +32,10 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+      - name: Check CHANGELOG.md is updated with CONTRACT_VERSION changes
+        run: bash .github/scripts/check-changelog.sh
+        if: github.event_name == 'pull_request'
+
       # The contract is `no_std` for wasm and only links `std` under `cfg(test)`
       # or the `fuzzing` feature. Building for the real target keeps that split
       # honest — a `std` dependency leaking into the contract would pass the
