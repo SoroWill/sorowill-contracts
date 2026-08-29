@@ -78,12 +78,7 @@ pub fn emergency_checkin(env: &Env, will_id: u64, owner: &Address, next_deadline
 /// Published when inheritance is released to all beneficiaries.
 ///
 /// `token_count` is the number of distinct tokens distributed.
-pub fn inheritance_released(
-    env: &Env,
-    will_id: u64,
-    token_count: u32,
-    beneficiaries_count: u32,
-) {
+pub fn inheritance_released(env: &Env, will_id: u64, token_count: u32, beneficiaries_count: u32) {
     env.events().publish(
         (symbol_short!("released"), will_id),
         (token_count, beneficiaries_count),
@@ -171,12 +166,7 @@ pub fn guardian_cancel_voted(
 
 /// Published when guardian cancel-trigger votes reach quorum and the will is
 /// returned to `Active` status with a fresh check-in deadline.
-pub fn guardian_cancelled_trigger(
-    env: &Env,
-    will_id: u64,
-    guardian: &Address,
-    next_deadline: u64,
-) {
+pub fn guardian_cancelled_trigger(env: &Env, will_id: u64, guardian: &Address, next_deadline: u64) {
     env.events().publish(
         (symbol_short!("gcancel"), will_id),
         (guardian.clone(), next_deadline),
@@ -254,7 +244,12 @@ pub fn beneficiary_renounced(env: &Env, will_id: u64, beneficiary: &Address, own
 }
 
 /// Published when multiple will settings (beneficiaries, guardians, periods) are updated atomically.
-pub fn will_settings_updated(env: &Env, will_id: u64, owner: &Address, update_fields: &Vec<Symbol>) {
+pub fn will_settings_updated(
+    env: &Env,
+    will_id: u64,
+    owner: &Address,
+    update_fields: &Vec<Symbol>,
+) {
     env.events().publish(
         (symbol_short!("setupd"), will_id),
         (owner.clone(), update_fields.clone()),
@@ -263,10 +258,8 @@ pub fn will_settings_updated(env: &Env, will_id: u64, owner: &Address, update_fi
 
 /// Published when a keeper bounty is paid for calling trigger_will or release_inheritance.
 pub fn keeper_bounty_paid(env: &Env, will_id: u64, keeper: &Address, amount: i128) {
-    env.events().publish(
-        (symbol_short!("bounty"), will_id),
-        (keeper.clone(), amount),
-    );
+    env.events()
+        .publish((symbol_short!("bounty"), will_id), (keeper.clone(), amount));
 }
 
 /// Published when a will is split into two independent wills (issue #45).

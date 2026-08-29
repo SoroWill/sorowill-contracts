@@ -31,6 +31,23 @@ pub struct Beneficiary {
     pub allocation: Allocation,
 }
 
+/// Consent status of a guardian.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuardianConsent {
+    Pending,
+    Accepted,
+    Rejected,
+}
+
+/// Specification for adding a guardian with a custom vote weight.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuardianSpec {
+    pub address: Address,
+    pub weight: u32,
+}
+
 /// A guardian entry: an address paired with a vote weight and consent status.
 ///
 /// Guardians with higher weights count for more when reaching quorum.
@@ -109,8 +126,6 @@ pub struct ProtocolStats {
     /// Locked balances by token for all currently active wills.
     pub total_locked_by_token: Vec<TokenLockedBalance>,
 }
-
-
 
 /// A beneficiary's claimable share in a pull-based distribution.
 ///

@@ -47,17 +47,43 @@ fn merge_wills_decrements_active_count() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: beneficiary.clone(), allocation: Allocation::Percentage(10_000) },
+        Beneficiary {
+            address: beneficiary.clone(),
+            allocation: Allocation::Percentage(10_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 500_000_i128)];
 
-    let will_id_a = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
-    let will_id_b = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id_a = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
+    let will_id_b = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     let stats_before = client.get_protocol_stats();
-    assert_eq!(stats_before.active_will_count, 2, "should have 2 active wills");
+    assert_eq!(
+        stats_before.active_will_count, 2,
+        "should have 2 active wills"
+    );
 
-    client.merge_wills(&will_id_a, &will_id_b, &owner);
+    client.merge_wills(&owner, &will_id_a, &will_id_b);
 
     let stats_after = client.get_protocol_stats();
     assert_eq!(
@@ -74,22 +100,61 @@ fn merge_wills_multiple_decrements() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: beneficiary.clone(), allocation: Allocation::Percentage(10_000) },
+        Beneficiary {
+            address: beneficiary.clone(),
+            allocation: Allocation::Percentage(10_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 500_000_i128)];
 
-    let will_1 = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
-    let will_2 = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
-    let will_3 = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_1 = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
+    let will_2 = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
+    let will_3 = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     let stats_start = client.get_protocol_stats();
-    assert_eq!(stats_start.active_will_count, 3, "should have 3 active wills");
+    assert_eq!(
+        stats_start.active_will_count, 3,
+        "should have 3 active wills"
+    );
 
-    client.merge_wills(&will_1, &will_2, &owner);
+    client.merge_wills(&owner, &will_1, &will_2);
     let stats_after_first = client.get_protocol_stats();
-    assert_eq!(stats_after_first.active_will_count, 2, "after first merge, should have 2 active wills");
+    assert_eq!(
+        stats_after_first.active_will_count, 2,
+        "after first merge, should have 2 active wills"
+    );
 
-    client.merge_wills(&will_1, &will_3, &owner);
+    client.merge_wills(&owner, &will_1, &will_3);
     let stats_after_second = client.get_protocol_stats();
     assert_eq!(
         stats_after_second.active_will_count, 1,

@@ -41,8 +41,8 @@ use soroban_sdk::{
 };
 
 use crate::{
-    Allocation, Beneficiary, Will, WillContract, WillContractClient, WillStatus,
-    MAX_BENEFICIARIES, MAX_GUARDIANS, MAX_PERIOD_DAYS, SECONDS_PER_DAY,
+    Allocation, Beneficiary, Will, WillContract, WillContractClient, WillStatus, MAX_BENEFICIARIES,
+    MAX_GUARDIANS, MAX_PERIOD_DAYS, SECONDS_PER_DAY,
 };
 
 /// Number of distinct addresses the fuzzer picks from.
@@ -316,8 +316,10 @@ pub fn run_create_will(input: &CreateWillInput) -> Outcome {
     let scenario = Scenario::new(input.mint);
     let beneficiaries = to_beneficiaries(&scenario.env, &scenario.pool, &input.beneficiaries);
     let guardians = to_guardians(&scenario.env, &scenario.pool, &input.guardian_slots);
-    let tokens: SorobanVec<(Address, i128)> =
-        soroban_sdk::vec![&scenario.env, (scenario.token_address.clone(), input.amount)];
+    let tokens: SorobanVec<(Address, i128)> = soroban_sdk::vec![
+        &scenario.env,
+        (scenario.token_address.clone(), input.amount)
+    ];
 
     let keeper_bounty: Option<u32> = None;
     let result = scenario.client.try_create_will(
@@ -334,12 +336,17 @@ pub fn run_create_will(input: &CreateWillInput) -> Outcome {
 
     let will_id = match result {
         Ok(Ok(will_id)) => will_id,
-        Ok(Err(_)) => violation(input, "create_will returned a value that is not a u64 will id"),
+        Ok(Err(_)) => violation(
+            input,
+            "create_will returned a value that is not a u64 will id",
+        ),
         // A declared contract error is the correct response to bad input.
         Err(Ok(_)) => return Outcome::Rejected,
         Err(Err(invoke_error)) => violation(
             input,
-            &std::format!("create_will aborted instead of returning a declared WillError: {invoke_error:?}"),
+            &std::format!(
+                "create_will aborted instead of returning a declared WillError: {invoke_error:?}"
+            ),
         ),
     };
 
@@ -361,22 +368,52 @@ fn assert_created_will(
 ) {
     let will = scenario.client.get_will(&will_id);
 
-    check(will.id == will_id, input, "stored will id does not match the returned id");
-    check(will.owner == scenario.owner, input, "will owner is not the creator");
-    check(will.status == WillStatus::Active, input, "a new will is not Active");
     check(
-        will.balances.get(scenario.token_address.clone()).unwrap_or(0) == input.amount,
+        will.id == will_id,
+        input,
+        "stored will id does not match the returned id",
+    );
+    check(
+        will.owner == scenario.owner,
+        input,
+        "will owner is not the creator",
+    );
+    check(
+        will.status == WillStatus::Active,
+        input,
+        "a new will is not Active",
+    );
+    check(
+        will.balances
+            .get(scenario.token_address.clone())
+            .unwrap_or(0)
+            == input.amount,
         input,
         "recorded balance does not match the locked amount",
     );
     check(
-        will.balances.get(scenario.token_address.clone()).unwrap_or(0) > 0,
+        will.balances
+            .get(scenario.token_address.clone())
+            .unwrap_or(0)
+            > 0,
         input,
         "a will was created with a non-positive balance",
     );
-    check(will.trigger_time.is_none(), input, "a new will already has a trigger time");
-    check(will.guardian_votes == 0, input, "a new will already has guardian votes");
-    check(will.beneficiaries == *beneficiaries, input, "stored beneficiaries differ from the supplied list");
+    check(
+        will.trigger_time.is_none(),
+        input,
+        "a new will already has a trigger time",
+    );
+    check(
+        will.guardian_votes == 0,
+        input,
+        "a new will already has guardian votes",
+    );
+    check(
+        will.beneficiaries == *beneficiaries,
+        input,
+        "stored beneficiaries differ from the supplied list",
+    );
     // Compare guardian addresses (stored as Vec<Guardian>).
     let guardian_addresses: SorobanVec<Address> = {
         let mut v: SorobanVec<Address> = SorobanVec::new(&scenario.env);
@@ -385,7 +422,11 @@ fn assert_created_will(
         }
         v
     };
-    check(guardian_addresses == *guardians, input, "stored guardians differ from the supplied list");
+    check(
+        guardian_addresses == *guardians,
+        input,
+        "stored guardians differ from the supplied list",
+    );
 
     // Shares: bounds, and a sum computed in u128 so the check itself cannot
     // overflow while testing for overflow.
@@ -401,7 +442,11 @@ fn assert_created_will(
             Allocation::FixedAmount(_) => 0,
         };
     }
-    check(total == 10_000, input, "beneficiary basis points do not sum to 10,000");
+    check(
+        total == 10_000,
+        input,
+        "beneficiary basis points do not sum to 10,000",
+    );
 
     // Guardians: a stored quorum must be reachable, which it is not if the
     // same address occupies more than one slot.
@@ -432,7 +477,9 @@ fn assert_created_will(
         "the check-in deadline overflows u64, so the will can never be triggered",
     );
     check(
-        will.grace_period_days.checked_mul(SECONDS_PER_DAY).is_some(),
+        will.grace_period_days
+            .checked_mul(SECONDS_PER_DAY)
+            .is_some(),
         input,
         "the grace period overflows u64, so the will can never be released",
     );
@@ -444,7 +491,11 @@ fn assert_created_will(
 
     // Custody: the contract must actually hold what it says it holds.
     check(
-        scenario.token.balance(&scenario.client.address) == will.balances.get(scenario.token_address.clone()).unwrap_or(0),
+        scenario.token.balance(&scenario.client.address)
+            == will
+                .balances
+                .get(scenario.token_address.clone())
+                .unwrap_or(0),
         input,
         "the contract's token balance does not match the will's recorded balance",
     );
@@ -463,7 +514,7 @@ fn assert_created_will(
         check(
             scenario
                 .client
-                .get_wills_by_beneficiary(&beneficiary.address)
+                .get_wills_by_beneficiary(&beneficiary.address, &None, &100)
                 .iter()
                 .any(|indexed| indexed.id == will_id),
             input,
@@ -481,7 +532,10 @@ fn assert_full_release(scenario: &Scenario<'_>, input: &CreateWillInput, will_id
     match scenario.client.try_trigger_will(&will_id) {
         Ok(Ok(())) => {}
         Ok(Err(_)) => violation(input, "trigger_will returned an undecodable value"),
-        Err(Ok(_)) => violation(input, "trigger_will was rejected after the check-in deadline passed"),
+        Err(Ok(_)) => violation(
+            input,
+            "trigger_will was rejected after the check-in deadline passed",
+        ),
         Err(Err(e)) => violation(input, &std::format!("trigger_will aborted: {e:?}")),
     }
 
@@ -489,13 +543,24 @@ fn assert_full_release(scenario: &Scenario<'_>, input: &CreateWillInput, will_id
     match scenario.client.try_release_inheritance(&will_id, &None) {
         Ok(Ok(())) => {}
         Ok(Err(_)) => violation(input, "release_inheritance returned an undecodable value"),
-        Err(Ok(_)) => violation(input, "release_inheritance was rejected after the grace period expired"),
+        Err(Ok(_)) => violation(
+            input,
+            "release_inheritance was rejected after the grace period expired",
+        ),
         Err(Err(e)) => violation(input, &std::format!("release_inheritance aborted: {e:?}")),
     }
 
     let released = scenario.client.get_will(&will_id);
-    check(released.status == WillStatus::Released, input, "the will is not Released after release_inheritance");
-    check(released.balances.is_empty(), input, "the released will still records balances");
+    check(
+        released.status == WillStatus::Released,
+        input,
+        "the will is not Released after release_inheritance",
+    );
+    check(
+        released.balances.is_empty(),
+        input,
+        "the released will still records balances",
+    );
     check(
         scenario.token.balance(&scenario.client.address) == 0,
         input,
@@ -522,36 +587,40 @@ pub fn run_update_beneficiaries(input: &UpdateBeneficiariesInput) -> Vec<Outcome
         let before = scenario.client.get_will(&will_id);
         let replacement = to_beneficiaries(&scenario.env, &scenario.pool, specs);
 
-        let outcome = match scenario.client.try_update_beneficiaries(
-            &will_id,
-            &scenario.owner,
-            &replacement,
-        ) {
-            Ok(Ok(())) => {
-                assert_updated_beneficiaries(&scenario, input, will_id, &before, &replacement);
-                Outcome::Accepted(will_id)
-            }
-            Ok(Err(_)) => violation(input, "update_beneficiaries returned an undecodable value"),
-            Err(Ok(_)) => {
-                // A rejected update must leave the will exactly as it was.
-                let after = scenario.client.get_will(&will_id);
-                check(
-                    after.beneficiaries == before.beneficiaries,
+        let outcome =
+            match scenario
+                .client
+                .try_update_beneficiaries(&will_id, &scenario.owner, &replacement)
+            {
+                Ok(Ok(())) => {
+                    assert_updated_beneficiaries(&scenario, input, will_id, &before, &replacement);
+                    Outcome::Accepted(will_id)
+                }
+                Ok(Err(_)) => {
+                    violation(input, "update_beneficiaries returned an undecodable value")
+                }
+                Err(Ok(_)) => {
+                    // A rejected update must leave the will exactly as it was.
+                    let after = scenario.client.get_will(&will_id);
+                    check(
+                        after.beneficiaries == before.beneficiaries,
+                        input,
+                        "a rejected update still changed the beneficiary list",
+                    );
+                    check(
+                        after.balances == before.balances && after.status == before.status,
+                        input,
+                        "a rejected update changed the will's balance or status",
+                    );
+                    Outcome::Rejected
+                }
+                Err(Err(e)) => violation(
                     input,
-                    "a rejected update still changed the beneficiary list",
-                );
-                check(
-                    after.balances == before.balances && after.status == before.status,
-                    input,
-                    "a rejected update changed the will's balance or status",
-                );
-                Outcome::Rejected
-            }
-            Err(Err(e)) => violation(
-                input,
-                &std::format!("update_beneficiaries aborted instead of returning a declared WillError: {e:?}"),
-            ),
-        };
+                    &std::format!(
+                    "update_beneficiaries aborted instead of returning a declared WillError: {e:?}"
+                ),
+                ),
+            };
         outcomes.push(outcome);
 
         // Whatever happened above, the untouched will must still be findable
@@ -561,7 +630,7 @@ pub fn run_update_beneficiaries(input: &UpdateBeneficiariesInput) -> Vec<Outcome
             check(
                 scenario
                     .client
-                    .get_wills_by_beneficiary(&beneficiary.address)
+                    .get_wills_by_beneficiary(&beneficiary.address, &None, &100)
                     .iter()
                     .any(|indexed| indexed.id == neighbour_id),
                 input,
@@ -614,8 +683,10 @@ fn create_valid_will(
 ) -> u64 {
     let beneficiaries = to_beneficiaries(&scenario.env, &scenario.pool, &create.beneficiaries);
     let guardians = to_guardians(&scenario.env, &scenario.pool, &create.guardian_slots);
-    let tokens: SorobanVec<(Address, i128)> =
-        soroban_sdk::vec![&scenario.env, (scenario.token_address.clone(), create.amount)];
+    let tokens: SorobanVec<(Address, i128)> = soroban_sdk::vec![
+        &scenario.env,
+        (scenario.token_address.clone(), create.amount)
+    ];
 
     let keeper_bounty: Option<u32> = None;
     match scenario.client.try_create_will(
@@ -630,12 +701,18 @@ fn create_valid_will(
         &0,
     ) {
         Ok(Ok(will_id)) => will_id,
-        Ok(Err(_)) => violation(input, "create_will returned a value that is not a u64 will id"),
+        Ok(Err(_)) => violation(
+            input,
+            "create_will returned a value that is not a u64 will id",
+        ),
         Err(Ok(e)) => violation(
             input,
             &std::format!("create_will rejected an input the harness built to be valid: {e:?}"),
         ),
-        Err(Err(e)) => violation(input, &std::format!("create_will aborted on valid input: {e:?}")),
+        Err(Err(e)) => violation(
+            input,
+            &std::format!("create_will aborted on valid input: {e:?}"),
+        ),
     }
 }
 
@@ -649,12 +726,36 @@ fn assert_updated_beneficiaries(
 ) {
     let will = scenario.client.get_will(&will_id);
 
-    check(will.beneficiaries == *replacement, input, "the stored beneficiaries are not the ones supplied");
-    check(will.balances == before.balances, input, "an update changed the will's balances");
-    check(will.status == before.status, input, "an update changed the will's status");
-    check(will.owner == before.owner, input, "an update changed the will's owner");
-    check(will.guardians == before.guardians, input, "an update changed the will's guardians");
-    check(will.last_checkin == before.last_checkin, input, "an update changed the will's last check-in");
+    check(
+        will.beneficiaries == *replacement,
+        input,
+        "the stored beneficiaries are not the ones supplied",
+    );
+    check(
+        will.balances == before.balances,
+        input,
+        "an update changed the will's balances",
+    );
+    check(
+        will.status == before.status,
+        input,
+        "an update changed the will's status",
+    );
+    check(
+        will.owner == before.owner,
+        input,
+        "an update changed the will's owner",
+    );
+    check(
+        will.guardians == before.guardians,
+        input,
+        "an update changed the will's guardians",
+    );
+    check(
+        will.last_checkin == before.last_checkin,
+        input,
+        "an update changed the will's last check-in",
+    );
 
     check(
         !will.beneficiaries.is_empty() && will.beneficiaries.len() <= MAX_BENEFICIARIES,
@@ -668,14 +769,18 @@ fn assert_updated_beneficiaries(
             Allocation::FixedAmount(_) => 0,
         };
     }
-    check(total == 10_000, input, "beneficiary basis points do not sum to 10,000 after an update");
+    check(
+        total == 10_000,
+        input,
+        "beneficiary basis points do not sum to 10,000 after an update",
+    );
 
     // Every current beneficiary must be able to find the will...
     for beneficiary in will.beneficiaries.iter() {
         check(
             scenario
                 .client
-                .get_wills_by_beneficiary(&beneficiary.address)
+                .get_wills_by_beneficiary(&beneficiary.address, &None, &100)
                 .iter()
                 .any(|indexed| indexed.id == will_id),
             input,
@@ -696,7 +801,7 @@ fn assert_updated_beneficiaries(
         check(
             !scenario
                 .client
-                .get_wills_by_beneficiary(&old.address)
+                .get_wills_by_beneficiary(&old.address, &None, &100)
                 .iter()
                 .any(|indexed| indexed.id == will_id),
             input,
