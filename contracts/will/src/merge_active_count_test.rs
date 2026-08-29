@@ -16,8 +16,6 @@ use soroban_sdk::{
 
 use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
-const DAY: u64 = 86_400;
-
 fn setup<'a>() -> (Env, WillContractClient<'a>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
@@ -32,10 +30,6 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, Address) {
     let client = WillContractClient::new(&env, &contract_id);
 
     (env.clone(), client, owner, token_address)
-}
-
-fn advance(env: &Env, days: u64) {
-    env.ledger().with_mut(|l| l.timestamp += days * DAY);
 }
 
 /// Regression test for issue #187: `merge_wills` should decrement the active
@@ -57,7 +51,7 @@ fn merge_wills_decrements_active_count() {
     let stats_before = client.get_protocol_stats();
     assert_eq!(stats_before.active_will_count, 2, "should have 2 active wills");
 
-    client.merge_wills(&will_id_a, &will_id_b, &owner);
+    client.merge_wills(&owner, &will_id_a, &will_id_b);
 
     let stats_after = client.get_protocol_stats();
     assert_eq!(
@@ -85,11 +79,11 @@ fn merge_wills_multiple_decrements() {
     let stats_start = client.get_protocol_stats();
     assert_eq!(stats_start.active_will_count, 3, "should have 3 active wills");
 
-    client.merge_wills(&will_1, &will_2, &owner);
+    client.merge_wills(&owner, &will_1, &will_2);
     let stats_after_first = client.get_protocol_stats();
     assert_eq!(stats_after_first.active_will_count, 2, "after first merge, should have 2 active wills");
 
-    client.merge_wills(&will_1, &will_3, &owner);
+    client.merge_wills(&owner, &will_1, &will_3);
     let stats_after_second = client.get_protocol_stats();
     assert_eq!(
         stats_after_second.active_will_count, 1,

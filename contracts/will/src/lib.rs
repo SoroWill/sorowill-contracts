@@ -93,6 +93,9 @@ mod test_xdr_spec;
 #[cfg(test)]
 mod distribute_overflow_safety_test;
 
+#[cfg(test)]
+mod proptest_math;
+
 /// Regression test for issue #187: ensure `merge_wills` decrements the active
 /// will count when marking the merged will as cancelled.
 #[cfg(test)]
@@ -114,7 +117,7 @@ use soroban_sdk::{
 
 pub use errors::WillError;
 pub use types::{
-    Allocation, Beneficiary, Guardian, GuardianVoteReason, HashedBeneficiary, ProtocolStats, Will,
+    Allocation, Beneficiary, Guardian, GuardianConsent, GuardianVoteReason, HashedBeneficiary, ProtocolStats, Will,
     WillStatus, WillStatusTransition,
 };
 
@@ -2530,7 +2533,7 @@ fn assert_valid_allocations(env: &Env, beneficiaries: &Vec<Beneficiary>, will_ba
 /// sum to exactly 10,000 bps again, proportionally to their current shares
 /// (the last percentage entry absorbs any rounding remainder).
 /// `Allocation::FixedAmount` entries pass through unchanged.
-fn renormalize_percentages(env: &Env, beneficiaries: &Vec<Beneficiary>) -> Vec<Beneficiary> {
+pub(crate) fn renormalize_percentages(env: &Env, beneficiaries: &Vec<Beneficiary>) -> Vec<Beneficiary> {
     let mut percentage_total: u32 = 0;
     let mut percentage_count: u32 = 0;
     for b in beneficiaries.iter() {
@@ -2692,7 +2695,7 @@ fn assert_valid_periods(env: &Env, checkin_period_days: u64, grace_period_days: 
 /// the potentially overflowing `total * basis_points` intermediate. The
 /// workspace release profile enables overflow checks, but this decomposition
 /// also makes the calculation safe independently of that compiler setting.
-fn proportional_share(total: i128, basis_points: u32) -> i128 {
+pub(crate) fn proportional_share(total: i128, basis_points: u32) -> i128 {
     const BASIS_POINTS_TOTAL: i128 = 10_000;
 
     let whole = total / BASIS_POINTS_TOTAL;
@@ -2842,7 +2845,7 @@ fn merge_beneficiaries(env: &Env, will_a: &Will, will_b: &Will) -> Vec<Beneficia
             for (addr, existing_alloc) in beneficiary_allocations.iter() {
                 if addr == beneficiary.address {
                     // If either the existing or new allocation is FixedAmount, preserve it
-                    let merged_alloc = match (existing_alloc, beneficiary.allocation) {
+                    let merged_alloc = match (existing_alloc.clone(), beneficiary.allocation.clone()) {
                         (Allocation::FixedAmount(amt_a), Allocation::FixedAmount(amt_b)) => {
                             Allocation::FixedAmount(amt_a + amt_b)
                         },
@@ -2872,18 +2875,16 @@ fn merge_beneficiaries(env: &Env, will_a: &Will, will_b: &Will) -> Vec<Beneficia
     // Preserve FixedAmount allocations where applicable.
     let mut merged_beneficiaries: Vec<Beneficiary> = Vec::new(env);
     let mut total_bp: u32 = 0;
-    let mut total_fixed: i128 = 0;
     let count = beneficiary_shares.len();
 
     for (i, (addr, share)) in beneficiary_shares.iter().enumerate() {
         // Find the original allocation type for this beneficiary
         let original_allocation = beneficiary_allocations.iter()
-            .find(|(a, _)| a == addr)
+            .find(|(a, _)| a == &addr)
             .map(|(_, alloc)| alloc);
 
         let allocation = match original_allocation {
             Some(Allocation::FixedAmount(amt)) => {
-                total_fixed += amt;
                 Allocation::FixedAmount(amt)
             },
             _ => {

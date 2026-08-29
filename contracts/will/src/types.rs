@@ -31,6 +31,14 @@ pub struct Beneficiary {
     pub allocation: Allocation,
 }
 
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuardianConsent {
+    Pending = 0,
+    Accepted = 1,
+    Rejected = 2,
+}
+
 /// A guardian entry: an address paired with a vote weight and consent status.
 ///
 /// Guardians with higher weights count for more when reaching quorum.
@@ -243,4 +251,17 @@ pub struct WillStatusTransition {
     /// A short label describing what caused the transition
     /// (e.g. "create", "checkin", "trigger", "release").
     pub action: Symbol,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_guardian_vote_reason_discriminants() {
+        assert_eq!(GuardianVoteReason::Deceased as u32, 0);
+        assert_eq!(GuardianVoteReason::Incapacitated as u32, 1);
+        assert_eq!(GuardianVoteReason::Unreachable as u32, 2);
+        assert_eq!(GuardianVoteReason::Other as u32, 3);
+    }
 }

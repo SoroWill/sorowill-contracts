@@ -346,6 +346,9 @@ fn profile_guardians(report: &mut Report) {
     // since the guardian list was last changed (it was just set at creation).
     f.advance(7 * DAY);
 
+    f.client.accept_guardian_role(&will_id, &first);
+    f.client.accept_guardian_role(&will_id, &second);
+
     f.client.guardian_trigger(&will_id, &first, &GuardianVoteReason::Incapacitated);
     report.record(&f.env, "guardian_trigger (below threshold)");
 
@@ -358,6 +361,7 @@ fn profile_guardians(report: &mut Report) {
     let g_guardians = two_guardians(&g.env);
     let (g_will_id, _) = g.create(&g_guardians);
     g.advance(7 * DAY);
+    g.client.accept_guardian_role(&g_will_id, &g_guardians.get_unchecked(0));
     g.client
         .guardian_trigger(&g_will_id, &g_guardians.get_unchecked(0), &GuardianVoteReason::Incapacitated);
     g.client
@@ -374,7 +378,7 @@ fn profile_queries(report: &mut Report) {
     report.record(&f.env, "get_wills_by_owner (1 will)");
 
     f.client
-        .get_wills_by_beneficiary(&list.get_unchecked(0).address);
+        .get_wills_by_beneficiary(&list.get_unchecked(0).address, &None, &100);
     report.record(&f.env, "get_wills_by_beneficiary (1 will)");
 }
 
