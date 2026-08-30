@@ -656,20 +656,15 @@ pub fn archive_will(env: &Env, will: &Will) {
     let active_key = DataKey::Will(will.id);
     env.storage().persistent().remove(&active_key);
 
-    // Remove from owner index
-    let owner_key = DataKey::OwnerWills(will.owner.clone());
-    if let Some(ids) = env.storage().persistent().get::<_, Vec<u64>>(&owner_key) {
-        let mut updated: Vec<u64> = Vec::new(env);
-        for id in ids.iter() {
-            if id != will.id {
-                updated.push_back(id);
-            }
-        }
-        env.storage().persistent().set(&owner_key, &updated);
-    }
+    // Remove from owner index using dedicated helper
+    remove_owner_index(env, &will.owner, will.id);
 
     // Remove from beneficiary indexes
     for beneficiary in will.beneficiaries.iter() {
         remove_beneficiary_index(env, &beneficiary.address, will.id);
     }
+
+    // Reset guardian trigger and cancel votes
+    reset_guardian_votes(env, will);
+    reset_guardian_cancel_votes(env, will);
 }
