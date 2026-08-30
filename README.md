@@ -234,6 +234,41 @@ runs this on pushes to `main` that touch the contract, and attaches the
 resulting JSON to tagged GitHub Releases. See [`spec/README.md`](./spec/README.md)
 for the full update process.
 
+### Contract Events
+
+The contract publishes events for every state-mutating entry point so off-chain indexers and frontend clients can reconstruct state transitions:
+
+| Entry Point | Topic(s) | Payload |
+|-------------|----------|---------|
+| `create_will` | `("created", will_id: u64)` | `(owner: Address, token_count: u32, beneficiaries: Vec<Beneficiary>, checkin_deadline: u64)` |
+| `confirm_will` | `("confirmed", will_id: u64)` | `owner: Address` |
+| `check_in` | `("checkin", will_id: u64)` | `(owner: Address, next_deadline: u64)` |
+| `batch_checkin` | `("batch_checkin", owner: Address)` | `(will_ids: Vec<u64>, count: u32)` |
+| `trigger_will` | `("triggered", will_id: u64)` | `grace_period_ends: u64` |
+| `emergency_checkin` | `("emerg_checkin", will_id: u64)` | `(owner: Address, next_deadline: u64)` |
+| `release_inheritance` | `("released", will_id: u64)` | `(token_count: u32, beneficiaries_count: u32)` |
+| `cancel_will` | `("cancelled", will_id: u64)` | `(owner: Address, token_count: u32)` |
+| `update_beneficiaries` | `("ben_updated", will_id: u64)` | `(owner: Address, beneficiary_count: u32, beneficiaries: Vec<Beneficiary>)` |
+| `update_guardians` | `("g_updated", will_id: u64)` | `(owner: Address, guardians: Vec<Guardian>)` |
+| `close_will` | `("closed", will_id: u64)` | `owner: Address` |
+| `top_up` | `("topup", will_id: u64)` | `(owner: Address, token: Address, amount: i128, new_balance: i128)` |
+| `vote_trigger` | `("g_voted", will_id: u64)` | `(guardian: Address, weight: u32, total_weight: u32)` |
+| `vote_cancel_trigger` | `("g_cancel_voted", will_id: u64)` | `(guardian: Address, weight: u32, total_weight: u32)` |
+| `guardian_cancelled_trigger` | `("g_cancelled", will_id: u64)` | `(guardian: Address, next_deadline: u64)` |
+| `merge_wills` | `("merged", surviving_will_id: u64)` | `(consumed_will_id: u64, owner: Address, new_balance: i128, beneficiaries: Vec<Beneficiary>)` |
+| `migrate_will` | `("migrated", will_id: u64)` | `(owner: Address, from_version: u32, to_version: u32)` |
+| `clone_will` | `("cloned", source_id: u64)` | `(new_id: u64, owner: Address)` |
+| `batch_create_wills` | `("batch_created", owner: Address)` | `will_ids: Vec<u64>` |
+| `archive_will` | `("archived", will_id: u64)` | `owner: Address` |
+| `update_periods` | `("periods_updated", will_id: u64)` | `(owner: Address, checkin_period_days: u64, grace_period_days: u64, next_deadline: u64)` |
+| `renounce_beneficiary` | `("ben_renounced", will_id: u64)` | `(beneficiary: Address, owner: Address, beneficiaries: Vec<Beneficiary>)` |
+| `update_will_settings` | `("settings_updated", will_id: u64)` | `(owner: Address, update_fields: Vec<Symbol>)` |
+| `distribute_keeper_bounty` | `("keeper_bounty", will_id: u64)` | `(keeper: Address, amount: i128)` |
+| `split_will` | `("split", original_id: u64)` | `(new_id: u64, owner: Address, split_amount: i128)` |
+| `claim_hashed_beneficiary` | `("hashed_claimed", will_id: u64)` | `(claimant: Address, amount: i128)` |
+| `set_delegate` | `("delegate_set", will_id: u64)` | `(owner: Address, delegate: Address)` |
+| `clear_delegate` | `("delegate_cleared", will_id: u64)` | `owner: Address` |
+
 ## Testnet Deployment
 
 The deployed contract ID for Stellar Testnet is recorded in [`deployments/testnet.json`](./deployments/testnet.json):
