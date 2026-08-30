@@ -138,6 +138,90 @@ fn check(condition: bool, input: &impl core::fmt::Debug, message: &str) {
     }
 }
 
+// --- Invariant helpers shared with the deterministic unit test suite ---
+//
+// Same correctness properties `assert_created_will` and
+// `assert_updated_beneficiaries` below check, extracted into a form that
+// does not depend on the fuzz-specific `Scenario`/`*Input` types, so
+// `allocation_test.rs` and `beneficiary_lifecycle_test.rs` can assert the
+// identical properties against their own hand-written scenarios (issue
+// #267) instead of re-implementing ad-hoc checks that might not catch the
+// same bugs the fuzz harness is designed to catch.
+
+/// Every beneficiary currently on `will` must be able to find it via
+/// `get_wills_by_beneficiary`.
+pub(crate) fn assert_beneficiaries_are_indexed(client: &WillContractClient, will: &Will) {
+    for beneficiary in will.beneficiaries.iter() {
+        assert!(
+            client
+                .get_wills_by_beneficiary(&beneficiary.address)
+                .iter()
+                .any(|indexed| indexed.id == will.id),
+            "beneficiary is missing will {} from their index",
+            will.id
+        );
+    }
+}
+
+/// None of `removed` may still find `will_id` via `get_wills_by_beneficiary`
+/// -- a removed beneficiary must not keep a stale claim in the reverse
+/// index.
+pub(crate) fn assert_removed_beneficiaries_are_unindexed(
+    client: &WillContractClient,
+    will_id: u64,
+    removed: &[Address],
+) {
+    for address in removed {
+        assert!(
+            !client
+                .get_wills_by_beneficiary(address)
+                .iter()
+                .any(|indexed| indexed.id == will_id),
+            "a removed beneficiary still has will {will_id} in their index"
+        );
+    }
+}
+
+/// The contract's on-chain balance of `token_address` must equal the amount
+/// `will` itself records as locked for that token -- the contract must
+/// actually hold what it says it holds.
+pub(crate) fn assert_custody_matches_recorded_balance(
+    token: &TokenClient,
+    contract_address: &Address,
+    token_address: &Address,
+    will: &Will,
+) {
+    assert_eq!(
+        token.balance(contract_address),
+        will.balances.get(token_address.clone()).unwrap_or(0),
+        "the contract's token balance does not match will {}'s recorded balance",
+        will.id
+    );
+}
+
+/// Every `Allocation::Percentage` beneficiary's basis points must sum to
+/// exactly 10,000 -- "100% of whatever remains after fixed amounts", per the
+/// `Allocation` doc comment. Skipped entirely for a will with no
+/// percentage-typed beneficiaries: a pure-`FixedAmount` will has no such
+/// invariant to hold.
+pub(crate) fn assert_percentage_shares_sum_to_10000(will: &Will) {
+    let mut total: u128 = 0;
+    let mut has_percentage = false;
+    for beneficiary in will.beneficiaries.iter() {
+        if let Allocation::Percentage(bp) = beneficiary.allocation {
+            has_percentage = true;
+            total += bp as u128;
+        }
+    }
+    if has_percentage {
+        assert_eq!(
+            total, 10_000,
+            "will {}'s percentage-typed beneficiaries do not sum to 10,000 basis points",
+            will.id
+        );
+    }
+}
+
 /// Builds the fixed pool of addresses a scenario draws from.
 fn address_pool(env: &Env) -> SorobanVec<Address> {
     let mut pool = SorobanVec::new(env);

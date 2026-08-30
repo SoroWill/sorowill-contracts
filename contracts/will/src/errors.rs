@@ -79,7 +79,8 @@ pub enum WillError {
     ConfirmationWindowExpired = 31,
     /// `get_wills` was called with more ids than `MAX_GET_WILLS_IDS`.
     TooManyIds = 32,
-    /// `split_will` was asked to split more than the will's current balance.
+    /// `split_will` was asked to move more of a token than the will
+    /// currently holds of it.
     InsufficientBalance = 33,
     /// `split_will` was called with an empty beneficiary-to-split list, or a
     /// split that would leave the source or new will with an invalid state.

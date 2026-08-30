@@ -16,6 +16,7 @@ use soroban_sdk::{
     vec, Address, Env,
 };
 
+use crate::fuzz_harness::{assert_beneficiaries_are_indexed, assert_removed_beneficiaries_are_unindexed};
 use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatus};
 
 const DAY: u64 = 86_400;
@@ -78,6 +79,12 @@ fn release_pays_the_updated_beneficiary_list_not_the_original_one() {
     // happens.
     let updated = client.get_will(&will_id);
     assert_eq!(updated.beneficiaries.len(), 2);
+
+    // The same reverse-index invariants the fuzz harness checks after every
+    // accepted update_beneficiaries (issue #267): the new beneficiaries are
+    // reachable, and the replaced one is not left with a stale index entry.
+    assert_beneficiaries_are_indexed(&client, &updated);
+    assert_removed_beneficiaries_are_unindexed(&client, will_id, &[original.clone()]);
 
     // Full lifecycle: missed check-in -> trigger -> grace period -> release.
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
@@ -149,6 +156,9 @@ fn release_pays_the_latest_of_several_beneficiary_updates() {
             },
         ],
     );
+    assert_beneficiaries_are_indexed(&client, &client.get_will(&will_id));
+    assert_removed_beneficiaries_are_unindexed(&client, will_id, &[first.clone()]);
+
     client.update_beneficiaries(
         &will_id,
         &owner,
@@ -160,6 +170,8 @@ fn release_pays_the_latest_of_several_beneficiary_updates() {
             },
         ],
     );
+    assert_beneficiaries_are_indexed(&client, &client.get_will(&will_id));
+    assert_removed_beneficiaries_are_unindexed(&client, will_id, &[first.clone(), second.clone()]);
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
     client.trigger_will(&will_id);

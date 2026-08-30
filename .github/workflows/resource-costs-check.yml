@@ -1,0 +1,32 @@
+name: Resource Costs Check
+
+# Regenerates the resource-cost profile and fails if it has drifted from the
+# table committed in docs/RESOURCE_COSTS.md, so a change that meaningfully
+# shifts an entry point's ledger footprint can't go unnoticed (issue #268).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  resource-costs-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-resource-costs-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check resource costs against docs/RESOURCE_COSTS.md
+        run: ./scripts/check_resource_costs.sh

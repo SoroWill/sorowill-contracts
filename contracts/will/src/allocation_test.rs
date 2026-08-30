@@ -20,7 +20,28 @@ use soroban_sdk::{
     vec, Address, Env, Vec as SorobanVec,
 };
 
+use crate::fuzz_harness::{
+    assert_beneficiaries_are_indexed, assert_custody_matches_recorded_balance,
+    assert_percentage_shares_sum_to_10000,
+};
 use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillError, WillStatus};
+
+/// Asserts the same structural invariants the fuzz harness checks after
+/// every accepted `create_will`/`top_up` (issue #267): the recorded
+/// percentage shares sum to 10,000 (when any are percentage-typed), the
+/// contract's custody matches the will's recorded balance, and every
+/// beneficiary is reachable via the reverse index.
+fn assert_will_invariants(
+    client: &WillContractClient,
+    token: &TokenClient,
+    token_address: &Address,
+    will_id: u64,
+) {
+    let will = client.get_will(&will_id);
+    assert_percentage_shares_sum_to_10000(&will);
+    assert_custody_matches_recorded_balance(token, &client.address, token_address, &will);
+    assert_beneficiaries_are_indexed(client, &will);
+}
 
 const DAY: u64 = 86_400;
 
@@ -83,19 +104,10 @@ fn pure_percentage_regression() {
             allocation: Allocation::Percentage(4_000),
         },
     ];
-    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 1_000_000_i128)];
 
-    let will_id = client.create_will(
-        &owner,
-        &tokens,
-        &beneficiaries,
-        &90,
-        &7,
-        &vec![&env],
-        &2,
-        &None,
-        &0,
-    );
+    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    assert_will_invariants(&client, &token, &token_address, will_id);
     release(&env, &client, will_id);
 
     assert_eq!(token.balance(&a), 600_000);
@@ -124,19 +136,14 @@ fn pure_fixed_amount() {
             allocation: Allocation::FixedAmount(300_000),
         },
     ];
-    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 1_000_000_i128)];
 
-    let will_id = client.create_will(
-        &owner,
-        &tokens,
-        &beneficiaries,
-        &90,
-        &7,
-        &vec![&env],
-        &2,
-        &None,
-        &0,
-    );
+    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    // Pure-fixed-amount wills have no percentage-typed beneficiaries, so
+    // assert_percentage_shares_sum_to_10000 is a no-op here; custody and
+    // index consistency still apply.
+    assert_custody_matches_recorded_balance(&token, &client.address, &token_address, &client.get_will(&will_id));
+    assert_beneficiaries_are_indexed(&client, &client.get_will(&will_id));
     release(&env, &client, will_id);
 
     assert_eq!(token.balance(&sister), 700_000);
@@ -169,19 +176,10 @@ fn mixed_fixed_and_percentage() {
             allocation: Allocation::Percentage(5_000),
         },
     ];
-    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 1_000_000_i128)];
 
-    let will_id = client.create_will(
-        &owner,
-        &tokens,
-        &beneficiaries,
-        &90,
-        &7,
-        &vec![&env],
-        &2,
-        &None,
-        &0,
-    );
+    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    assert_will_invariants(&client, &token, &token_address, will_id);
     release(&env, &client, will_id);
 
     // Sister gets her exact fixed amount; the remaining 800,000 splits 50/50.
@@ -263,6 +261,7 @@ fn top_up_grows_the_percentage_remainder_not_the_fixed_share() {
         &0,
     );
     client.top_up(&will_id, &owner, &token_address, &500_000);
+    assert_will_invariants(&client, &token, &token_address, will_id);
 
     release(&env, &client, will_id);
 
@@ -348,19 +347,10 @@ fn three_way_percentage_split_with_remainder() {
             allocation: Allocation::Percentage(3_334),
         },
     ];
-    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 1_000_000_i128)];
 
-    let will_id = client.create_will(
-        &owner,
-        &tokens,
-        &beneficiaries,
-        &90,
-        &7,
-        &vec![&env],
-        &2,
-        &None,
-        &0,
-    );
+    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    assert_will_invariants(&client, &token, &token_address, will_id);
     release(&env, &client, will_id);
 
     let alice_balance = token.balance(&alice);

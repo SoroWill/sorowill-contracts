@@ -10,7 +10,7 @@ use soroban_sdk::{
     vec, Address, Env, Vec as SorobanVec,
 };
 
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillError};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
 fn setup_with_two_tokens<'a>() -> (
     Env,

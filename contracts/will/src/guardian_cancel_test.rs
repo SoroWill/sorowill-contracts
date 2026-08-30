@@ -22,7 +22,8 @@ const DAY: u64 = 86_400;
 
 /// Registers the contract and creates a funded will with two guardians and a
 /// threshold of 2. Returns the env, the contract address, both guardians and
-/// the new will id.
+/// the new will id. Both guardians have their role accepted so they can vote
+/// immediately once the cooldown elapses.
 fn setup(checkin_period_days: u64) -> (Env, Address, Address, Address, u64) {
     let env = Env::default();
     env.mock_all_auths();
@@ -58,6 +59,10 @@ fn setup(checkin_period_days: u64) -> (Env, Address, Address, Address, u64) {
         &None,
         &0,
     );
+
+    // Both guardians must accept their role before they can vote.
+    client.accept_guardian_role(&will_id, &guardian_a);
+    client.accept_guardian_role(&will_id, &guardian_b);
 
     (env, contract_id, guardian_a, guardian_b, will_id)
 }
