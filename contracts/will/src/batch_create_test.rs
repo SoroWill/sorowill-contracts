@@ -167,3 +167,25 @@ fn batch_rejects_a_spec_exceeding_the_beneficiary_cap() {
     );
     assert_eq!(client.get_wills_by_owner(&owner, &None, &10).len(), 0);
 }
+
+#[test]
+fn batch_create_wills_atomicity_rolls_back_token_transfers() {
+    let (env, contract_id, owner, token) = setup();
+    let client = WillContractClient::new(&env, &contract_id);
+    let token_client = soroban_sdk::token::Client::new(&env, &token);
+
+    let initial_balance = token_client.balance(&owner);
+
+    // Spec 1 is valid (locks 100_000). Spec 2 is invalid (percentage = 9_000 != 10_000).
+    let specs = vec![
+        &env,
+        spec(&env, &token, 100_000, 10_000),
+        spec(&env, &token, 200_000, 9_000),
+    ];
+
+    let res = client.try_batch_create_wills(&owner, &specs);
+    assert!(res.is_err());
+
+    // Owner's token balance must be completely unchanged (first spec's transfer was rolled back)
+    assert_eq!(token_client.balance(&owner), initial_balance);
+}

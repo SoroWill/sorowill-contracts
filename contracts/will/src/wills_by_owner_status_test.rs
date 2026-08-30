@@ -59,17 +59,25 @@ fn filters_wills_by_owner_and_status() {
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
     client.trigger_will(&triggered_will);
 
-    let active = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active);
+    let active = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &None, &100);
     assert_eq!(active.len(), 2);
     let active_ids: std::collections::HashSet<u64> =
         active.iter().map(|w| w.id).collect();
     assert!(active_ids.contains(&active_will));
     assert!(active_ids.contains(&another_active_will));
 
-    let triggered = client.get_wills_by_owner_and_status(&owner, &WillStatus::Triggered);
+    let triggered = client.get_wills_by_owner_and_status(&owner, &WillStatus::Triggered, &None, &100);
     assert_eq!(triggered.len(), 1);
     assert_eq!(triggered.get(0).unwrap().id, triggered_will);
 
-    let released = client.get_wills_by_owner_and_status(&owner, &WillStatus::Released);
+    let released = client.get_wills_by_owner_and_status(&owner, &WillStatus::Released, &None, &100);
     assert!(released.is_empty());
+
+    // Issue #296: Incremental pagination test
+    let page1 = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &None, &1);
+    assert_eq!(page1.len(), 1);
+    let p1_id = page1.get(0).unwrap().id;
+    let page2 = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &Some(p1_id), &1);
+    assert_eq!(page2.len(), 1);
+    assert_ne!(page2.get(0).unwrap().id, p1_id);
 }

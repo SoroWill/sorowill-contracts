@@ -5,6 +5,10 @@ smaller binary is cheaper to deploy and marginally cheaper to invoke (less
 code to parse/instantiate per call). This document records the release
 profile tuning for the `will` contract and how to measure its effect.
 
+## Size budget
+
+The compiled `will.wasm` release binary MUST NOT exceed **150,000 bytes** (150 KB). CI automatically enforces this budget on every commit and pull request.
+
 ## Current release profile
 
 `Cargo.toml`'s `[profile.release]` (reviewed for this issue):

@@ -1,0 +1,75 @@
+name: Spec Export
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  # Fails the PR when spec/will-v<version>.json no longer matches the compiled
+  # contract, or when the crate version was bumped without exporting a snapshot
+  # for it. sorowill-sdk diffs its hand-maintained types against that file, so
+  # an unnoticed drift ships a wrong SDK.
+  check:
+    name: Spec is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache stellar-cli
+        id: cache-stellar
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/stellar
+          key: ${{ runner.os }}-stellar-cli
+
+      - name: Install stellar-cli
+        if: steps.cache-stellar.outputs.cache-hit != 'true'
+        run: cargo install --locked stellar-cli --features opt
+
+      - name: Check spec matches the compiled contract
+        run: scripts/export-spec.sh --check
+
+  # On a published release, attach the snapshot for the released version to the
+  # release itself, as documented in spec/README.md.
+  attach:
+    name: Attach spec to release
+    if: github.event_name == 'release'
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve crate version
+        id: version
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name=="will") | .version')"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload spec artifact to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "spec/will-v${{ steps.version.outputs.version }}.json" \
+            --clobber

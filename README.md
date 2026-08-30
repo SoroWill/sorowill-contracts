@@ -206,7 +206,7 @@ disambiguate.
 | 30 | `WillNotConfirmed` | `confirm_will` was called on a will that is not `PendingConfirmation`. |
 | 31 | `ConfirmationWindowExpired` | `confirm_will` was called after the confirmation deadline elapsed. |
 | 32 | `TooManyIds` | `get_wills` was called with more ids than `MAX_GET_WILLS_IDS`. |
-| 33 | `InsufficientBalance` | `split_will` was asked to split more than the will's current balance. |
+| 33 | `InsufficientBalance` | `split_will` was asked to move more of a token than the will currently holds of it. |
 | 34 | `InvalidSplit` | `split_will` was called with an empty beneficiary-to-split list, or a split that would leave the source or new will with an invalid state. |
 | 35 | `InvalidPreimage` | `reveal_and_claim` was called with a pre-image that does not match any stored `HashedBeneficiary` commitment on the will. |
 | 36 | `AlreadyClaimed` | `reveal_and_claim` was called for a hashed beneficiary slot that has already been claimed. |

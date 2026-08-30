@@ -349,22 +349,31 @@ fn profile_guardians(report: &mut Report) {
     // since the guardian list was last changed (it was just set at creation).
     f.advance(8 * DAY);
 
-    f.client.guardian_trigger(&will_id, &first, &GuardianVoteReason::Incapacitated);
+    f.client.accept_guardian_role(&will_id, &first);
+    f.client.accept_guardian_role(&will_id, &second);
+
+    f.client
+        .guardian_trigger(&will_id, &first, &GuardianVoteReason::Incapacitated);
     report.record(&f.env, "guardian_trigger (below threshold)");
 
     // The second vote reaches quorum and releases in the same invocation.
-    f.client.guardian_trigger(&will_id, &second, &GuardianVoteReason::Incapacitated);
+    f.client
+        .guardian_trigger(&will_id, &second, &GuardianVoteReason::Incapacitated);
     report.record(&f.env, "guardian_trigger (reaches threshold)");
 
     // Clearing vote markers on a will that has votes to clear.
     let g = fixture();
     let g_guardians = two_guardians(&g.env);
     let (g_will_id, _) = g.create(&g_guardians);
-    let g_first = g_guardians.get_unchecked(0);
-    g.client.accept_guardian_role(&g_will_id, &g_first);
-    g.advance(8 * DAY);
+    g.advance(7 * DAY);
+    g.client.accept_guardian_role(&g_will_id, &g_guardians.get_unchecked(0));
     g.client
-        .guardian_trigger(&g_will_id, &g_first, &GuardianVoteReason::Incapacitated);
+        .accept_guardian_role(&g_will_id, &g_guardians.get_unchecked(0));
+    g.client.guardian_trigger(
+        &g_will_id,
+        &g_guardians.get_unchecked(0),
+        &GuardianVoteReason::Incapacitated,
+    );
     g.client
         .update_guardians(&g_will_id, &g.owner, &two_guardians(&g.env));
     report.record(&g.env, "update_guardians (clearing a vote)");

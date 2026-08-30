@@ -185,6 +185,86 @@ Neither has any redundant storage access left to remove; both were already at
 that floor before this pass. Their numbers are unchanged, and the honest
 finding is that the waste was elsewhere.
 
+## `create_will` cost as protocol-wide distinct tokens grow
+
+`ProtocolStats.total_locked_by_token` is a `Vec<TokenLockedBalance>` stored as
+a single instance-storage entry. Every `create_will`, `top_up`, and
+`cancel_will` call reads the whole entry, linearly scans it to find a matching
+token, rebuilds the entire vector, and writes it back. The CPU and byte cost of
+that operation scales with `N`, the number of **distinct token addresses ever
+used across all wills on the protocol** — not the number of tokens in the will
+being created.
+
+To measure this effect, run the profile scenario `create_will (N protocol
+tokens)` in `profile.rs` (see below for how to add it). The scenario pre-seeds
+the `ProtocolStats` entry with varying values of `N` before calling
+`create_will`, then records cost at each step.
+
+### Expected growth
+
+Each `TokenLockedBalance` entry serialises to roughly **72 bytes** (a 56-byte
+`Address` plus a 16-byte `i128`). The table below shows the expected minimum
+read/write byte growth on top of the baseline `create_will` cost (410 549
+instructions, 888 read bytes, 2 720 write bytes at N = 1):
+
+| N distinct protocol tokens | extra read bytes | extra write bytes | notes |
+| ---: | ---: | ---: | --- |
+| 1 (baseline) | 0 | 0 | current profile row |
+| 10 | ~648 | ~648 | 9 extra entries × 72 bytes |
+| 50 | ~3 528 | ~3 528 | |
+| 100 | ~7 128 | ~7 128 | instance entry approaches 8 KB |
+| 200 | ~14 328 | ~14 328 | instance entry exceeds 16 KB |
+
+Instructions grow proportionally — each extra entry requires an address
+comparison plus a clone. At 25 stroops per 10 000 instructions the instruction
+cost is secondary to the byte cost, but both contribute to the fee.
+
+### Why the current profile does not show this
+
+The existing `profile_lifecycle` scenario creates one will with one token into a
+fresh environment, so `N` is always 1. The growth is invisible unless the
+protocol state is pre-seeded with many prior distinct tokens. Adding a
+`profile_create_will_token_scaling` scenario to `profile.rs` that pre-seeds
+`ProtocolStats` with 1, 10, 50, and 100 entries before each measurement would
+make this growth visible in CI output. The scenario is not included in the
+current profile because it requires no code change to understand the problem —
+the growth follows directly from the linear-scan implementation — but it should
+be added alongside any fix so the improvement can be measured against the
+baseline.
+
+### How to add the scenario
+
+```rust
+// In profile.rs — illustrative, not yet wired into profile_public_entry_points
+fn profile_create_will_token_scaling(report: &mut Report) {
+    for n in [1_u32, 10, 50, 100] {
+        let f = fixture();
+        // Pre-seed ProtocolStats with `n - 1` synthetic token entries so the
+        // next create_will sees a vector of length `n - 1` before adding its own.
+        f.env.as_contract(&f.client.address, || {
+            use crate::storage::{DataKey, save_protocol_stats, get_protocol_stats};
+            let mut stats = get_protocol_stats(&f.env);
+            for _ in 1..n {
+                stats.total_locked_by_token.push_back(
+                    crate::types::TokenLockedBalance {
+                        token: Address::generate(&f.env),
+                        total_locked: 1,
+                    }
+                );
+            }
+            save_protocol_stats(&f.env, &stats);
+        });
+        f.create(&Vec::new(&f.env));
+        let label = std::format!("create_will ({n} protocol tokens)");
+        // report.record requires a &'static str; use a fixed set of labels
+        // or extend Report to accept String.
+    }
+}
+```
+
+See [`docs/adr/0002-total-locked-by-token-scalability.md`](adr/0002-total-locked-by-token-scalability.md)
+for the full analysis, options considered, and recommended fix.
+
 ## An observation, not addressed here
 
 Nothing in the contract renews its own instance entry. A contract instance is

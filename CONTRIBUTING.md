@@ -51,6 +51,47 @@ Run every command used by the [Test CI workflow](./.github/workflows/test.yml) a
 
 See the [README](./README.md#local-setup) for toolchain installation and how to run the test suite.
 
+## Task runner (just)
+
+This repo ships a [`justfile`](./justfile) with shortcuts for the commands
+above, so you don't have to remember or copy them by hand. Install
+[`just`](https://github.com/casey/just#installation), then:
+
+```bash
+just --list    # see every available recipe
+just lint      # cargo clippy --all-targets -- -D warnings
+just test      # cargo test --workspace
+just build     # cargo build --workspace --release --target wasm32v1-none
+just fmt       # cargo fmt --all
+just ci        # runs lint, test, and build in order — the full "Before opening a PR" checklist above in one command
+```
+
+If you don't have `just` installed, the raw `cargo` commands in
+[Before opening a PR](#before-opening-a-pr) work identically.
+
+## Cargo.lock policy
+
+`Cargo.lock` is committed at the workspace root, and that's intentional:
+every crate in this workspace is built and deployed as a Soroban
+**contract** (compiled to a `wasm32v1-none` binary and deployed on-chain),
+not published as a library for other crates to depend on via crates.io.
+Committing the lockfile gives reproducible CI builds and deployments — the
+same dependency graph every time, regardless of what's newest on crates.io
+the day CI happens to run.
+
+This does **not** constrain anyone who depends on a crate from this
+workspace (e.g. `contracts/will`) as a path or git dependency in their own
+project: Cargo resolves and locks dependencies per top-level workspace, so a
+downstream consumer's own `Cargo.lock` governs their build, not this one.
+Our committed lockfile only pins builds performed *inside this repository*
+(CI, local `cargo test`/`cargo build`, `scripts/export-spec.sh`, etc.).
+
+If this workspace ever adds a crate meant to be published to crates.io as a
+reusable library (as opposed to an on-chain contract), revisit this policy
+for that crate specifically — published library crates conventionally do
+**not** commit `Cargo.lock`, so their consumers can resolve compatible
+dependency versions themselves rather than inheriting exact pins.
+
 ## Mutation testing (cargo-mutants)
 
 Code coverage alone can't tell you whether an assertion is too weak or an
