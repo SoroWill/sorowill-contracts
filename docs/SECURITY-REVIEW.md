@@ -2,8 +2,12 @@
 
 **Date:** 2026-07-27
 **Scope:** `contracts/will/src/` — full contract source
+**Target Version:** `CONTRACT_VERSION` `1_000_000` (v1.0.0, baseline ref)
 **Reviewer:** Automated review pass
 **Methodology:** Manual code review covering reentrancy, authorization bypass, integer overflow/underflow, and general Soroban security best practices.
+
+> **Re-Review Schedule & Policy:**
+> Significant contract additions (such as multi-token allocations, batched operations, state schema migrations, or cryptographic changes) require a scheduled follow-up security review before release. Open an issue with the `security` label or reach out to maintainers to request a review against the latest git ref.
 
 ---
 
