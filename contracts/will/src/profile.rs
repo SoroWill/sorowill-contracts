@@ -363,6 +363,7 @@ fn profile_guardians(report: &mut Report) {
     let g_guardians = two_guardians(&g.env);
     let (g_will_id, _) = g.create(&g_guardians);
     g.advance(7 * DAY);
+    g.client.accept_guardian_role(&g_will_id, &g_guardians.get_unchecked(0));
     g.client
         .accept_guardian_role(&g_will_id, &g_guardians.get_unchecked(0));
     g.client.guardian_trigger(

@@ -170,7 +170,7 @@ fn merge_preserves_all_fixed_amounts() {
     let fixed_b = Address::generate(&env);
 
     let amount_a = 100_000i128;
-    let amount_b = 200_000i128;
+    let amount_b = 400_000i128;
 
     let will_1_beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,

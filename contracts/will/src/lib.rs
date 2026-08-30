@@ -3026,7 +3026,7 @@ fn assert_valid_allocations(env: &Env, beneficiaries: &Vec<Beneficiary>, will_ba
 /// sum to exactly 10,000 bps again, proportionally to their current shares
 /// (the last percentage entry absorbs any rounding remainder).
 /// `Allocation::FixedAmount` entries pass through unchanged.
-fn renormalize_percentages(env: &Env, beneficiaries: &Vec<Beneficiary>) -> Vec<Beneficiary> {
+pub(crate) fn renormalize_percentages(env: &Env, beneficiaries: &Vec<Beneficiary>) -> Vec<Beneficiary> {
     let mut percentage_total: u32 = 0;
     let mut percentage_count: u32 = 0;
     for b in beneficiaries.iter() {
@@ -3188,7 +3188,7 @@ fn assert_valid_periods(env: &Env, checkin_period_days: u64, grace_period_days: 
 /// the potentially overflowing `total * basis_points` intermediate. The
 /// workspace release profile enables overflow checks, but this decomposition
 /// also makes the calculation safe independently of that compiler setting.
-fn proportional_share(total: i128, basis_points: u32) -> i128 {
+pub(crate) fn proportional_share(total: i128, basis_points: u32) -> i128 {
     const BASIS_POINTS_TOTAL: i128 = 10_000;
 
     let whole = total / BASIS_POINTS_TOTAL;

@@ -38,3 +38,18 @@ jobs:
       # tests above and only fail at deploy time.
       - name: Build contract for wasm
         run: cargo build --workspace --release --target wasm32v1-none
+
+      - name: Verify WASM binary size budget
+        run: |
+          WASM_PATH="target/wasm32v1-none/release/will.wasm"
+          MAX_BYTES=150000
+          if [ ! -f "$WASM_PATH" ]; then
+            echo "::error::WASM binary not found at $WASM_PATH"
+            exit 1
+          fi
+          SIZE=$(stat -c%s "$WASM_PATH")
+          echo "Compiled WASM size: $SIZE bytes (Budget: $MAX_BYTES bytes)"
+          if [ "$SIZE" -gt "$MAX_BYTES" ]; then
+            echo "::error::WASM size ($SIZE bytes) exceeds budget of $MAX_BYTES bytes documented in docs/WASM_SIZE.md"
+            exit 1
+          fi

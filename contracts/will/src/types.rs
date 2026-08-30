@@ -260,3 +260,16 @@ pub struct WillStatusTransition {
     /// (e.g. "create", "checkin", "trigger", "release").
     pub action: Symbol,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_guardian_vote_reason_discriminants() {
+        assert_eq!(GuardianVoteReason::Deceased as u32, 0);
+        assert_eq!(GuardianVoteReason::Incapacitated as u32, 1);
+        assert_eq!(GuardianVoteReason::Unreachable as u32, 2);
+        assert_eq!(GuardianVoteReason::Other as u32, 3);
+    }
+}
