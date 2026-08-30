@@ -260,6 +260,16 @@ Requires `stellar-cli` (same version as [Local Setup](#local-setup)) and a funde
 
 After running it, review and commit the updated `deployments/testnet.json` on its own — see [CONTRIBUTING.md](./CONTRIBUTING.md#updating-deploymentstestnetjson-after-a-redeploy) for the full checklist. A scheduled CI job also checks daily that this file's contract id still matches the on-chain wasm, so a forgotten update won't drift silently — see [Testnet Deployment Drift Check](.github/workflows/testnet-drift-check.yml).
 
+## Documentation & Further Reading
+
+- [FUZZING.md](./docs/FUZZING.md) — Fuzz target architecture, libFuzzer / cargo-fuzz setup, and continuous fuzzing guidance.
+- [RESOURCE_COSTS.md](./docs/RESOURCE_COSTS.md) — Soroban CPU instructions, memory footprint, and storage fee profiling.
+- [SECURITY-REVIEW.md](./docs/SECURITY-REVIEW.md) — Security review methodology, authorization checks, and contract baseline audit findings.
+- [WASM_SIZE.md](./docs/WASM_SIZE.md) — WebAssembly binary size breakdown and optimization strategies.
+- [ADR 0001: Guardian Threshold](./docs/adr/0001-guardian-threshold.md) — Rationale for the default 2-of-3 guardian consensus mechanism.
+- [ADR 0002: Legacy Token Balance Mirror](./docs/adr/0002-legacy-token-balance-mirror.md) — Migration and compatibility for token balance tracking.
+- [ADR 0003: Total Locked by Token Scalability](./docs/adr/0002-total-locked-by-token-scalability.md) — Storage scalability analysis for multi-token locked balances.
+
 ## Security Policy
 
 Security reports and responsible disclosure guidelines are documented in [`SECURITY.md`](./SECURITY.md). Please do not open public GitHub issues for security vulnerabilities.
