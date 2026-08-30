@@ -1,0 +1,43 @@
+name: Spec Check
+
+# Regenerates the versioned contract spec via scripts/export-spec.sh and
+# fails if that differs from what's committed under spec/ for the current
+# CONTRACT_VERSION, so the published spec can't silently drift out of sync
+# with the compiled contract interface (issue #271).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  spec-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-spec-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install stellar-cli
+        run: cargo install --locked stellar-cli --features opt
+
+      - name: Regenerate contract spec
+        run: ./scripts/export-spec.sh
+
+      - name: Fail if the regenerated spec differs from the committed file
+        run: |
+          git add -N spec
+          git diff --exit-code -- spec
