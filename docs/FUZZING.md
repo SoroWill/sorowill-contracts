@@ -11,6 +11,53 @@ The contract is fuzzed at two depths, both driving the same harness
 Keeping one harness behind both means a bug found by libFuzzer can be pinned as
 a `proptest` case (or a plain `#[test]`) without rewriting it.
 
+## Entry point coverage
+
+`WillContract` has around 35 public entry points. Only the two below are
+currently exercised by a `run_*`/`*Input` pair in `fuzz_harness.rs` (and thus
+by both the `proptest` suite and a `fuzz/fuzz_targets/` target):
+
+| Entry point | Fuzzed |
+|---|---|
+| `create_will` | yes — `run_create_will` / `CreateWillInput` |
+| `update_beneficiaries` | yes — `run_update_beneficiaries` / `UpdateBeneficiariesInput` |
+
+Every other state-mutating entry point has no coverage-guided fuzzing yet and
+is only exercised by hand-written unit tests:
+
+- `cancel_will`
+- `merge_wills`
+- `split_will`
+- `guardian_trigger`
+- `guardian_cancel_trigger`
+- `accept_guardian_role`
+- `reject_guardian_role`
+- `release_inheritance`
+- `reveal_and_claim`
+- `add_hashed_beneficiary`
+- `top_up`
+- `renounce_beneficiary`
+- `batch_create_wills`
+- `batch_check_in`
+- `clone_will`
+- `migrate_will`
+- `archive_will`
+- `close_will`
+- `confirm_will`
+- `check_in`
+- `set_delegate`
+- `trigger_will`
+- `emergency_checkin`
+- `update_guardians`
+- `update_periods`
+- `update_will_settings`
+
+`merge_wills`, `split_will`, and `cancel_will` are the highest-priority gaps:
+they mutate balances and beneficiary/guardian indexes across two wills (or
+split one into two) in ways a differential/invariant harness — in the style
+of the existing `run_create_will`/`run_update_beneficiaries` pair — is well
+suited to catch. See "Adding a target" below for how to wire one up.
+
 ## The invariants
 
 Every target asserts the same central property first:

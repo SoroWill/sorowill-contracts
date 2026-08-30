@@ -39,9 +39,11 @@ fn basis_points_strategy() -> impl Strategy<Value = u32> {
 }
 
 fn beneficiary_spec_strategy() -> impl Strategy<Value = BeneficiarySpec> {
-    (any::<u8>(), basis_points_strategy()).prop_map(|(address_slot, basis_points)| BeneficiarySpec {
-        address_slot,
-        basis_points,
+    (any::<u8>(), basis_points_strategy()).prop_map(|(address_slot, basis_points)| {
+        BeneficiarySpec {
+            address_slot,
+            basis_points,
+        }
     })
 }
 
@@ -138,11 +140,13 @@ fn update_beneficiaries_input_strategy() -> impl Strategy<Value = UpdateBenefici
         prop::collection::vec(beneficiaries_strategy(), 0..5),
         any::<bool>(),
     )
-        .prop_map(|(create, updates, probe_non_owner)| UpdateBeneficiariesInput {
-            create,
-            updates,
-            probe_non_owner,
-        })
+        .prop_map(
+            |(create, updates, probe_non_owner)| UpdateBeneficiariesInput {
+                create,
+                updates,
+                probe_non_owner,
+            },
+        )
 }
 
 // Each case registers a fresh Soroban env plus two contracts, so the case
@@ -328,7 +332,17 @@ fn create_will_rejects_overflowing_basis_points() {
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token.clone(), 1_000_000_i128)];
 
     assert_eq!(
-        client.try_create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0),
+        client.try_create_will(
+            &owner,
+            &tokens,
+            &beneficiaries,
+            &90,
+            &7,
+            &vec![&env],
+            &2,
+            &None,
+            &0
+        ),
         Err(Ok(WillError::InvalidPercentages.into()))
     );
 }
@@ -341,7 +355,17 @@ fn create_will_rejects_non_10000_basis_points() {
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token.clone(), 1_000_000_i128)];
 
     assert_eq!(
-        client.try_create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0),
+        client.try_create_will(
+            &owner,
+            &tokens,
+            &beneficiaries,
+            &90,
+            &7,
+            &vec![&env],
+            &2,
+            &None,
+            &0
+        ),
         Err(Ok(WillError::InvalidPercentages.into()))
     );
 }
@@ -404,11 +428,31 @@ fn create_will_rejects_zero_length_periods() {
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token.clone(), 1_000_000_i128)];
 
     assert_eq!(
-        client.try_create_will(&owner, &tokens, &beneficiaries, &0, &7, &vec![&env], &2, &None, &0),
+        client.try_create_will(
+            &owner,
+            &tokens,
+            &beneficiaries,
+            &0,
+            &7,
+            &vec![&env],
+            &2,
+            &None,
+            &0
+        ),
         Err(Ok(WillError::InvalidPeriod.into()))
     );
     assert_eq!(
-        client.try_create_will(&owner, &tokens, &beneficiaries, &90, &0, &vec![&env], &2, &None, &0),
+        client.try_create_will(
+            &owner,
+            &tokens,
+            &beneficiaries,
+            &90,
+            &0,
+            &vec![&env],
+            &2,
+            &None,
+            &0
+        ),
         Err(Ok(WillError::InvalidPeriod.into()))
     );
 }
@@ -470,8 +514,17 @@ fn update_guardians_rejects_duplicate_guardians() {
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token.clone(), 1_000_000_i128)];
     let guardian = Address::generate(&env);
 
-    let will_id =
-        client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     assert_eq!(
         client.try_update_guardians(&will_id, &owner, &vec![&env, guardian.clone(), guardian]),

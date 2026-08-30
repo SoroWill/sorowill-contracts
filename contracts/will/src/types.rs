@@ -31,17 +31,19 @@ pub struct Beneficiary {
     pub allocation: Allocation,
 }
 
-/// Consent state of a named guardian.
+/// Consent status for a named guardian.
 ///
-/// A guardian must explicitly accept their role before they can vote in
-/// [`guardian_trigger`]; rejecting prevents voting unless the owner re-adds
-/// them.
+/// A guardian must explicitly accept before they can cast a `guardian_trigger`
+/// vote. The owner may also reject a guardian's acceptance.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GuardianConsent {
-    Pending = 0,
-    Accepted = 1,
-    Rejected = 2,
+    /// Guardian has been named but has not yet responded.
+    Pending,
+    /// Guardian has accepted the role and may vote.
+    Accepted,
+    /// Guardian has declined the role.
+    Rejected,
 }
 
 /// A guardian entry: an address paired with a vote weight and consent status.
@@ -56,6 +58,15 @@ pub struct Guardian {
     pub address: Address,
     pub weight: u32,
     pub consent: GuardianConsent,
+}
+
+/// Consent status of a designated guardian.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuardianConsent {
+    Pending = 0,
+    Accepted = 1,
+    Rejected = 2,
 }
 
 /// A privacy-preserving beneficiary entry (issue #46).
@@ -123,8 +134,6 @@ pub struct ProtocolStats {
     pub total_locked_by_token: Vec<TokenLockedBalance>,
 }
 
-
-
 /// A beneficiary's claimable share in a pull-based distribution.
 ///
 /// Stored in persistent storage keyed by `(will_id, beneficiary_address)`.
@@ -164,6 +173,9 @@ pub struct Will {
     /// When `true`, transfers use `env.transfer()` instead of the token client.
     pub is_native: bool,
     /// The amount of `token` currently locked in the will, in the token's base units.
+    /// A legacy mirror of `balances[token]` kept for backward compatibility;
+    /// every writer that touches the primary token's balance must update both
+    /// fields together until this mirror is fully removed.
     pub balance: i128,
     /// The beneficiaries and their basis-point shares. Always sums to 10,000.
     pub beneficiaries: Vec<Beneficiary>,
@@ -256,4 +268,17 @@ pub struct WillStatusTransition {
     /// A short label describing what caused the transition
     /// (e.g. "create", "checkin", "trigger", "release").
     pub action: Symbol,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_guardian_vote_reason_discriminants() {
+        assert_eq!(GuardianVoteReason::Deceased as u32, 0);
+        assert_eq!(GuardianVoteReason::Incapacitated as u32, 1);
+        assert_eq!(GuardianVoteReason::Unreachable as u32, 2);
+        assert_eq!(GuardianVoteReason::Other as u32, 3);
+    }
 }
