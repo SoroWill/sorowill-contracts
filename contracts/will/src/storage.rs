@@ -446,7 +446,11 @@ pub fn get_triggered_wills(env: &Env) -> Vec<u64> {
 
 /// Returns the full vote record for `guardian` in the current trigger cycle
 /// for `will_id`, or `None` if they have not voted.
-pub fn get_guardian_vote(env: &Env, will_id: u64, guardian: &Address) -> Option<GuardianVoteRecord> {
+pub fn get_guardian_vote(
+    env: &Env,
+    will_id: u64,
+    guardian: &Address,
+) -> Option<GuardianVoteRecord> {
     let key = DataKey::GuardianVote(will_id, guardian.clone());
     env.storage().persistent().get(&key)
 }
@@ -516,7 +520,11 @@ pub fn has_guardian_cancel_voted(
     expiry_days: u64,
 ) -> bool {
     let key = DataKey::GuardianCancelVote(will_id, guardian.clone());
-    if let Some(record) = env.storage().persistent().get::<_, GuardianVoteRecord>(&key) {
+    if let Some(record) = env
+        .storage()
+        .persistent()
+        .get::<_, GuardianVoteRecord>(&key)
+    {
         let expiry_secs = expiry_days * SECONDS_PER_DAY;
         now - record.timestamp <= expiry_secs
     } else {
@@ -525,12 +533,7 @@ pub fn has_guardian_cancel_voted(
 }
 
 /// Records that `guardian` has cast a cancel-trigger vote for `will_id`.
-pub fn set_guardian_cancel_voted(
-    env: &Env,
-    will_id: u64,
-    guardian: &Address,
-    timestamp: u64,
-) {
+pub fn set_guardian_cancel_voted(env: &Env, will_id: u64, guardian: &Address, timestamp: u64) {
     let key = DataKey::GuardianCancelVote(will_id, guardian.clone());
     let record = GuardianVoteRecord {
         timestamp,
@@ -670,4 +673,3 @@ pub fn archive_will(env: &Env, will: &Will) {
         remove_beneficiary_index(env, &beneficiary.address, will.id);
     }
 }
-

@@ -130,7 +130,13 @@ fn release_pays_the_latest_of_several_beneficiary_updates() {
     let will_id = client.create_will(
         &owner,
         &vec![&env, (token_address.clone(), 1_000_000_i128)],
-        &vec![&env, Beneficiary { address: first.clone(), allocation: Allocation::Percentage(10_000) }],
+        &vec![
+            &env,
+            Beneficiary {
+                address: first.clone(),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
         &90,
         &7,
         &vec![&env],
@@ -142,7 +148,13 @@ fn release_pays_the_latest_of_several_beneficiary_updates() {
     client.update_beneficiaries(
         &will_id,
         &owner,
-        &vec![&env, Beneficiary { address: second.clone(), allocation: Allocation::Percentage(10_000) }],
+        &vec![
+            &env,
+            Beneficiary {
+                address: second.clone(),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
     );
     assert_beneficiaries_are_indexed(&client, &client.get_will(&will_id));
     assert_removed_beneficiaries_are_unindexed(&client, will_id, &[first.clone()]);
@@ -150,7 +162,13 @@ fn release_pays_the_latest_of_several_beneficiary_updates() {
     client.update_beneficiaries(
         &will_id,
         &owner,
-        &vec![&env, Beneficiary { address: third.clone(), allocation: Allocation::Percentage(10_000) }],
+        &vec![
+            &env,
+            Beneficiary {
+                address: third.clone(),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
     );
     assert_beneficiaries_are_indexed(&client, &client.get_will(&will_id));
     assert_removed_beneficiaries_are_unindexed(&client, will_id, &[first.clone(), second.clone()]);
@@ -221,5 +239,8 @@ fn update_beneficiaries_rejected_after_trigger() {
         ],
     );
 
-    assert!(result.is_err(), "update_beneficiaries must be rejected after trigger");
+    assert!(
+        result.is_err(),
+        "update_beneficiaries must be rejected after trigger"
+    );
 }

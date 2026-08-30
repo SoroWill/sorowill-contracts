@@ -14,11 +14,17 @@ use soroban_sdk::{
     vec, Address, Env, Vec as SorobanVec,
 };
 
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatus};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
 const DAY: u64 = 86_400;
 
-fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Address) {
+fn setup<'a>() -> (
+    Env,
+    WillContractClient<'a>,
+    Address,
+    TokenClient<'a>,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -31,7 +37,13 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Addres
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    (env.clone(), client, owner, TokenClient::new(&env, &token_address), token_address)
+    (
+        env.clone(),
+        client,
+        owner,
+        TokenClient::new(&env, &token_address),
+        token_address,
+    )
 }
 
 fn advance(env: &Env, days: u64) {
@@ -66,7 +78,8 @@ fn merge_preserves_fixed_amount_allocation() {
             allocation: Allocation::Percentage(10_000),
         },
     ];
-    let will_a_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 100_000i128)];
+    let will_a_tokens: SorobanVec<(Address, i128)> =
+        vec![&env, (token_address.clone(), 100_000i128)];
 
     let will_b_beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
@@ -79,30 +92,61 @@ fn merge_preserves_fixed_amount_allocation() {
             allocation: Allocation::Percentage(10_000),
         },
     ];
-    let will_b_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 900_000i128)];
+    let will_b_tokens: SorobanVec<(Address, i128)> =
+        vec![&env, (token_address.clone(), 900_000i128)];
 
-    let will_a = client.create_will(&owner, &will_a_tokens, &will_a_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
-    let will_b = client.create_will(&owner, &will_b_tokens, &will_b_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_a = client.create_will(
+        &owner,
+        &will_a_tokens,
+        &will_a_beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
+    let will_b = client.create_will(
+        &owner,
+        &will_b_tokens,
+        &will_b_beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
-    client.merge_wills(&will_a, &will_b, &owner);
+    client.merge_wills(&owner, &will_a, &will_b);
 
     // Check that the merged will has both beneficiaries
     let merged_will = client.get_will(&will_a);
-    assert_eq!(merged_will.beneficiaries.len(), 2, "should have both beneficiaries after merge");
+    assert_eq!(
+        merged_will.beneficiaries.len(),
+        2,
+        "should have both beneficiaries after merge"
+    );
 
     // Verify that the fixed beneficiary is still FixedAmount, not converted to Percentage
-    let fixed_ben = merged_will.beneficiaries.iter()
+    let fixed_ben = merged_will
+        .beneficiaries
+        .iter()
         .find(|b| b.address == fixed_beneficiary)
         .expect("fixed beneficiary should exist");
 
     match fixed_ben.allocation {
         Allocation::FixedAmount(amt) => {
             // The amount should be the sum of both wills' fixed amounts
-            assert_eq!(amt, fixed_amount * 2, "fixed amount should be sum of both wills");
-        },
+            assert_eq!(
+                amt,
+                fixed_amount * 2,
+                "fixed amount should be sum of both wills"
+            );
+        }
         Allocation::Percentage(_) => {
             panic!("fixed beneficiary was incorrectly converted to Percentage!");
-        },
+        }
     }
 
     release(&env, &client, will_a);
@@ -110,9 +154,11 @@ fn merge_preserves_fixed_amount_allocation() {
     // Verify actual distribution matches the fixed-amount semantics
     let fixed_balance = token.balance(&fixed_beneficiary);
     assert_eq!(
-        fixed_balance, fixed_amount * 2,
+        fixed_balance,
+        fixed_amount * 2,
         "fixed beneficiary should receive exactly the fixed amount ({}), got {}",
-        fixed_amount * 2, fixed_balance
+        fixed_amount * 2,
+        fixed_balance
     );
 }
 
@@ -128,22 +174,56 @@ fn merge_preserves_all_fixed_amounts() {
 
     let will_1_beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: fixed_a.clone(), allocation: Allocation::FixedAmount(amount_a) },
-        Beneficiary { address: fixed_b.clone(), allocation: Allocation::FixedAmount(amount_b) },
+        Beneficiary {
+            address: fixed_a.clone(),
+            allocation: Allocation::FixedAmount(amount_a),
+        },
+        Beneficiary {
+            address: fixed_b.clone(),
+            allocation: Allocation::FixedAmount(amount_b),
+        },
     ];
-    let will_1_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 500_000i128)];
+    let will_1_tokens: SorobanVec<(Address, i128)> =
+        vec![&env, (token_address.clone(), 300_000i128)];
 
     let will_2_beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: fixed_a.clone(), allocation: Allocation::FixedAmount(amount_a) },
-        Beneficiary { address: fixed_b.clone(), allocation: Allocation::FixedAmount(amount_b) },
+        Beneficiary {
+            address: fixed_a.clone(),
+            allocation: Allocation::FixedAmount(amount_a),
+        },
+        Beneficiary {
+            address: fixed_b.clone(),
+            allocation: Allocation::FixedAmount(amount_b),
+        },
     ];
-    let will_2_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 500_000i128)];
+    let will_2_tokens: SorobanVec<(Address, i128)> =
+        vec![&env, (token_address.clone(), 300_000i128)];
 
-    let will_1 = client.create_will(&owner, &will_1_tokens, &will_1_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
-    let will_2 = client.create_will(&owner, &will_2_tokens, &will_2_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_1 = client.create_will(
+        &owner,
+        &will_1_tokens,
+        &will_1_beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
+    let will_2 = client.create_will(
+        &owner,
+        &will_2_tokens,
+        &will_2_beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
-    client.merge_wills(&will_1, &will_2, &owner);
+    client.merge_wills(&owner, &will_1, &will_2);
 
     let merged_will = client.get_will(&will_1);
 
@@ -152,10 +232,13 @@ fn merge_preserves_all_fixed_amounts() {
         match beneficiary.allocation {
             Allocation::FixedAmount(_) => {
                 // Good, preserve the fixed amount semantics
-            },
+            }
             Allocation::Percentage(_) => {
-                panic!("beneficiary {:?} was incorrectly converted to Percentage!", beneficiary.address);
-            },
+                panic!(
+                    "beneficiary {:?} was incorrectly converted to Percentage!",
+                    beneficiary.address
+                );
+            }
         }
     }
 
@@ -164,6 +247,16 @@ fn merge_preserves_all_fixed_amounts() {
     let balance_a = token.balance(&fixed_a);
     let balance_b = token.balance(&fixed_b);
 
-    assert_eq!(balance_a, amount_a * 2, "fixed_a should receive exactly {} tokens", amount_a * 2);
-    assert_eq!(balance_b, amount_b * 2, "fixed_b should receive exactly {} tokens", amount_b * 2);
+    assert_eq!(
+        balance_a,
+        amount_a * 2,
+        "fixed_a should receive exactly {} tokens",
+        amount_a * 2
+    );
+    assert_eq!(
+        balance_b,
+        amount_b * 2,
+        "fixed_b should receive exactly {} tokens",
+        amount_b * 2
+    );
 }

@@ -45,7 +45,13 @@ fn assert_will_invariants(
 
 const DAY: u64 = 86_400;
 
-fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Address) {
+fn setup<'a>() -> (
+    Env,
+    WillContractClient<'a>,
+    Address,
+    TokenClient<'a>,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -58,7 +64,13 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Addres
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    (env.clone(), client, owner, TokenClient::new(&env, &token_address), token_address)
+    (
+        env.clone(),
+        client,
+        owner,
+        TokenClient::new(&env, &token_address),
+        token_address,
+    )
 }
 
 fn advance(env: &Env, days: u64) {
@@ -83,8 +95,14 @@ fn pure_percentage_regression() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: a.clone(), allocation: Allocation::Percentage(6_000) },
-        Beneficiary { address: b.clone(), allocation: Allocation::Percentage(4_000) },
+        Beneficiary {
+            address: a.clone(),
+            allocation: Allocation::Percentage(6_000),
+        },
+        Beneficiary {
+            address: b.clone(),
+            allocation: Allocation::Percentage(4_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 1_000_000_i128)];
 
@@ -109,8 +127,14 @@ fn pure_fixed_amount() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: sister.clone(), allocation: Allocation::FixedAmount(700_000) },
-        Beneficiary { address: brother.clone(), allocation: Allocation::FixedAmount(300_000) },
+        Beneficiary {
+            address: sister.clone(),
+            allocation: Allocation::FixedAmount(700_000),
+        },
+        Beneficiary {
+            address: brother.clone(),
+            allocation: Allocation::FixedAmount(300_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 1_000_000_i128)];
 
@@ -139,9 +163,18 @@ fn mixed_fixed_and_percentage() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: sister.clone(), allocation: Allocation::FixedAmount(200_000) },
-        Beneficiary { address: child_a.clone(), allocation: Allocation::Percentage(5_000) },
-        Beneficiary { address: child_b.clone(), allocation: Allocation::Percentage(5_000) },
+        Beneficiary {
+            address: sister.clone(),
+            allocation: Allocation::FixedAmount(200_000),
+        },
+        Beneficiary {
+            address: child_a.clone(),
+            allocation: Allocation::Percentage(5_000),
+        },
+        Beneficiary {
+            address: child_b.clone(),
+            allocation: Allocation::Percentage(5_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 1_000_000_i128)];
 
@@ -165,13 +198,29 @@ fn fixed_amount_exceeding_balance_is_rejected() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: a, allocation: Allocation::FixedAmount(900_000) },
-        Beneficiary { address: b, allocation: Allocation::FixedAmount(200_000) },
+        Beneficiary {
+            address: a,
+            allocation: Allocation::FixedAmount(900_000),
+        },
+        Beneficiary {
+            address: b,
+            allocation: Allocation::FixedAmount(200_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
 
     assert_eq!(
-        client.try_create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0),
+        client.try_create_will(
+            &owner,
+            &tokens,
+            &beneficiaries,
+            &90,
+            &7,
+            &vec![&env],
+            &2,
+            &None,
+            &0
+        ),
         Err(Ok(WillError::FixedAmountExceedsBalance.into()))
     );
 }
@@ -189,12 +238,28 @@ fn top_up_grows_the_percentage_remainder_not_the_fixed_share() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: sister.clone(), allocation: Allocation::FixedAmount(200_000) },
-        Beneficiary { address: rest.clone(), allocation: Allocation::Percentage(10_000) },
+        Beneficiary {
+            address: sister.clone(),
+            allocation: Allocation::FixedAmount(200_000),
+        },
+        Beneficiary {
+            address: rest.clone(),
+            allocation: Allocation::Percentage(10_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 1_000_000_i128)];
 
-    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
     client.top_up(&will_id, &owner, &token_address, &500_000);
     assert_will_invariants(&client, &token, &token_address, will_id);
 
@@ -222,7 +287,10 @@ fn will_partialeq_allows_single_assert() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: beneficiary.clone(), allocation: Allocation::Percentage(10_000) },
+        Beneficiary {
+            address: beneficiary.clone(),
+            allocation: Allocation::Percentage(10_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 500_000_i128)];
 
@@ -266,9 +334,18 @@ fn three_way_percentage_split_with_remainder() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: alice.clone(), allocation: Allocation::Percentage(3_333) },
-        Beneficiary { address: bob.clone(), allocation: Allocation::Percentage(3_333) },
-        Beneficiary { address: charlie.clone(), allocation: Allocation::Percentage(3_334) },
+        Beneficiary {
+            address: alice.clone(),
+            allocation: Allocation::Percentage(3_333),
+        },
+        Beneficiary {
+            address: bob.clone(),
+            allocation: Allocation::Percentage(3_333),
+        },
+        Beneficiary {
+            address: charlie.clone(),
+            allocation: Allocation::Percentage(3_334),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 1_000_000_i128)];
 

@@ -125,8 +125,6 @@ pub struct ProtocolStats {
     pub total_locked_by_token: Vec<TokenLockedBalance>,
 }
 
-
-
 /// A beneficiary's claimable share in a pull-based distribution.
 ///
 /// Stored in persistent storage keyed by `(will_id, beneficiary_address)`.
