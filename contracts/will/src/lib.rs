@@ -1725,6 +1725,11 @@ impl WillContract {
     /// immediately distributed to beneficiaries, bypassing the check-in and
     /// grace-period flow entirely.
     ///
+    /// Keeper bounties are never paid on a guardian-triggered release:
+    /// `distribute` is called with `keeper = None`, so `keeper_bounty_bps`
+    /// has no effect in this path. Only [`release_inheritance`]'s
+    /// caller-supplied `Option<Address>` can trigger a bounty payment.
+    ///
     /// Enforces a cooldown after a guardian-list change: if the current
     /// guardian list was updated less than [`GUARDIAN_COOLDOWN_DAYS`] days ago,
     /// the vote is rejected with [`WillError::GuardianCooldownActive`].
@@ -3327,6 +3332,7 @@ fn merge_beneficiaries(env: &Env, will_a: &Will, will_b: &Will) -> Vec<Beneficia
                 Allocation::Percentage(bp) => will_balance * (bp as i128) / 10_000,
                 Allocation::FixedAmount(amt) => amt,
             };
+            let allocation = beneficiary.allocation.clone();
             let mut found = false;
             let mut updated_shares: Vec<(Address, i128)> = Vec::new(env);
             let mut updated_allocations: Vec<(Address, Allocation)> = Vec::new(env);
