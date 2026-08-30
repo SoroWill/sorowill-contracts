@@ -433,6 +433,9 @@ pub fn unindex_triggered_will(env: &Env, will_id: u64) {
     };
     ids.remove_unchecked(index);
     env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
 }
 
 /// Returns the full list of will ids currently in `Triggered` status.
