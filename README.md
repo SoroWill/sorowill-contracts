@@ -119,19 +119,46 @@ use will::{MAX_BENEFICIARIES, MAX_GUARDIANS, GUARDIAN_THRESHOLD};
 | Function | Description | Parameters | Returns |
 |---|---|---|---|
 | `create_will` | Locks a token balance and creates a new will | `owner`, `token`, `amount`, `beneficiaries`, `checkin_period_days`, `grace_period_days`, `guardians` | `u64` (will id) |
+| `batch_create_wills` | Creates multiple wills in a single invocation | `owner`, `configs` | `Vec<u64>` |
+| `confirm_will` | Confirms will creation | `will_id`, `owner` | — |
 | `check_in` | Resets the check-in countdown | `will_id`, `owner` | — |
+| `batch_check_in` | Resets countdown for multiple wills simultaneously | `will_ids`, `caller` | `Vec<u64>` |
+| `set_delegate` | Assigns or removes a designated check-in delegate | `will_id`, `owner`, `delegate` | — |
 | `trigger_will` | Starts the grace period after a missed check-in | `will_id` | — |
 | `emergency_checkin` | Cancels an in-progress trigger during the grace period | `will_id`, `owner` | — |
 | `release_inheritance` | Distributes the balance to beneficiaries after the grace period expires | `will_id` | — |
 | `cancel_will` | Withdraws the full balance and closes the will | `will_id`, `owner` | — |
+| `close_will` | Closes and finalizes a completed will | `will_id`, `caller` | — |
 | `update_beneficiaries` | Replaces the beneficiary list before the will is triggered | `will_id`, `owner`, `beneficiaries` | — |
+| `renounce_beneficiary` | Allows a beneficiary to renounce their allocation | `will_id`, `beneficiary` | — |
+| `add_hashed_beneficiary` | Adds a privacy-preserving commitment hash for a beneficiary | `will_id`, `owner`, `hashed_beneficiary` | — |
+| `reveal_and_claim` | Reveals preimage and claims inheritance for a hashed beneficiary | `will_id`, `claimant`, `preimage` | — |
+| `update_guardians` | Replaces guardian list for an active will | `will_id`, `owner`, `guardians` | — |
+| `update_guardians_weighted` | Configures weighted threshold guardian voting | `will_id`, `owner`, `guardians`, `threshold` | — |
+| `accept_guardian_role` | Formally accepts guardian appointment | `will_id`, `guardian` | — |
+| `reject_guardian_role` | Declines guardian appointment | `will_id`, `guardian` | — |
+| `guardian_trigger` | Casts a guardian vote to trigger grace period or early release | `will_id`, `guardian` | — |
+| `guardian_cancel_trigger` | Guardian vote to cancel an active trigger | `will_id`, `guardian` | — |
+| `update_periods` | Updates checkin and grace period durations | `will_id`, `owner`, `checkin_period_days`, `grace_period_days` | — |
+| `update_will_settings` | Atomically updates multiple will settings | `will_id`, `owner`, `settings` | — |
 | `top_up` | Adds more of the token to an existing will | `will_id`, `owner`, `amount` | — |
+| `split_will` | Splits an existing will into multiple independent wills | `will_id`, `owner`, `split_configs` | `Vec<u64>` |
+| `merge_wills` | Merges multiple wills into a consolidated will | `source_will_ids`, `owner` | `u64` |
+| `clone_will` | Clones configuration of an existing will into a new will | `source_will_id`, `owner`, `initial_amount` | `u64` |
+| `migrate_will` | Migrates will data representation across versions | `will_id`, `owner` | — |
+| `archive_will` | Explicitly moves a terminal will to archived storage | `will_id`, `caller` | — |
 | `get_will` | Reads the full state of a will | `will_id` | `Will` |
-| `get_will_status` | Reads only a will's lifecycle status, without loading the rest of the struct | `will_id` | `WillStatus` |
-| `get_time_until_deadline` | Seconds until the will's next relevant deadline (check-in or grace period); negative if past due, `None` if not applicable to the current status | `will_id` | `Option<i64>` |
+| `get_will_status` | Reads only a will's lifecycle status | `will_id` | `WillStatus` |
+| `get_wills` | Paginated query for all wills | `start_id`, `limit` | `Vec<Will>` |
+| `get_time_until_deadline` | Seconds until next deadline; negative if past due, `None` if N/A | `will_id` | `Option<i64>` |
+| `get_guardian_vote_status` | Status and counts of guardian votes for a will | `will_id` | `GuardianVoteStatus` |
 | `get_wills_by_owner` | Lists every will owned by an address | `owner` | `Vec<Will>` |
+| `get_wills_by_owner_and_status` | Queries wills by owner and specific lifecycle status | `owner`, `status` | `Vec<Will>` |
 | `get_wills_by_beneficiary` | Lists every will an address is named in | `beneficiary` | `Vec<Will>` |
-| `guardian_trigger` | Casts a guardian vote; 2 of 3 forces an early release | `will_id`, `guardian` | — |
+| `get_triggered_wills` | Returns list of currently triggered will IDs | — | `Vec<u64>` |
+| `get_will_history` | Audit log of state transitions for a will | `will_id` | `Vec<WillHistoryRecord>` |
+| `get_protocol_stats` | Global protocol summary statistics | — | `ProtocolStats` |
+| `get_contract_version` | Current deployed contract version code | — | `u32` |
 
 `checkin_period_days` and `grace_period_days` passed to `create_will` must each be at least `1` day (and at most `MAX_PERIOD_DAYS`); a value of `0` panics with `WillError::InvalidPeriod`.
 
