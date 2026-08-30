@@ -157,3 +157,27 @@ fn merge_wills_multiple_decrements() {
         "after second merge, should have 1 active will"
     );
 }
+
+#[test]
+fn merge_wills_rejects_different_owners() {
+    let (env, client, owner_a, token_address) = setup();
+    let owner_b = Address::generate(&env);
+    StellarAssetClient::new(&env, &token_address).mint(&owner_b, &1_000_000_000);
+
+    let beneficiary = Address::generate(&env);
+    let beneficiaries: SorobanVec<Beneficiary> = vec![
+        &env,
+        Beneficiary {
+            address: beneficiary,
+            allocation: Allocation::Percentage(10_000),
+        },
+    ];
+    let tokens_a: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 100_000)];
+    let tokens_b: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 100_000)];
+
+    let will_a = client.create_will(&owner_a, &tokens_a, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_b = client.create_will(&owner_b, &tokens_b, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+
+    let res = client.try_merge_wills(&owner_a, &will_a, &will_b);
+    assert_eq!(res, Err(Ok(crate::WillError::NotSameOwner.into())));
+}

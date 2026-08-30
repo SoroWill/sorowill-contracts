@@ -60,6 +60,15 @@ pub struct Guardian {
     pub consent: GuardianConsent,
 }
 
+/// Consent status of a designated guardian.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuardianConsent {
+    Pending = 0,
+    Accepted = 1,
+    Rejected = 2,
+}
+
 /// A privacy-preserving beneficiary entry (issue #46).
 ///
 /// Instead of a raw address the owner stores a SHA-256 commitment hash of the

@@ -2373,7 +2373,10 @@ impl WillContract {
         }
 
         let mut will_a = load_owned(&env, will_id_a, &owner);
-        let mut will_b = load_owned(&env, will_id_b, &owner);
+        let mut will_b = load_will(&env, will_id_b);
+        if will_b.owner != owner {
+            panic_with_error!(&env, WillError::NotSameOwner);
+        }
 
         assert_status(
             &env,

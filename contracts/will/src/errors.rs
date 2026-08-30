@@ -23,8 +23,6 @@ pub enum WillError {
     GracePeriodExpired = 6,
     /// Beneficiary percentages did not sum to exactly 10,000.
     InvalidPercentages = 7,
-    /// A beneficiary percentage is not in the valid range (1..=100).
-    InvalidPercentage = 22,
     /// The guardian has already voted to trigger this will.
     AlreadyVoted = 8,
     /// The caller is not a designated guardian of this will.

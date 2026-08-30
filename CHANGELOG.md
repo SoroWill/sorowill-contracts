@@ -10,6 +10,10 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ## [Unreleased]
 
+### Removed
+
+- Removed unused `InvalidPercentage` (code 22) error variant from `WillError`.
+
 ## [0.1.0] - Initial shipped behavior
 
 Seeded entry summarizing the contract's behavior as of this changelog's

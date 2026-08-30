@@ -342,9 +342,12 @@ fn profile_guardians(report: &mut Report) {
     let first = guardians.get_unchecked(0);
     let second = guardians.get_unchecked(1);
 
+    f.client.accept_guardian_role(&will_id, &first);
+    f.client.accept_guardian_role(&will_id, &second);
+
     // guardian_trigger is blocked until GUARDIAN_COOLDOWN_DAYS have passed
     // since the guardian list was last changed (it was just set at creation).
-    f.advance(7 * DAY);
+    f.advance(8 * DAY);
 
     f.client.accept_guardian_role(&will_id, &first);
     f.client.accept_guardian_role(&will_id, &second);
