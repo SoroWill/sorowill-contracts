@@ -467,7 +467,7 @@ pub fn has_guardian_voted(
 ) -> bool {
     if let Some(record) = get_guardian_vote(env, will_id, guardian) {
         let expiry_secs = expiry_days * SECONDS_PER_DAY;
-        now - record.timestamp <= expiry_secs
+        now >= record.timestamp && (now - record.timestamp <= expiry_secs)
     } else {
         false
     }
@@ -526,7 +526,7 @@ pub fn has_guardian_cancel_voted(
         .get::<_, GuardianVoteRecord>(&key)
     {
         let expiry_secs = expiry_days * SECONDS_PER_DAY;
-        now - record.timestamp <= expiry_secs
+        now >= record.timestamp && (now - record.timestamp <= expiry_secs)
     } else {
         false
     }
