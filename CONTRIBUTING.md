@@ -178,6 +178,27 @@ cargo llvm-cov --workspace --lcov --output-path lcov.info
 cargo llvm-cov --workspace --html --open
 ```
 
+
+## Fuzz testing (cargo-fuzz)
+
+The `fuzz/` directory is a dedicated Cargo workspace member containing `cargo-fuzz` targets for coverage-guided testing of smart contract entry points and state invariants.
+
+### Running fuzz targets
+
+```bash
+cargo install cargo-fuzz
+cd fuzz && cargo +nightly fuzz run create_will
+```
+
+### When to add a new fuzz target
+
+Contributors should add or extend fuzz targets whenever introducing:
+- A new state-mutating entry point (e.g. multi-token allocations, split/merge flows, batch updates).
+- Complex numerical computations or percentage splits susceptible to overflow, precision truncation, or rounding drift.
+- Dynamic collection validation (guardians, beneficiaries, hash commitments) where combinatorial inputs could violate contract invariants.
+
+See [docs/FUZZING.md](./docs/FUZZING.md) for full details on documented invariants, crash minimization, and step-by-step instructions on wiring a new fuzz target under `fuzz/fuzz_targets/`.
+
 ## Learn more
 
 Full details on how Wave Programs work — applying, Points, rewards, and payouts — are documented at <https://drips.network/wave>.
