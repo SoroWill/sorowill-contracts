@@ -211,3 +211,43 @@ fn issue_193_paginate_with_remove_readd_beneficiary() {
         assert_eq!(ids_in_pages.len(), page1.len(), "Should retrieve all beneficiary wills without gaps");
     }
 }
+
+/// Regression test for stale guardian votes after a guardian is removed and re-added.
+#[test]
+fn stale_guardian_vote_cleared_when_guardian_removed() {
+    let (env, client, owner, _token, token_address) = setup();
+    let guardian = Address::generate(&env);
+    let replacement_guardian = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+
+    let beneficiaries: SorobanVec<Beneficiary> = vec![
+        &env,
+        Beneficiary {
+            address: beneficiary.clone(),
+            allocation: Allocation::Percentage(10_000),
+        },
+    ];
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 100_000_i128)];
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env, guardian.clone()],
+        &1,
+        &None,
+        &0,
+    );
+
+    client.submit_guardian_vote(&will_id, &guardian);
+    assert!(client.has_guardian_voted(&will_id, &guardian));
+
+    client.update_guardians(&will_id, &owner, &vec![&env, replacement_guardian.clone()]);
+    client.update_guardians(&will_id, &owner, &vec![&env, guardian.clone()]);
+
+    assert!(
+        !client.has_guardian_voted(&will_id, &guardian),
+        "re-added guardian should not retain a vote from before removal"
+    );
+}
