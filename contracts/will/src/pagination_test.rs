@@ -36,7 +36,7 @@ fn pagination_respects_limit_parameter() {
     let beneficiary = Address::generate(&env);
 
     // Create multiple wills with the same beneficiary
-    let mut will_ids = vec![];
+    let mut will_ids = vec![&env];
     for i in 0..5 {
         let will_id = client.create_will(
             &owner,
@@ -55,7 +55,7 @@ fn pagination_respects_limit_parameter() {
             &None,
             &0,
         );
-        will_ids.push(will_id);
+        will_ids.push_back(will_id);
     }
 
     // Fetch with limit=2
@@ -80,7 +80,7 @@ fn pagination_handles_all_results() {
     let beneficiary = Address::generate(&env);
 
     // Create 3 wills
-    let mut will_ids = vec![];
+    let mut will_ids = vec![&env];
     for i in 0..3 {
         let will_id = client.create_will(
             &owner,
@@ -99,7 +99,7 @@ fn pagination_handles_all_results() {
             &None,
             &0,
         );
-        will_ids.push(will_id);
+        will_ids.push_back(will_id);
     }
 
     // Fetch all without pagination (limit = 0 or very high)

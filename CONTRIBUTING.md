@@ -148,6 +148,69 @@ blocking; until then, treat a growing survivor count as a signal to
 prioritize test-writing, and file a follow-up issue for anything
 out of scope for the PR at hand.
 
+## Fuzzing (`fuzz/` workspace member)
+
+`fuzz/` is a separate Cargo workspace member with its own `Cargo.toml` and
+`fuzz_targets/` directory. It is excluded from the root workspace
+(`cargo test --workspace` and `cargo clippy --all-targets` never build it)
+because it requires a nightly toolchain and links against libFuzzer. Coverage-guided fuzzing runs on demand and on a nightly CI schedule.
+
+### Running existing targets
+
+```sh
+rustup toolchain install nightly
+cargo install cargo-fuzz
+
+cd fuzz
+cargo +nightly fuzz run create_will
+cargo +nightly fuzz run update_beneficiaries
+```
+
+For a time-bounded run (e.g. in CI or a quick local sanity-check):
+
+```sh
+cargo +nightly fuzz run create_will -- -max_total_time=300
+```
+
+See [docs/FUZZING.md](./docs/FUZZING.md) for the full list of flags, how to
+replay and minimise a crash, how to generate a coverage report, and how the
+harness is structured.
+
+### When to add a new fuzz target
+
+Every **state-mutating entry point** that handles user-supplied structured
+input (amounts, arrays of beneficiaries/guardians, periods, etc.) is a
+candidate for coverage-guided fuzzing. The current targets only cover
+`create_will` and `update_beneficiaries`. As new entry points are added —
+especially those that mutate balances, beneficiary/guardian indexes, or
+involve multi-will operations like `merge_wills` or `split_will` — the fuzz
+corpus should grow with them.
+
+**Add a new target when your PR introduces:**
+
+- A new entry point that accepts numeric amounts, arrays of addresses, or
+  other structural input.
+- A new validation path that existing fuzz targets do not exercise.
+- A multi-will operation (merge, split, batch) where cross-will invariants
+  could be violated by adversarial input.
+
+### How to add a target
+
+1. Add an input struct (with `#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]`)
+   and a `run_*` function to
+   [`contracts/will/src/fuzz_harness.rs`](./contracts/will/src/fuzz_harness.rs).
+   Follow the existing `CreateWillInput` / `run_create_will` pair as a template.
+2. Add a new file `fuzz/fuzz_targets/<name>.rs` that calls your `run_*` function.
+3. Register the new target as a `[[bin]]` entry in `fuzz/Cargo.toml`.
+4. Add a `proptest` property in
+   [`contracts/will/src/fuzz_test.rs`](./contracts/will/src/fuzz_test.rs)
+   that drives the same runner with `proptest!`/`any::<YourInput>()`, so the
+   new invariants are checked in CI on every PR without requiring a nightly
+   toolchain.
+
+See [docs/FUZZING.md § Adding a target](./docs/FUZZING.md#adding-a-target) for
+the full step-by-step and the invariants that every target is expected to check.
+
 ## Code coverage (cargo-llvm-cov)
 
 CI measures code coverage via `.github/workflows/coverage.yml` using

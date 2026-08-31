@@ -5,7 +5,7 @@
 //! will state purely from events will silently miss every hashed beneficiary.
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events, Ledger},
     token::{Client as TokenClient, StellarAssetClient},
     vec, Address, Bytes, Env, Vec as SorobanVec,
 };
@@ -47,14 +47,11 @@ fn add_hashed_beneficiary_emits_event() {
     let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
 
     // Prepare a hashed beneficiary commitment
-    let secret_address = Address::generate(&env);
+    let _secret_address = Address::generate(&env);
     let preimage_bytes = [0u8; 64];
     let preimage = Bytes::from_array(&env, &preimage_bytes);
     let commitment = env.crypto().sha256(&preimage);
     let commitment_bytes = Bytes::from_array(&env, &commitment.to_array());
-
-    // Clear any events from will creation
-    env.events().all().clear();
 
     // Add hashed beneficiary with 5000 basis points (50%)
     client.add_hashed_beneficiary(&will_id, &owner, &commitment_bytes, &5_000);

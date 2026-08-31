@@ -158,6 +158,7 @@ fn guardian_cancel_trigger_removes_id_from_triggered_index() {
     client.trigger_will(&will_id);
     assert_eq!(client.get_triggered_wills().len(), 1);
 
+    client.accept_guardian_role(&will_id, &guardian);
     client.guardian_cancel_trigger(&will_id, &guardian);
     assert!(client.get_triggered_wills().is_empty());
 }

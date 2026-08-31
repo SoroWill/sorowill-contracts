@@ -154,7 +154,7 @@ pub(crate) fn assert_beneficiaries_are_indexed(client: &WillContractClient, will
     for beneficiary in will.beneficiaries.iter() {
         assert!(
             client
-                .get_wills_by_beneficiary(&beneficiary.address)
+                .get_wills_by_beneficiary(&beneficiary.address, &None, &100)
                 .iter()
                 .any(|indexed| indexed.id == will.id),
             "beneficiary is missing will {} from their index",
@@ -174,7 +174,7 @@ pub(crate) fn assert_removed_beneficiaries_are_unindexed(
     for address in removed {
         assert!(
             !client
-                .get_wills_by_beneficiary(address)
+                .get_wills_by_beneficiary(address, &None, &100)
                 .iter()
                 .any(|indexed| indexed.id == will_id),
             "a removed beneficiary still has will {will_id} in their index"
