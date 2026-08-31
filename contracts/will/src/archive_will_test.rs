@@ -103,6 +103,55 @@ fn archive_will_removes_cancelled_will_from_active_indexes() {
     assert!(client.get_wills_by_beneficiary(&beneficiary, &None, &10).is_empty());
 }
 
+/// Regression test for issue #331: archiving a will that is currently in
+/// `Triggered` status must remove its id from the global `TriggeredWills`
+/// index so that keepers iterating `get_triggered_wills()` never see a
+/// dangling id pointing at an entry that no longer resolves.
+#[test]
+fn archive_triggered_will_removes_id_from_triggered_index() {
+    let (env, client, owner, token_address) = setup();
+    let beneficiary = Address::generate(&env);
+
+    let will_id = client.create_will(
+        &owner,
+        &vec![&env, (token_address, 1_000_000_i128)],
+        &vec![
+            &env,
+            Beneficiary {
+                address: beneficiary.clone(),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
+
+    // Advance past the check-in deadline and trigger the will.
+    advance(&env, 91);
+    client.trigger_will(&will_id);
+
+    // The will's id must now appear in the triggered-wills index.
+    assert_eq!(
+        client.get_triggered_wills().len(),
+        1,
+        "triggered will must be in index before archival"
+    );
+
+    // Archive the triggered will (simulate keeper or owner taking manual
+    // action; no grace-period check is required for archive_will itself).
+    client.archive_will(&will_id);
+
+    // After archival the triggered-wills index must be empty — no dangling id.
+    assert!(
+        client.get_triggered_wills().is_empty(),
+        "archiving a triggered will must remove its id from the triggered-wills index"
+    );
+}
+
 #[test]
 #[should_panic]
 fn archive_will_rejects_active_will() {

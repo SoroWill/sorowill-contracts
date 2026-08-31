@@ -656,16 +656,15 @@ pub fn archive_will(env: &Env, will: &Will) {
     let active_key = DataKey::Will(will.id);
     env.storage().persistent().remove(&active_key);
 
-    // Remove from owner index
-    let owner_key = DataKey::OwnerWills(will.owner.clone());
-    if let Some(ids) = env.storage().persistent().get::<_, Vec<u64>>(&owner_key) {
-        let mut updated: Vec<u64> = Vec::new(env);
-        for id in ids.iter() {
-            if id != will.id {
-                updated.push_back(id);
-            }
-        }
-        env.storage().persistent().set(&owner_key, &updated);
+    // Remove from owner index, reusing the shared helper so the TTL is bumped
+    // consistently with every other removal path (fixes #332).
+    remove_owner_index(env, &will.owner, will.id);
+
+    // If the will was in Triggered status, remove it from the global
+    // TriggeredWills index so keepers/indexers never see a dangling id
+    // pointing at an entry that no longer resolves via load_will (fixes #331).
+    if matches!(will.status, WillStatus::Triggered) {
+        unindex_triggered_will(env, will.id);
     }
 
     // Remove from beneficiary indexes

@@ -157,8 +157,8 @@ use soroban_sdk::{
 pub use errors::WillError;
 pub use storage::GuardianVoteRecord;
 pub use types::{
-    Allocation, Beneficiary, Guardian, GuardianConsent, GuardianVoteReason, HashedBeneficiary,
-    ProtocolStats, Will, WillStatus, WillStatusTransition,
+    Allocation, Beneficiary, Guardian, GuardianConsent, GuardianSpec, GuardianVoteReason,
+    HashedBeneficiary, ProtocolStats, Will, WillStatus, WillStatusTransition,
 };
 
 /// Semantic version of the contract logic, encoded as
@@ -1188,7 +1188,7 @@ impl WillContract {
         will.guardian_list_updated_at = now;
         storage::save_will(&env, &will);
 
-        events::guardians_updated(&env, will_id, &owner);
+        events::guardians_updated(&env, will_id, &owner, &will.guardians);
     }
 
     /// Updates the check-in and/or grace period for an active will.
@@ -1384,7 +1384,7 @@ impl WillContract {
         // whether the guardian change was made through `update_guardians` or
         // through this composite entry point.
         if guardians_changed {
-            events::guardians_updated(&env, will_id, &owner);
+            events::guardians_updated(&env, will_id, &owner, &will.guardians);
         }
     }
 
@@ -3332,7 +3332,7 @@ fn merge_beneficiaries(env: &Env, will_a: &Will, will_b: &Will) -> Vec<Beneficia
                 Allocation::Percentage(bp) => will_balance * (bp as i128) / 10_000,
                 Allocation::FixedAmount(amt) => amt,
             };
-            let allocation = beneficiary.allocation.clone();
+            let _allocation = beneficiary.allocation.clone();
             let mut found = false;
             let mut updated_shares: Vec<(Address, i128)> = Vec::new(env);
             let mut updated_allocations: Vec<(Address, Allocation)> = Vec::new(env);

@@ -260,6 +260,20 @@ Requires `stellar-cli` (same version as [Local Setup](#local-setup)) and a funde
 
 After running it, review and commit the updated `deployments/testnet.json` on its own — see [CONTRIBUTING.md](./CONTRIBUTING.md#updating-deploymentstestnetjson-after-a-redeploy) for the full checklist. A scheduled CI job also checks daily that this file's contract id still matches the on-chain wasm, so a forgotten update won't drift silently — see [Testnet Deployment Drift Check](.github/workflows/testnet-drift-check.yml).
 
+## Documentation
+
+All supplementary docs live under [`docs/`](./docs):
+
+| Document | What it covers |
+|---|---|
+| [docs/FUZZING.md](./docs/FUZZING.md) | Fuzz-testing setup, invariants checked, how to run `cargo-fuzz` targets, and how to add a new target |
+| [docs/RESOURCE_COSTS.md](./docs/RESOURCE_COSTS.md) | Per-entry-point resource profiles (CPU, ledger reads/writes, storage rent) and the storage layout trade-offs behind them |
+| [docs/WASM_SIZE.md](./docs/WASM_SIZE.md) | Release build profile tuning for `.wasm` binary size (deploy cost) |
+| [docs/SECURITY-REVIEW.md](./docs/SECURITY-REVIEW.md) | Internal security review findings, threat model, and resolved/open items |
+| [docs/adr/0001-guardian-threshold.md](./docs/adr/0001-guardian-threshold.md) | ADR: rationale behind the 2-of-3 default guardian threshold, known limitations, and the proposed configurable M-of-N feature |
+| [docs/adr/0002-legacy-token-balance-mirror.md](./docs/adr/0002-legacy-token-balance-mirror.md) | ADR: legacy token balance mirror design |
+| [docs/adr/0002-total-locked-by-token-scalability.md](./docs/adr/0002-total-locked-by-token-scalability.md) | ADR: scalability trade-offs in the total-locked-by-token protocol stats entry |
+
 ## Security Policy
 
 Security reports and responsible disclosure guidelines are documented in [`SECURITY.md`](./SECURITY.md). Please do not open public GitHub issues for security vulnerabilities.

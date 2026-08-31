@@ -77,5 +77,5 @@ fn merge_wills_different_primary_token_panics() {
     let will_id_b = client.create_will(&owner, &tokens_2, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
 
     // Attempt to merge - this should panic because the primary tokens differ
-    client.merge_wills(&owner, will_id_a, will_id_b);
+    client.merge_wills(&owner, &will_id_a, &will_id_b);
 }

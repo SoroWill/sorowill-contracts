@@ -10,7 +10,7 @@ use soroban_sdk::{
     vec, Address, Env, Vec as SorobanVec,
 };
 
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatus};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
 const DAY: u64 = 86_400;
 
@@ -63,7 +63,7 @@ fn merged_will_guardian_vote_weight_reset() {
     client.accept_guardian_role(&will_id_b, &guardian1);
 
     // Merge will_a into will_b
-    client.merge_wills(&owner, will_id_a, will_id_b);
+    client.merge_wills(&owner, &will_id_a, &will_id_b);
 
     // Get merged will and verify guardian_vote_weight is 0
     let merged_will = client.get_will(&will_id_a);
@@ -76,7 +76,7 @@ fn merged_will_guardian_vote_weight_reset() {
     advance(&env, 8);
 
     // Vote should work correctly from a fresh baseline of 0
-    client.guardian_trigger(&will_id_a, &guardian1);
+    client.guardian_trigger(&will_id_a, &guardian1, &crate::GuardianVoteReason::Deceased);
 
     let voted_will = client.get_will(&will_id_a);
     assert!(voted_will.guardian_vote_weight > 0, "vote weight should accumulate correctly");

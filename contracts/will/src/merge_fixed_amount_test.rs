@@ -184,7 +184,7 @@ fn merge_preserves_all_fixed_amounts() {
         },
     ];
     let will_1_tokens: SorobanVec<(Address, i128)> =
-        vec![&env, (token_address.clone(), 300_000i128)];
+        vec![&env, (token_address.clone(), 500_000i128)];
 
     let will_2_beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
@@ -198,7 +198,7 @@ fn merge_preserves_all_fixed_amounts() {
         },
     ];
     let will_2_tokens: SorobanVec<(Address, i128)> =
-        vec![&env, (token_address.clone(), 300_000i128)];
+        vec![&env, (token_address.clone(), 500_000i128)];
 
     let will_1 = client.create_will(
         &owner,

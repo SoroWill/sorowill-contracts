@@ -39,11 +39,19 @@ pub struct Beneficiary {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GuardianConsent {
     /// Guardian has been named but has not yet responded.
-    Pending,
+    Pending = 0,
     /// Guardian has accepted the role and may vote.
-    Accepted,
+    Accepted = 1,
     /// Guardian has declined the role.
-    Rejected,
+    Rejected = 2,
+}
+
+/// A guardian definition used by the weighted-guardian API.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuardianSpec {
+    pub address: Address,
+    pub weight: u32,
 }
 
 /// A guardian entry: an address paired with a vote weight and consent status.
@@ -58,15 +66,6 @@ pub struct Guardian {
     pub address: Address,
     pub weight: u32,
     pub consent: GuardianConsent,
-}
-
-/// Consent status of a designated guardian.
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GuardianConsent {
-    Pending = 0,
-    Accepted = 1,
-    Rejected = 2,
 }
 
 /// A privacy-preserving beneficiary entry (issue #46).

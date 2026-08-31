@@ -73,8 +73,8 @@ fn hashed_beneficiary_percentage_basis_points_payout() {
     advance(&env, 8);
 
     // Record initial balances
-    let secret_initial = token.balance(&secret_address);
-    let public_initial = token.balance(&public_beneficiary);
+    let _secret_initial = token.balance(&secret_address);
+    let _public_initial = token.balance(&public_beneficiary);
 
     // Release inheritance - both beneficiaries should receive 50% each
     client.release_inheritance(&will_id, &None);

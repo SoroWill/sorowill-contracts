@@ -187,24 +187,23 @@ fn issue_193_paginate_with_remove_readd_beneficiary() {
     client.update_beneficiaries(&will_id, &owner, &updated_beneficiaries);
 
     // Test pagination on beneficiary index after removal
-    let beneficiary2_wills = client.get_wills_by_beneficiary(&beneficiary2);
-    let will_ids_set = SorobanVec::new(&env);
+    let beneficiary2_wills = client.get_wills_by_beneficiary(&beneficiary2, &None, &100);
+    let mut will_ids_set: SorobanVec<u64> = SorobanVec::new(&env);
 
     // Verify no duplicates in pagination
     for will in beneficiary2_wills.iter() {
-        let already_seen = false;
         for seen_will in will_ids_set.iter() {
             if seen_will == will.id {
                 panic!("Pagination should not duplicate wills after removal/re-addition");
             }
         }
-        assert!(!already_seen, "No duplicates should exist in pagination");
+        will_ids_set.push_back(will.id);
     }
 
     // Verify we can get all beneficiary wills without gaps
-    let page1 = client.get_wills_by_beneficiary(&beneficiary2);
+    let page1 = client.get_wills_by_beneficiary(&beneficiary2, &None, &100);
     if page1.len() > 1 {
-        let ids_in_pages = SorobanVec::new(&env);
+        let mut ids_in_pages: SorobanVec<u64> = SorobanVec::new(&env);
         for will in page1.iter() {
             ids_in_pages.push_back(will.id);
         }
