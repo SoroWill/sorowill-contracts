@@ -149,6 +149,11 @@ mod merge_fixed_amount_test;
 #[cfg(test)]
 mod update_guardians_threshold_test;
 
+/// Regression test for issue #299: `top_up` supports adding a token that was
+/// not locked at `create_will` time (new-token path).
+#[cfg(test)]
+mod issue_299_test;
+
 
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Bytes, Env, Map, Vec,
