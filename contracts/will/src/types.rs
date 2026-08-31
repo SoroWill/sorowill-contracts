@@ -160,13 +160,10 @@ pub struct Will {
     /// The primary owner address. Used for backwards-compatible single-owner
     /// flows and as the refund destination on cancellation.
     pub owner: Address,
-    /// The token contract address (e.g. a USDC Stellar Asset Contract, or the
-    /// native XLM asset address when `is_native` is true) held by the will.
     /// Map of token contract address → amount currently locked in the will,
     /// in each token's base units. A will may hold any number of distinct
     /// SEP-41 compliant tokens simultaneously.
     pub balances: Map<Address, i128>,
-    /// The beneficiaries and their percentage shares. Always sums to 100.
     /// The token contract (e.g. a USDC Stellar Asset Contract) held by the will.
     pub token: Address,
     /// Whether the held asset is native XLM (as opposed to a token contract).
