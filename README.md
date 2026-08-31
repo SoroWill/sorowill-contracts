@@ -135,6 +135,43 @@ use will::{MAX_BENEFICIARIES, MAX_GUARDIANS, GUARDIAN_THRESHOLD};
 
 `checkin_period_days` and `grace_period_days` passed to `create_will` must each be at least `1` day (and at most `MAX_PERIOD_DAYS`); a value of `0` panics with `WillError::InvalidPeriod`.
 
+## Contract Events
+
+Every state-mutating entry point publishes exactly one event so that off-chain indexers and SDK consumers can reconstruct will history without re-simulating transactions. The topic is a tuple of `(symbol, will_id)` unless noted otherwise. Payload fields are listed in order.
+
+| Entry point | Topic symbol | Payload |
+|---|---|---|
+| `create_will` | `"created"` | `(owner: Address, token_count: u32, beneficiaries: Vec<Beneficiary>, checkin_deadline: u64)` |
+| `confirm_will` | `"confirmed"` | `owner: Address` |
+| `check_in` | `"checkin"` | `(owner: Address, next_deadline: u64)` |
+| `trigger_will` | `"triggered"` | `grace_period_ends: u64` |
+| `emergency_checkin` | `"emerg"` | `(owner: Address, next_deadline: u64)` |
+| `release_inheritance` | `"released"` | `(token_count: u32, beneficiaries_count: u32)` |
+| `cancel_will` | `"cancelled"` | `(owner: Address, token_count: u32)` |
+| `update_beneficiaries` | `"benefup"` | `(owner: Address, beneficiary_count: u32, beneficiaries: Vec<Beneficiary>)` |
+| `update_guardians` | `"guardup"` | `(owner: Address, guardians: Vec<Guardian>)` |
+| `update_will_settings` | `"setupd"` | `(owner: Address, update_fields: Vec<Symbol>)` — also emits `"guardup"` when guardians change |
+| `close_will` | `"closed"` | `owner: Address` |
+| `top_up` | `"topup"` | `(owner: Address, token: Address, amount: i128, new_balance: i128)` |
+| `guardian_trigger` | `"gvote"` | `(guardian: Address, weight: u32, total_weight: u32)` |
+| `guardian_cancel` (cancel vote) | `"gcvote"` | `(guardian: Address, weight: u32, total_weight: u32)` |
+| `guardian_cancel` (quorum reached) | `"gcancel"` | `(guardian: Address, next_deadline: u64)` |
+| `merge_wills` | `"merged"` | `(owner: Address, consumed_will_id: u64, new_balance: i128, beneficiaries: Vec<Beneficiary>)` — topic uses surviving will id |
+| `migrate_will` | `"migrated"` | `(owner: Address, from_version: u32, to_version: u32)` |
+| `clone_will` | `"cloned"` | `(source_id: u64, owner: Address)` — topic uses new will id |
+| `batch_create_wills` | `"batch"` | `will_ids: Vec<u64>` — topic is `(symbol, owner)` instead of `(symbol, will_id)` |
+| `archive_will` | `"archived"` | `owner: Address` |
+| `update_will_settings` (periods) | `"periodu"` | `(owner: Address, new_checkin_period_days: u64, new_grace_period_days: u64, next_deadline: u64)` |
+| `renounce_inheritance` | `"renounce"` | `(beneficiary: Address, owner: Address, beneficiaries: Vec<Beneficiary>)` |
+| `keeper_bounty` | `"bounty"` | `(keeper: Address, amount: i128)` |
+| `split_will` | `"split"` | `(new_id: u64, owner: Address, split_amount: i128)` — topic uses original will id |
+| `reveal_and_claim` | `"hclaim"` | `(claimant: Address, amount: i128)` |
+| `set_delegate` | `"delegset"` | `(owner: Address, delegate: Address)` |
+| `clear_delegate` | `"delegclr"` | `owner: Address` |
+| `batch_checkin` | `"batchchk"` | `(will_ids: Vec<u64>, count: u32)` — topic is `(symbol, owner)` instead of `(symbol, will_id)` |
+
+The canonical source of truth for each event's exact topic and payload is [`contracts/will/src/events.rs`](./contracts/will/src/events.rs).
+
 ### Reading wills and Soroban's archival model (issue #166)
 
 `get_will` and `get_wills_by_owner` / `get_wills_by_beneficiary` read a will's
