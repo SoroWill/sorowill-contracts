@@ -206,6 +206,26 @@ pub fn adjust_locked_value(env: &Env, token: &Address, delta: i128) {
 /// it just stops being renewed.
 pub fn save_will(env: &Env, will: &Will) {
     let key = DataKey::Will(will.id);
+    if let Some(previous) = env.storage().persistent().get::<_, Will>(&key) {
+        for guardian in previous.guardians.iter() {
+            let address = guardian.address.clone();
+            let mut still_guardian = false;
+            for current in will.guardians.iter() {
+                if current.address == address {
+                    still_guardian = true;
+                    break;
+                }
+            }
+            if !still_guardian {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::GuardianVote(will.id, address.clone()));
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::GuardianCancelVote(will.id, address));
+            }
+        }
+    }
     env.storage().persistent().set(&key, will);
     if !matches!(will.status, WillStatus::Released | WillStatus::Cancelled) {
         env.storage()
