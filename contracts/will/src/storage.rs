@@ -478,6 +478,10 @@ pub fn get_guardian_vote(
 /// Returns whether `guardian` has a non-expired vote in the current trigger
 /// cycle for `will_id`. A vote is considered expired if `now - vote_timestamp`
 /// exceeds `expiry_days * SECONDS_PER_DAY`.
+///
+/// The elapsed-time subtraction is saturating: if `now` is earlier than the
+/// recorded vote timestamp (clock skew or a stale caller-supplied ledger time)
+/// the elapsed time is treated as zero rather than underflowing and panicking.
 pub fn has_guardian_voted(
     env: &Env,
     will_id: u64,
@@ -487,7 +491,13 @@ pub fn has_guardian_voted(
 ) -> bool {
     if let Some(record) = get_guardian_vote(env, will_id, guardian) {
         let expiry_secs = expiry_days * SECONDS_PER_DAY;
-        now - record.timestamp <= expiry_secs
+        // Checked subtraction: a record timestamped after `now` (clock skew or a
+        // stale caller-supplied ledger time) yields `None` and is reported as
+        // "not voted" instead of underflowing and panicking the transaction.
+        match now.checked_sub(record.timestamp) {
+            Some(elapsed) => elapsed <= expiry_secs,
+            None => false,
+        }
     } else {
         false
     }
@@ -546,7 +556,13 @@ pub fn has_guardian_cancel_voted(
         .get::<_, GuardianVoteRecord>(&key)
     {
         let expiry_secs = expiry_days * SECONDS_PER_DAY;
-        now - record.timestamp <= expiry_secs
+        // Checked subtraction: a record timestamped after `now` (clock skew or a
+        // stale caller-supplied ledger time) yields `None` and is reported as
+        // "not voted" instead of underflowing and panicking the transaction.
+        match now.checked_sub(record.timestamp) {
+            Some(elapsed) => elapsed <= expiry_secs,
+            None => false,
+        }
     } else {
         false
     }

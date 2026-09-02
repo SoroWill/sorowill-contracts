@@ -12,6 +12,7 @@ use soroban_sdk::{
 
 use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
+#[allow(dead_code)]
 const DAY: u64 = 86_400;
 
 fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Address) {

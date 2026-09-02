@@ -154,6 +154,12 @@ mod update_guardians_threshold_test;
 #[cfg(test)]
 mod issue_299_test;
 
+/// Regression test: `has_guardian_voted` / `has_guardian_cancel_voted` use a
+/// checked elapsed-time subtraction and cannot underflow when `now` precedes
+/// the recorded vote timestamp.
+#[cfg(test)]
+mod issue_guardian_vote_underflow_test;
+
 
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Bytes, Env, Map, Vec,

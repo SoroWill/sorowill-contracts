@@ -8,9 +8,22 @@ use soroban_sdk::{
     vec, Address, Env, Vec as SorobanVec,
 };
 
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatus};
+use crate::{
+    Allocation, Beneficiary, GuardianVoteReason, WillContract, WillContractClient, WillStatus,
+};
 
 const DAY: u64 = 86_400;
+
+/// One entry of a `batch_create_wills` call:
+/// `(tokens, beneficiaries, checkin_interval_days, grace_period_days, guardians, guardian_threshold)`.
+type BatchWillSpec = (
+    SorobanVec<(Address, i128)>,
+    SorobanVec<Beneficiary>,
+    u64,
+    u64,
+    SorobanVec<Address>,
+    u32,
+);
 
 fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Address) {
     let env = Env::default();
@@ -79,14 +92,7 @@ fn issue_192_batch_create_wills_increments_active_count() {
     let spec2_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 50_000_i128)];
     let spec3_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 75_000_i128)];
 
-    let specs: SorobanVec<(
-        SorobanVec<(Address, i128)>,
-        SorobanVec<Beneficiary>,
-        u64,
-        u64,
-        SorobanVec<Address>,
-        u32,
-    )> = vec![
+    let specs: SorobanVec<BatchWillSpec> = vec![
         &env,
         (spec1_tokens, beneficiaries.clone(), 90, 7, vec![&env], 2),
         (spec2_tokens, beneficiaries.clone(), 90, 7, vec![&env], 2),
@@ -130,13 +136,13 @@ fn issue_194_get_wills_by_owner_and_status_with_pagination() {
     let page1 = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &None, &2);
     assert_eq!(page1.len(), 2, "First page should have 2 wills");
 
-    if page1.len() > 0 {
+    if !page1.is_empty() {
         let last_id_page1 = page1.get_unchecked(page1.len() - 1).id;
         let page2 = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &Some(last_id_page1), &2);
-        assert!(page2.len() > 0, "Second page should have results");
+        assert!(!page2.is_empty(), "Second page should have results");
         assert!(page2.len() <= 2, "Second page should respect limit");
 
-        if page2.len() > 0 {
+        if !page2.is_empty() {
             let first_page2_id = page2.get_unchecked(0).id;
             assert!(first_page2_id > last_id_page1, "Pagination cursor should work correctly");
         }
@@ -216,6 +222,7 @@ fn issue_193_paginate_with_remove_readd_beneficiary() {
 fn stale_guardian_vote_cleared_when_guardian_removed() {
     let (env, client, owner, _token, token_address) = setup();
     let guardian = Address::generate(&env);
+    let second_guardian = Address::generate(&env);
     let replacement_guardian = Address::generate(&env);
     let beneficiary = Address::generate(&env);
 
@@ -233,20 +240,37 @@ fn stale_guardian_vote_cleared_when_guardian_removed() {
         &beneficiaries,
         &90,
         &7,
-        &vec![&env, guardian.clone()],
-        &1,
+        &vec![&env, guardian.clone(), second_guardian.clone()],
+        &2,
         &None,
         &0,
     );
 
-    client.submit_guardian_vote(&will_id, &guardian);
-    assert!(client.has_guardian_voted(&will_id, &guardian));
+    client.accept_guardian_role(&will_id, &guardian);
 
-    client.update_guardians(&will_id, &owner, &vec![&env, replacement_guardian.clone()]);
-    client.update_guardians(&will_id, &owner, &vec![&env, guardian.clone()]);
+    // Guardian-list cooldown must elapse before a trigger vote is accepted.
+    env.ledger().set_timestamp(env.ledger().timestamp() + 8 * DAY);
+
+    client.guardian_trigger(&will_id, &guardian, &GuardianVoteReason::Other);
+    assert!(client
+        .get_guardian_vote_status(&will_id, &guardian)
+        .is_some());
+
+    client.update_guardians(
+        &will_id,
+        &owner,
+        &vec![&env, replacement_guardian.clone(), second_guardian.clone()],
+    );
+    client.update_guardians(
+        &will_id,
+        &owner,
+        &vec![&env, guardian.clone(), second_guardian.clone()],
+    );
 
     assert!(
-        !client.has_guardian_voted(&will_id, &guardian),
+        client
+            .get_guardian_vote_status(&will_id, &guardian)
+            .is_none(),
         "re-added guardian should not retain a vote from before removal"
     );
 }
