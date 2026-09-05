@@ -10,7 +10,7 @@ use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatu
 
 const DAY: u64 = 86_400;
 
-fn setup<'a>() -> (Env, WillContractClient<'a>, Address) {
+fn setup<'a>() -> (Env, WillContractClient<'a>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -23,14 +23,12 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address) {
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    (env, client, owner)
+    (env, client, owner, token_address)
 }
 
 #[test]
 fn test_get_will_status_pending_confirmation() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let beneficiary = Address::generate(&env);
     let beneficiaries: SorobanVec<Beneficiary> = vec![
@@ -51,7 +49,7 @@ fn test_get_will_status_pending_confirmation() {
         &vec![&env],
         &1,
         &None,
-        &0,
+        &3600,
     );
 
     let status = client.get_will_status(&will_id);
@@ -60,9 +58,7 @@ fn test_get_will_status_pending_confirmation() {
 
 #[test]
 fn test_get_will_status_active() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let beneficiary = Address::generate(&env);
     let beneficiaries: SorobanVec<Beneficiary> = vec![
@@ -86,8 +82,8 @@ fn test_get_will_status_active() {
         &0,
     );
 
-    // Confirm the will
-    client.confirm_will(&will_id, &owner);
+    // confirmation_delay_seconds is 0 above, so the will is already
+    // Active -- confirm_will would now be rejected as WillNotConfirmed.
 
     let status = client.get_will_status(&will_id);
     assert_eq!(status, WillStatus::Active);
@@ -95,9 +91,7 @@ fn test_get_will_status_active() {
 
 #[test]
 fn test_get_will_status_triggered() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let beneficiary = Address::generate(&env);
     let beneficiaries: SorobanVec<Beneficiary> = vec![
@@ -121,11 +115,10 @@ fn test_get_will_status_triggered() {
         &0,
     );
 
-    // Confirm the will
-    client.confirm_will(&will_id, &owner);
+    // confirmation_delay_seconds is 0 above, so the will is already Active.
 
     // Advance past check-in deadline
-    env.ledger().with_mut(|l| l.timestamp += (31 * DAY) as u64);
+    env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
 
     // Trigger the will
     client.trigger_will(&will_id);
@@ -136,9 +129,7 @@ fn test_get_will_status_triggered() {
 
 #[test]
 fn test_get_will_status_released() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let beneficiary = Address::generate(&env);
     let beneficiaries: SorobanVec<Beneficiary> = vec![
@@ -162,13 +153,12 @@ fn test_get_will_status_released() {
         &0,
     );
 
-    // Confirm and trigger
-    client.confirm_will(&will_id, &owner);
-    env.ledger().with_mut(|l| l.timestamp += (31 * DAY) as u64);
+    // confirmation_delay_seconds is 0 above, so the will is already Active.
+    env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
     client.trigger_will(&will_id);
 
     // Release
-    env.ledger().with_mut(|l| l.timestamp += (8 * DAY) as u64);
+    env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
 
     let status = client.get_will_status(&will_id);
@@ -177,9 +167,7 @@ fn test_get_will_status_released() {
 
 #[test]
 fn test_get_will_status_cancelled() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let beneficiary = Address::generate(&env);
     let beneficiaries: SorobanVec<Beneficiary> = vec![
@@ -203,8 +191,7 @@ fn test_get_will_status_cancelled() {
         &0,
     );
 
-    // Confirm and cancel
-    client.confirm_will(&will_id, &owner);
+    // confirmation_delay_seconds is 0 above, so the will is already Active.
     client.cancel_will(&will_id, &owner);
 
     let status = client.get_will_status(&will_id);
@@ -212,8 +199,13 @@ fn test_get_will_status_cancelled() {
 }
 
 #[test]
-#[should_panic(match = "WillNotFound")]
 fn test_get_will_status_nonexistent_will_panics() {
-    let (env, client, _owner) = setup();
-    client.get_will_status(&9999);
+    let (_env, client, _owner, _token_address) = setup();
+    // Soroban's panic message only shows the numeric error code, never the
+    // enum variant name, so should_panic(expected = "WillNotFound") can
+    // never match -- use try_get_will_status instead.
+    assert_eq!(
+        client.try_get_will_status(&9999),
+        Err(Ok(crate::WillError::WillNotFound.into())),
+    );
 }

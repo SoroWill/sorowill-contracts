@@ -94,4 +94,7 @@ pub enum WillError {
     TooManyWills = 37,
     /// A guardian has not accepted their role and cannot vote.
     GuardianNotConsented = 38,
+    /// Cannot merge: the two wills' primary tokens differ, so summing their
+    /// legacy `balance` fields would be nonsensical.
+    PrimaryTokenMismatch = 39,
 }

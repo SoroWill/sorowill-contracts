@@ -35,11 +35,14 @@ fn add_hashed_beneficiary_emits_event() {
 
     let beneficiary = Address::generate(&env);
 
+    // A hashed beneficiary's reserved share can only come out of FixedAmount
+    // headroom (a Percentage-based beneficiary list must already sum to
+    // 10,000, leaving no room to reserve) -- see hashed_beneficiary_test.rs.
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
         Beneficiary {
             address: beneficiary,
-            allocation: Allocation::Percentage(5_000),
+            allocation: Allocation::FixedAmount(500_000),
         },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];

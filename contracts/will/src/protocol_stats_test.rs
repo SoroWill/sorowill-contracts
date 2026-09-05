@@ -12,7 +12,6 @@ use soroban_sdk::{
 
 use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
-const DAY: u64 = 86_400;
 
 fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Address) {
     let env = Env::default();
@@ -36,7 +35,7 @@ fn create_will_increments_locked_value() {
     let beneficiary = Address::generate(&env);
 
     // Create first will
-    let will_id_1 = client.create_will(
+    let _will_id_1 = client.create_will(
         &owner,
         &vec![&env, (token_address.clone(), 100_000_i128)],
         &vec![
@@ -64,7 +63,7 @@ fn create_will_increments_locked_value() {
     assert_eq!(locked_1, 100_000, "First will should increment locked value");
 
     // Create second will with same token
-    let will_id_2 = client.create_will(
+    let _will_id_2 = client.create_will(
         &owner,
         &vec![&env, (token_address.clone(), 250_000_i128)],
         &vec![
@@ -126,7 +125,7 @@ fn top_up_increments_locked_value() {
     assert_eq!(locked_before, 100_000);
 
     // Top up the will
-    client.top_up(&will_id, &owner, &token_address, 75_000);
+    client.top_up(&will_id, &owner, &token_address, &75_000);
 
     // Verify locked value increased
     let stats_after = client.get_protocol_stats();
@@ -196,7 +195,7 @@ fn multiple_tokens_track_independently() {
     StellarAssetClient::new(&env, &token_address_2).mint(&owner, &1_000_000_000);
 
     // Create will with first token
-    let will_id_1 = client.create_will(
+    let _will_id_1 = client.create_will(
         &owner,
         &vec![&env, (token_address.clone(), 100_000_i128)],
         &vec![
@@ -215,7 +214,7 @@ fn multiple_tokens_track_independently() {
     );
 
     // Create will with second token
-    let will_id_2 = client.create_will(
+    let _will_id_2 = client.create_will(
         &owner,
         &vec![&env, (token_address_2.clone(), 50_000_i128)],
         &vec![

@@ -47,11 +47,14 @@ fn hashed_beneficiary_percentage_basis_points_payout() {
     let public_beneficiary = Address::generate(&env);
     let secret_address = Address::generate(&env);
 
+    // A hashed beneficiary's reserved share can only come out of FixedAmount
+    // headroom (a Percentage-based beneficiary list must already sum to
+    // 10,000, leaving no room to reserve) -- see hashed_beneficiary_test.rs.
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
         Beneficiary {
             address: public_beneficiary.clone(),
-            allocation: Allocation::Percentage(5_000), // 50%
+            allocation: Allocation::FixedAmount(500_000), // 50% of the 1,000,000 balance
         },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 1_000_000_i128)];

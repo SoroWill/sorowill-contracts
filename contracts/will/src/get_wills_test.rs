@@ -4,7 +4,7 @@
 //! preserves input order, silently skips nonexistent ids, and panics with
 //! `TooManyIds` when given more than `MAX_GET_WILLS_IDS` entries.
 
-use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, vec, Address, Env};
+use soroban_sdk::{testutils::{Address as _, Ledger}, token::StellarAssetClient, vec, Address, Env};
 
 use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillError};
 

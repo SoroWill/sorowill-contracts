@@ -94,14 +94,17 @@ fn migrate_bumps_a_stale_will_to_the_current_schema_version() {
 
     client.migrate_will(&will_id, &owner);
 
-    assert_eq!(
-        client.get_will(&will_id).schema_version,
-        CURRENT_SCHEMA_VERSION
-    );
+    // Checked before any further client call: env.events().all() in
+    // Soroban's test host only retains events from the most recent
+    // top-level invocation, so a later get_will() call would wipe this.
     assert_eq!(
         migrated_event_count(&env),
         1,
         "a completed migration must publish exactly one will_migrated event"
+    );
+    assert_eq!(
+        client.get_will(&will_id).schema_version,
+        CURRENT_SCHEMA_VERSION
     );
 }
 

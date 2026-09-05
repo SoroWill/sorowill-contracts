@@ -70,9 +70,9 @@ fn merged_will_guardian_vote_weight_reset() {
     assert_eq!(merged_will.guardian_vote_weight, 0, "guardian_vote_weight should be 0 after merge");
     assert_eq!(merged_will.guardian_votes, 0, "guardian_votes should also be 0 after merge");
 
-    // Trigger the merged will and vote - verify vote weight accumulates from 0
-    advance(&env, 91);
-    client.trigger_will(&will_id_a);
+    // guardian_trigger is an early-release mechanism that requires the will
+    // to still be Active (it is not gated on trigger_will/the grace period),
+    // so only the guardian-list cooldown needs to elapse before voting.
     advance(&env, 8);
 
     // Vote should work correctly from a fresh baseline of 0

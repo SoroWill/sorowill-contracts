@@ -62,15 +62,15 @@ fn contract_interface_is_available() {
 
     // get_wills_by_owner
     let owner_wills = client.get_wills_by_owner(&owner, &None, &10);
-    assert!(owner_wills.len() > 0);
+    assert!(!owner_wills.is_empty());
 
     // get_wills_by_beneficiary
     let beneficiary_wills = client.get_wills_by_beneficiary(&beneficiary, &None, &10);
-    assert!(beneficiary_wills.len() > 0);
+    assert!(!beneficiary_wills.is_empty());
 
     // get_protocol_stats
     let stats = client.get_protocol_stats();
-    assert!(stats.total_locked_by_token.len() > 0);
+    assert!(!stats.total_locked_by_token.is_empty());
 
     // get_contract_version
     let version = client.get_contract_version();

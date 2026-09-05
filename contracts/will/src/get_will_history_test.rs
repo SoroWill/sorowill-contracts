@@ -73,7 +73,7 @@ fn get_will_history_records_lifecycle_transition_sequence() {
     let trigger = history.get(1).unwrap();
     assert_eq!(trigger.from_status, WillStatus::Active);
     assert_eq!(trigger.to_status, WillStatus::Triggered);
-    assert_eq!(trigger.actor, env.current_contract_address());
+    assert_eq!(trigger.actor, client.address.clone());
     assert_eq!(trigger.action, symbol_short!("trigger"));
 
     advance(&env, 8);
@@ -84,6 +84,6 @@ fn get_will_history_records_lifecycle_transition_sequence() {
     let release = history.get(2).unwrap();
     assert_eq!(release.from_status, WillStatus::Triggered);
     assert_eq!(release.to_status, WillStatus::Released);
-    assert_eq!(release.actor, env.current_contract_address());
+    assert_eq!(release.actor, client.address.clone());
     assert_eq!(release.action, symbol_short!("release"));
 }

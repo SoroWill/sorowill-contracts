@@ -160,6 +160,90 @@ mod issue_299_test;
 #[cfg(test)]
 mod issue_guardian_vote_underflow_test;
 
+// The following test modules exist as files but were never wired into this
+// module tree by the PRs that added them, so they silently never compiled or
+// ran under `cargo test`.
+#[cfg(test)]
+mod archive_will_test;
+#[cfg(test)]
+mod batch_create_test;
+#[cfg(test)]
+mod clone_will_test;
+#[cfg(test)]
+mod confirm_will_test;
+#[cfg(test)]
+mod contract_interface_test;
+#[cfg(test)]
+mod entrypoint_coverage_test;
+#[cfg(test)]
+mod get_contract_version_test;
+#[cfg(test)]
+mod get_time_until_deadline_test;
+#[cfg(test)]
+mod get_will_history_test;
+#[cfg(test)]
+mod get_will_status_test;
+#[cfg(test)]
+mod get_wills_test;
+#[cfg(test)]
+mod hashed_beneficiary_test;
+#[cfg(test)]
+mod issue_259_test;
+#[cfg(test)]
+mod issue_260_test;
+#[cfg(test)]
+mod issue_261_test;
+#[cfg(test)]
+mod issue_262_test;
+#[cfg(test)]
+mod issue_263_test;
+#[cfg(test)]
+mod issue_264_test;
+#[cfg(test)]
+mod issue_265_test;
+#[cfg(test)]
+mod issue_266_test;
+#[cfg(test)]
+mod issue_272_test;
+#[cfg(test)]
+mod issue_277_test;
+#[cfg(test)]
+mod issue_278_test;
+#[cfg(test)]
+mod issue_279_test;
+#[cfg(test)]
+mod issue_280_test;
+#[cfg(test)]
+mod issue_281_test;
+#[cfg(test)]
+mod issue_282_test;
+#[cfg(test)]
+mod issue_298_283_294_test;
+#[cfg(test)]
+mod migrate_will_test;
+#[cfg(test)]
+mod protocol_stats_test;
+#[cfg(test)]
+mod renounce_validation_test;
+#[cfg(test)]
+mod set_delegate_test;
+#[cfg(test)]
+mod split_will_test;
+// NOTE: `test.rs` (5800+ lines) is intentionally NOT wired in here. It
+// predates the current multi-token/Allocation-enum contract API entirely
+// (it exclusively uses a removed single-token `basis_points` signature) and
+// references at least two features that no longer exist in lib.rs at all
+// (`fallback_beneficiary`, `GraceTier`/`release_tier`). It appears to be
+// dead code left over from before a major API redesign, later scrambled
+// further by conflicting merges. Reactivating it would mean reimplementing
+// removed contract functionality, which is out of scope for a merge-damage
+// cleanup — left disconnected until someone decides what to do with it.
+#[cfg(test)]
+mod update_will_settings_test;
+#[cfg(test)]
+mod wills_by_owner_status_test;
+#[cfg(test)]
+mod uncovered_entrypoints_test;
 
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, symbol_short, token, Address, Bytes, Env, Map, Vec,
@@ -1173,7 +1257,12 @@ impl WillContract {
 
         let threshold = guardian_threshold.unwrap_or(will.guardian_threshold);
         if !guardians.is_empty() {
-            let threshold_range = 1..=guardians.len();
+            // Quorum in guardian_trigger/guardian_cancel is checked against
+            // accumulated vote *weight*, not vote count, so the threshold must
+            // be validated against the guardians' total weight rather than
+            // their count.
+            let total_weight: u32 = guardians.iter().map(|g| g.weight.max(1)).sum();
+            let threshold_range = 1..=total_weight;
             if !threshold_range.contains(&threshold) {
                 panic_with_error!(&env, WillError::InvalidGuardianThreshold);
             }
@@ -2407,6 +2496,10 @@ impl WillContract {
             WillError::WillNotBothActive,
         );
 
+        if will_a.token != will_b.token {
+            panic_with_error!(&env, WillError::PrimaryTokenMismatch);
+        }
+
         // Merge beneficiaries with proportional recalculation
         let merged_beneficiaries = merge_beneficiaries(&env, &will_a, &will_b);
 
@@ -2803,7 +2896,7 @@ impl WillContract {
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
 
         will.hashed_beneficiaries.push_back(HashedBeneficiary {
-            commitment,
+            commitment: commitment.clone(),
             percentage,
             claimed: false,
         });
@@ -2812,6 +2905,8 @@ impl WillContract {
         assert_valid_percentages(&env, &will.beneficiaries, &will.hashed_beneficiaries);
 
         storage::save_will(&env, &will);
+
+        events::hashed_beneficiary_added(&env, will_id, &owner, &commitment, percentage);
     }
 
     /// Verifies a pre-image against a stored commitment hash and, if correct,
@@ -2821,9 +2916,13 @@ impl WillContract {
     /// the beneficiary `Address` and the remaining 32 bytes are a random salt
     /// chosen by the beneficiary at registration time.
     ///
-    /// This entrypoint works once the will is `Triggered` AND the grace period
-    /// has elapsed (the same condition as `release_inheritance`). This keeps
-    /// hashed-beneficiary payouts consistent with normal payouts.
+    /// This entrypoint works once the will is `Released`: `distribute()`
+    /// withholds every unclaimed hashed beneficiary's combined percentage
+    /// from what it pays the visible beneficiaries (#181) and leaves it in
+    /// the will's balances, so a claim before release would have no funds
+    /// behind it. A claimant's share is their percentage as a fraction of
+    /// that combined withheld pool, which drains to exactly zero once every
+    /// hashed beneficiary has claimed, in any order.
     ///
     /// # Parameters
     /// - `will_id`: the will to claim from.
@@ -2831,25 +2930,22 @@ impl WillContract {
     /// - `preimage`: raw bytes whose SHA-256 must match a stored commitment.
     ///
     /// # Panics
-    /// - [`WillError::WillNotTriggered`] if the will is not `Triggered`.
-    /// - [`WillError::GracePeriodNotExpired`] if the grace period has not elapsed.
+    /// - [`WillError::WillNotReleased`] if the will is not `Released`.
     /// - [`WillError::InvalidPreimage`] if no matching commitment is found.
     /// - [`WillError::AlreadyClaimed`] if that slot was already claimed.
     pub fn reveal_and_claim(env: Env, will_id: u64, claimant: Address, preimage: Bytes) {
         claimant.require_auth();
         let mut will = load_will(&env, will_id);
+        // A hashed beneficiary's reserved share is only carved out of the
+        // will's balances once `distribute()` runs (see #181), so claiming
+        // is only meaningful -- and only has funds behind it -- once the
+        // will has actually been released.
         assert_status(
             &env,
             &will,
-            WillStatus::Triggered,
-            WillError::WillNotTriggered,
+            WillStatus::Released,
+            WillError::WillNotReleased,
         );
-
-        let trigger_time = will.trigger_time.unwrap_or(0);
-        let grace_deadline = trigger_time + will.grace_period_days * SECONDS_PER_DAY;
-        if env.ledger().timestamp() < grace_deadline {
-            panic_with_error!(&env, WillError::GracePeriodNotExpired);
-        }
 
         // Hash the supplied pre-image with SHA-256.
         let digest = env.crypto().sha256(&preimage);
@@ -2882,14 +2978,22 @@ impl WillContract {
         // Mirrors distribute()'s multi-token payout so a hashed beneficiary on
         // a will holding more than one token is paid its share of every locked
         // token, not just the primary-token mirror.
+        //
+        // `will.balances` at this point holds only the pool `distribute()`
+        // withheld for every still-unclaimed hashed beneficiary combined
+        // (see #181), not each token's original total -- so a claimant's
+        // fair share is their percentage as a fraction of the combined
+        // unclaimed pool, not of 10,000. This drains to exactly zero once
+        // every hashed beneficiary has claimed, regardless of claim order.
+        let unclaimed_bps = unclaimed_hashed_bps(&will.hashed_beneficiaries) as i128;
         let mut transfer_plan: Vec<(Address, i128)> = Vec::new(&env);
         let mut updated_balances: Map<Address, i128> = Map::new(&env);
         let mut primary_share: i128 = 0;
         for (token_addr, total) in will.balances.iter() {
-            let share = if total == 0 {
+            let share = if total == 0 || hb.percentage == 0 {
                 0
             } else {
-                total * (hb.percentage as i128) / 100
+                total * (hb.percentage as i128) / unclaimed_bps
             };
             if share > 0 {
                 transfer_plan.push_back((token_addr.clone(), share));
@@ -3032,13 +3136,16 @@ fn assert_valid_allocations(env: &Env, beneficiaries: &Vec<Beneficiary>, will_ba
     if fixed_total > will_balance {
         panic_with_error!(env, WillError::FixedAmountExceedsBalance);
     }
-    if has_percentage {
-        if percentage_total != 10_000 {
-            panic_with_error!(env, WillError::InvalidPercentages);
-        }
-    } else if fixed_total != will_balance {
-        panic_with_error!(env, WillError::FixedAmountExceedsBalance);
+    if has_percentage && percentage_total != 10_000 {
+        panic_with_error!(env, WillError::InvalidPercentages);
     }
+    // A FixedAmount-only list is deliberately allowed to leave a portion of
+    // `will_balance` unaccounted for (fixed_total < will_balance): that
+    // headroom is exactly what a later `add_hashed_beneficiary` call
+    // reserves for a not-yet-disclosed beneficiary (#181/#186). It is never
+    // silently orphaned -- `distribute()` only pays out fixed_total's worth
+    // to visible beneficiaries and withholds the rest for hashed claims (or,
+    // if no hashed beneficiary is ever added, it simply stays unclaimed).
 }
 
 /// Rescales every `Allocation::Percentage` entry in `beneficiaries` so they
@@ -3103,6 +3210,21 @@ fn assert_valid_percentages(
     if total > 10_000 {
         panic_with_error!(env, WillError::InvalidPercentages);
     }
+}
+
+/// Sums the `percentage` of every hashed beneficiary that has not yet
+/// claimed their share (issue #181/#186). This is the fraction of each
+/// token's balance that `distribute()` must withhold from the visible
+/// beneficiaries and leave in the will's `balances` map for later claiming
+/// via `reveal_and_claim`.
+fn unclaimed_hashed_bps(hashed_beneficiaries: &Vec<HashedBeneficiary>) -> u32 {
+    let mut total: u32 = 0;
+    for hb in hashed_beneficiaries.iter() {
+        if !hb.claimed {
+            total = total.saturating_add(hb.percentage);
+        }
+    }
+    total
 }
 
 /// Adds `value` into `total`, panicking with `InvalidPercentages` on overflow
@@ -3232,6 +3354,14 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     // commit all state before any external call fires.
     let mut transfer_plan: Vec<(Address, Vec<(Address, i128)>)> = Vec::new(env);
 
+    // Any beneficiary added via `add_hashed_beneficiary` who has not yet
+    // called `reveal_and_claim` has a standing claim on this fraction of
+    // every token's balance. It must be withheld here rather than paid out
+    // to the visible beneficiaries (#181), and left in `will.balances` for
+    // `reveal_and_claim` to draw from afterward.
+    let hashed_bps = unclaimed_hashed_bps(&will.hashed_beneficiaries);
+    let mut hashed_reserves: Map<Address, i128> = Map::new(env);
+
     for (token_addr, total) in will.balances.iter() {
         if total == 0 {
             continue;
@@ -3242,6 +3372,12 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
         if should_pay_bounty && bounty_amount == 0 {
             bounty_amount = proportional_share(total, will.keeper_bounty_bps);
             available = (total - bounty_amount).max(0);
+        }
+
+        if hashed_bps > 0 {
+            let hashed_reserve = proportional_share(available, hashed_bps);
+            available -= hashed_reserve;
+            hashed_reserves.set(token_addr.clone(), hashed_reserve);
         }
 
         let mut shares: Vec<(Address, i128)> = Vec::new(env);
@@ -3289,8 +3425,11 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     // --- EFFECTS: mutate and persist all state before any external call ---
     storage::decrement_active_will_count(env);
 
-    will.balance = 0;
-    will.balances = Map::new(env);
+    // Any tokens reserved for still-unclaimed hashed beneficiaries stay in
+    // `will.balances` for `reveal_and_claim`; everything else is cleared as
+    // it has now either been paid out or never held anything to reserve.
+    will.balances = hashed_reserves;
+    will.balance = will.balances.get(will.token.clone()).unwrap_or(0);
     will.status = WillStatus::Released;
 
     // Prune stale index entries (#71): remove the released will from the

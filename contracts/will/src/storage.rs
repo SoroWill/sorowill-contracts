@@ -650,9 +650,11 @@ pub fn paginate_ids(env: &Env, ids: &Vec<u64>, cursor: Option<u64>, limit: u32) 
 pub const MAX_WILLS_PER_INDEX: u32 = 1_000;
 
 /// Lowered cap used in unit tests so the limit can be exercised without
-/// creating thousands of wills.
+/// creating thousands of wills. Must stay >= `BATCH_MAX` (10) so a batch
+/// filling a single owner's index to the batch-size limit in one call
+/// doesn't spuriously trip this cap first.
 #[cfg(test)]
-pub const MAX_WILLS_PER_INDEX: u32 = 5;
+pub const MAX_WILLS_PER_INDEX: u32 = 10;
 
 /// Maximum number of wills returned per page.
 pub const MAX_PAGE_SIZE: u32 = 50;

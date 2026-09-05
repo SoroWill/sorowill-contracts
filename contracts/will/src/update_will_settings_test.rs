@@ -10,7 +10,7 @@ use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatu
 
 const DAY: u64 = 86_400;
 
-fn setup<'a>() -> (Env, WillContractClient<'a>, Address) {
+fn setup<'a>() -> (Env, WillContractClient<'a>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -23,7 +23,7 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address) {
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    (env, client, owner)
+    (env, client, owner, token_address)
 }
 
 fn create_active_will(
@@ -43,7 +43,9 @@ fn create_active_will(
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![env, (token_address.clone(), 1_000_000_i128)];
 
-    let will_id = client.create_will(
+    // confirmation_delay_seconds is 0 above, so the will starts Active
+    // immediately -- no confirm_will call is needed (or valid).
+    client.create_will(
         owner,
         &tokens,
         &beneficiaries,
@@ -53,17 +55,12 @@ fn create_active_will(
         &1,
         &None,
         &0,
-    );
-
-    client.confirm_will(&will_id, owner);
-    will_id
+    )
 }
 
 #[test]
 fn test_update_will_settings_beneficiaries_only() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let will_id = create_active_will(&env, &client, &owner, &token_address);
 
@@ -101,9 +98,7 @@ fn test_update_will_settings_beneficiaries_only() {
 
 #[test]
 fn test_update_will_settings_guardians_only() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let will_id = create_active_will(&env, &client, &owner, &token_address);
 
@@ -132,9 +127,7 @@ fn test_update_will_settings_guardians_only() {
 
 #[test]
 fn test_update_will_settings_periods_only() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let will_id = create_active_will(&env, &client, &owner, &token_address);
 
@@ -161,9 +154,7 @@ fn test_update_will_settings_periods_only() {
 
 #[test]
 fn test_update_will_settings_all_fields_together() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let will_id = create_active_will(&env, &client, &owner, &token_address);
 
@@ -208,9 +199,7 @@ fn test_update_will_settings_all_fields_together() {
 
 #[test]
 fn test_update_will_settings_none_fields_untouched() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let will_id = create_active_will(&env, &client, &owner, &token_address);
 
@@ -234,9 +223,7 @@ fn test_update_will_settings_none_fields_untouched() {
 
 #[test]
 fn test_update_will_settings_partial_updates_independent() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let will_id = create_active_will(&env, &client, &owner, &token_address);
 
@@ -362,16 +349,20 @@ fn update_will_settings_guardian_change_clears_cancel_vote_state() {
     assert_eq!(after_emerg.guardian_cancel_vote_weight, 0);
 
     // ── Now call update_will_settings to swap the guardian list ──────────
-    // The will is Active with clean counters; replace both guardians with a
-    // completely fresh address.  Before the fix, this branch would not call
-    // reset_guardian_cancel_votes and would not zero the cancel-vote fields,
-    // leaving them stale for future triggered cycles.
+    // The will is Active with clean counters; replace both guardians with
+    // completely fresh addresses (kept at 2 so the existing threshold of 2
+    // stays reachable -- update_will_settings has no way to also lower the
+    // threshold, so shrinking below it is rejected by design). Before the
+    // fix, this branch would not call reset_guardian_cancel_votes and would
+    // not zero the cancel-vote fields, leaving them stale for future
+    // triggered cycles.
     let new_guardian = Address::generate(&env);
+    let new_guardian_2 = Address::generate(&env);
     client.update_will_settings(
         &will_id,
         &owner,
         &None,
-        &Some(vec![&env, new_guardian.clone()]),
+        &Some(vec![&env, new_guardian.clone(), new_guardian_2.clone()]),
         &None,
         &None,
     );
@@ -395,8 +386,9 @@ fn update_will_settings_guardian_change_clears_cancel_vote_state() {
         after_update.guardian_vote_weight, 0,
         "guardian release-vote weight must also be cleared"
     );
-    assert_eq!(after_update.guardians.len(), 1);
+    assert_eq!(after_update.guardians.len(), 2);
     assert_eq!(after_update.guardians.get(0).unwrap().address, new_guardian);
+    assert_eq!(after_update.guardians.get(1).unwrap().address, new_guardian_2);
 
     // ── Confirm the new guardian's cancel-vote works on the next cycle ───
     // Accept the new guardian's role, advance to miss the check-in, trigger,

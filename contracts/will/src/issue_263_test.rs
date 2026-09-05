@@ -57,6 +57,9 @@ fn get_guardian_vote_status_reflects_a_cast_vote() {
     assert_eq!(client.get_guardian_vote_status(&will_id, &guardian_a), None);
     assert_eq!(client.get_guardian_vote_status(&will_id, &guardian_b), None);
 
+    // A guardian must accept their role before they can vote.
+    client.accept_guardian_role(&will_id, &guardian_a);
+
     // Clear the guardian-list cooldown, then guardian_a votes.
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     let vote_time = env.ledger().timestamp();
@@ -108,6 +111,9 @@ fn get_guardian_vote_status_returns_none_once_the_vote_expires() {
         &None,
         &0,
     );
+
+    // A guardian must accept their role before they can vote.
+    client.accept_guardian_role(&will_id, &guardian_a);
 
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.guardian_trigger(&will_id, &guardian_a, &GuardianVoteReason::Unreachable);

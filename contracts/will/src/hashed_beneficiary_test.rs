@@ -80,7 +80,6 @@ fn hashed_beneficiary_with_percentage_regular_beneficiaries() {
 /// Ensures that percentage-based beneficiaries plus hashed beneficiary percentages
 /// cannot exceed 10,000 basis points.
 #[test]
-#[should_panic(expected = "InvalidPercentages")]
 fn hashed_beneficiary_percentage_exceeds_limit() {
     let (env, client, owner, _, token_address) = setup();
     let reg_beneficiary_a = Address::generate(&env);
@@ -103,8 +102,14 @@ fn hashed_beneficiary_percentage_exceeds_limit() {
     let hashed_commitment = env.crypto().sha256(&soroban_sdk::Bytes::new(&env));
     let hashed_bytes = soroban_sdk::Bytes::from_array(&env, &hashed_commitment.to_array());
 
-    // This should panic with InvalidPercentages
-    client.add_hashed_beneficiary(&will_id, &owner, &hashed_bytes, &100);
+    // This should be rejected with InvalidPercentages. Soroban's panic
+    // message only shows the numeric error code, never the enum variant
+    // name, so #[should_panic(expected = "InvalidPercentages")] can never
+    // match -- use try_add_hashed_beneficiary instead.
+    assert_eq!(
+        client.try_add_hashed_beneficiary(&will_id, &owner, &hashed_bytes, &100),
+        Err(Ok(WillError::InvalidPercentages.into())),
+    );
 }
 
 /// Issue #182: Test that `add_hashed_beneficiary` works with fixed-amount beneficiaries.
@@ -124,7 +129,7 @@ fn hashed_beneficiary_with_fixed_amount_beneficiaries() {
             allocation: Allocation::FixedAmount(500_000),
         },
     ];
-    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 500_000_i128)];
     let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
 
     let hashed_commitment = env.crypto().sha256(&soroban_sdk::Bytes::new(&env));
@@ -154,11 +159,11 @@ fn multiple_hashed_beneficiaries() {
             allocation: Allocation::FixedAmount(500_000),
         },
     ];
-    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 500_000_i128)];
     let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
 
     // Add multiple hashed beneficiaries
-    for i in 0..3 {
+    for _i in 0..3 {
         let hashed_commitment = env.crypto().sha256(&soroban_sdk::Bytes::new(&env));
         let hashed_bytes = soroban_sdk::Bytes::from_array(&env, &hashed_commitment.to_array());
         client.add_hashed_beneficiary(&will_id, &owner, &hashed_bytes, &2_000);
@@ -186,6 +191,9 @@ fn hashed_beneficiary_funds_preserved_during_release() {
             allocation: Allocation::FixedAmount(800_000),
         },
     ];
+    // 1,000,000 total leaves 200,000 of headroom beyond the 800,000
+    // FixedAmount commitment -- exactly what the 2,000 bps (20%) hashed
+    // beneficiary below reserves.
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
     let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
 

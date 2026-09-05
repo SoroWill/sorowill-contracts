@@ -4,7 +4,7 @@
 //! off-chain indexers (such as the SoroWill SDK/app) can reconstruct will
 //! history without re-simulating transactions.
 
-use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{symbol_short, Address, Bytes, Env, Symbol, Vec};
 
 use crate::types::{Beneficiary, Guardian};
 
@@ -324,6 +324,16 @@ pub fn hashed_claimed(env: &Env, will_id: u64, claimant: &Address, amount: i128)
     env.events().publish(
         (symbol_short!("hclaim"), will_id),
         (claimant.clone(), amount),
+    );
+}
+
+/// Published when the owner adds a hashed beneficiary commitment to a will
+/// (issue #185). Without this, off-chain indexers reconstructing will state
+/// purely from events would silently miss every hashed beneficiary.
+pub fn hashed_beneficiary_added(env: &Env, will_id: u64, owner: &Address, commitment: &Bytes, percentage: u32) {
+    env.events().publish(
+        (symbol_short!("hadd"), will_id),
+        (owner.clone(), commitment.clone(), percentage),
     );
 }
 

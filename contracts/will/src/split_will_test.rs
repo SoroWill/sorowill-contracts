@@ -65,7 +65,7 @@ fn split_will_reduces_source_balance_and_renormalizes_child_percentages() {
                 allocation: Allocation::Percentage(6_000),
             },
         ],
-        &250_000_i128,
+        &vec![&env, (token_address, 250_000_i128)],
     );
 
     let source = client.get_will(&source_id);
@@ -95,7 +95,7 @@ fn split_will_rejects_insufficient_balance() {
 
     let will_id = client.create_will(
         &owner,
-        &vec![&env, (token_address, 100_000_i128)],
+        &vec![&env, (token_address.clone(), 100_000_i128)],
         &vec![
             &env,
             Beneficiary {
@@ -125,7 +125,7 @@ fn split_will_rejects_insufficient_balance() {
                 allocation: Allocation::Percentage(10_000),
             },
         ],
-        &200_000_i128,
+        &vec![&env, (token_address, 200_000_i128)],
     );
 }
 
@@ -137,7 +137,7 @@ fn split_will_rejects_invalid_split_when_source_would_have_no_beneficiaries() {
 
     let will_id = client.create_will(
         &owner,
-        &vec![&env, (token_address, 100_000_i128)],
+        &vec![&env, (token_address.clone(), 100_000_i128)],
         &vec![
             &env,
             Beneficiary {
@@ -163,6 +163,6 @@ fn split_will_rejects_invalid_split_when_source_would_have_no_beneficiaries() {
                 allocation: Allocation::Percentage(10_000),
             },
         ],
-        &10_000_i128,
+        &vec![&env, (token_address, 10_000_i128)],
     );
 }

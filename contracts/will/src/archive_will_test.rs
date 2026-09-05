@@ -9,7 +9,7 @@ use soroban_sdk::{
     vec, Address, Env,
 };
 
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatus};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
 const DAY: u64 = 86_400;
 
@@ -69,8 +69,11 @@ fn archive_will_removes_released_will_from_owner_and_beneficiary_indexes() {
     let beneficiary_wills = client.get_wills_by_beneficiary(&beneficiary, &None, &10);
     assert!(beneficiary_wills.is_empty(), "released wills must be removed from beneficiary index");
 
-    let archived = client.get_will(&will_id);
-    assert_eq!(archived.status, WillStatus::Released);
+    // archive_will removes the will's storage entry entirely (see its doc
+    // comment in lib.rs), so get_will on an archived id must now panic with
+    // WillNotFound rather than return a lingering Released record.
+    let result = client.try_get_will(&will_id);
+    assert!(result.is_err(), "an archived will's storage entry must be gone");
 }
 
 #[test]
@@ -141,14 +144,22 @@ fn archive_triggered_will_removes_id_from_triggered_index() {
         "triggered will must be in index before archival"
     );
 
-    // Archive the triggered will (simulate keeper or owner taking manual
-    // action; no grace-period check is required for archive_will itself).
-    client.archive_will(&will_id);
-
-    // After archival the triggered-wills index must be empty — no dangling id.
+    // archive_will only accepts Released/Cancelled wills (see its doc
+    // comment in lib.rs) -- a Triggered will must go through the grace
+    // period and release_inheritance first, which already clears the
+    // triggered-wills index on its own.
+    advance(&env, 8);
+    client.release_inheritance(&will_id, &None);
     assert!(
         client.get_triggered_wills().is_empty(),
-        "archiving a triggered will must remove its id from the triggered-wills index"
+        "release_inheritance must remove the will's id from the triggered-wills index"
+    );
+
+    // Archiving the now-Released will must not resurrect the stale id.
+    client.archive_will(&will_id);
+    assert!(
+        client.get_triggered_wills().is_empty(),
+        "archiving a released will must not leave a dangling id in the triggered-wills index"
     );
 }
 

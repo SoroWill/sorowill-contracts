@@ -140,12 +140,11 @@ fn clone_does_not_yet_increment_active_will_count() {
         &vec![&env, (token_address, 500_000_i128)],
     );
 
-    // `clone_will` never calls `increment_active_will_count`, so the protocol
-    // stats under-count cloned wills. This pins the current behaviour; when
-    // #191 lands, flip this to `before + 1`.
+    // #191 landed (see regression_test::issue_191_clone_will_increments_active_count):
+    // clone_will now correctly increments active_will_count for the new will.
     assert_eq!(
         client.get_protocol_stats().active_will_count,
-        before,
-        "clone_will still does not increment active_will_count (#191)"
+        before + 1,
+        "clone_will must increment active_will_count (#191)"
     );
 }

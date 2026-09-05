@@ -66,7 +66,7 @@ fn top_up_is_rejected_for_a_triggered_will() {
 
 #[test]
 fn top_up_is_rejected_for_a_cancelled_will() {
-    let (env, client, owner, token_address, will_id) = setup();
+    let (_env, client, owner, token_address, will_id) = setup();
 
     client.cancel_will(&will_id, &owner);
 

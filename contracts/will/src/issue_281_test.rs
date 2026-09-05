@@ -48,12 +48,14 @@ fn guardian_trigger_is_rejected_for_a_guardian_removed_via_update_guardians() {
         &90,
         &7,
         &vec![&env, guardian_a.clone(), guardian_b.clone()],
-        &2,
+        &1,
         &None,
         &0,
     );
 
     // Remove guardian_a from the guardian list, keeping only guardian_b.
+    // Threshold is 1 so shrinking to a single guardian stays valid --
+    // this test is about NotGuardian rejection, not threshold edge cases.
     client.update_guardians(&will_id, &owner, &vec![&env, guardian_b]);
 
     // Clear the guardian-list cooldown before voting so the rejection below

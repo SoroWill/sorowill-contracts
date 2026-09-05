@@ -58,10 +58,17 @@ fn create_will_aborts_at_transfer_not_at_the_decimals_probe() {
         &0,
     );
 
-    // A host-level abort (unimplemented `transfer`), not a declared
-    // WillError -- the probe cannot and does not claim to catch this.
-    assert!(
-        matches!(result, Err(Err(_))),
-        "expected an abort at the transfer call, got {result:?}"
+    // create_will must fail (it does, at the transfer call), and it must
+    // specifically NOT be the InvalidToken error the decimals() probe would
+    // raise -- proving the probe passed and the failure happened later, at
+    // the actual transfer. Current soroban-sdk surfaces an
+    // unimplemented-function call as a generic host Error rather than a raw
+    // abort, so this test only pins "failed, and not at the probe" instead
+    // of the exact error shape.
+    assert!(result.is_err(), "expected create_will to fail, got {result:?}");
+    assert_ne!(
+        result,
+        Err(Ok(crate::WillError::InvalidToken.into())),
+        "must not fail at the decimals() probe -- the probe should have passed"
     );
 }

@@ -53,8 +53,8 @@ fn create_will_checks_index_capacity_before_any_token_transfer() {
     let client = WillContractClient::new(&env, &contract_id);
 
     // Fill the owner's index to the test-mode-lowered MAX_WILLS_PER_INDEX
-    // (5) using a real token, so these all succeed normally.
-    for _ in 0..5 {
+    // (10) using a real token, so these all succeed normally.
+    for _ in 0..10 {
         client.create_will(
             &owner,
             &vec![&env, (real_token.clone(), 1_000_i128)],
@@ -74,7 +74,7 @@ fn create_will_checks_index_capacity_before_any_token_transfer() {
         );
     }
 
-    // The 6th call is already doomed by the owner's index being at
+    // The 11th call is already doomed by the owner's index being at
     // capacity. It uses PoisonToken so that, if the transfer were ever
     // reached, we'd see PoisonToken's panic instead of TooManyWills.
     let poison_token = env.register(PoisonToken, ());

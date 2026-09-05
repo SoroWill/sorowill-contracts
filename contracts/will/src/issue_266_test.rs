@@ -35,7 +35,7 @@ fn split_will_rejects_a_renormalised_share_that_rounds_to_zero() {
     // beneficiaries_to_split, not the ones actually stored here.
     let will_id = client.create_will(
         &owner,
-        &vec![&env, (token_address, 1_000_000_i128)],
+        &vec![&env, (token_address.clone(), 1_000_000_i128)],
         &vec![
             &env,
             Beneficiary { address: a.clone(), allocation: Allocation::Percentage(100) },
@@ -59,7 +59,12 @@ fn split_will_rejects_a_renormalised_share_that_rounds_to_zero() {
     ];
 
     assert_eq!(
-        client.try_split_will(&will_id, &owner, &skewed_split, &100_000),
+        client.try_split_will(
+            &will_id,
+            &owner,
+            &skewed_split,
+            &vec![&env, (token_address, 100_000_i128)],
+        ),
         Err(Ok(WillError::InvalidPercentages.into())),
         "a renormalised share of exactly 0 bp must be rejected, not silently saved"
     );
