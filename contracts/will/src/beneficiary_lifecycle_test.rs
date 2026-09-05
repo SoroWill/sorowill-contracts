@@ -84,7 +84,7 @@ fn release_pays_the_updated_beneficiary_list_not_the_original_one() {
     // accepted update_beneficiaries (issue #267): the new beneficiaries are
     // reachable, and the replaced one is not left with a stale index entry.
     assert_beneficiaries_are_indexed(&client, &updated);
-    assert_removed_beneficiaries_are_unindexed(&client, will_id, &[original.clone()]);
+    assert_removed_beneficiaries_are_unindexed(&client, will_id, std::slice::from_ref(&original));
 
     // Full lifecycle: missed check-in -> trigger -> grace period -> release.
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
@@ -157,7 +157,7 @@ fn release_pays_the_latest_of_several_beneficiary_updates() {
         ],
     );
     assert_beneficiaries_are_indexed(&client, &client.get_will(&will_id));
-    assert_removed_beneficiaries_are_unindexed(&client, will_id, &[first.clone()]);
+    assert_removed_beneficiaries_are_unindexed(&client, will_id, std::slice::from_ref(&first));
 
     client.update_beneficiaries(
         &will_id,
