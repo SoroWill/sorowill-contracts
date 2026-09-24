@@ -3350,9 +3350,10 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
         .map(|k| k != &will.owner && will.keeper_bounty_bps > 0)
         .unwrap_or(false);
 
-    // Build a Vec of (token_addr, Vec<(beneficiary_addr, share)>) so we can
-    // commit all state before any external call fires.
-    let mut transfer_plan: Vec<(Address, Vec<(Address, i128)>)> = Vec::new(env);
+    // Build a Vec of (token_addr, Vec<(beneficiary_addr, share)>, i128) where
+    // the third element is the keeper bounty deducted and paid specifically for this token,
+    // ensuring the token used for computation matches the token used for transfer.
+    let mut transfer_plan: Vec<(Address, Vec<(Address, i128)>, i128)> = Vec::new(env);
 
     // Any beneficiary added via `add_hashed_beneficiary` who has not yet
     // called `reveal_and_claim` has a standing claim on this fraction of
@@ -3367,11 +3368,16 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
             continue;
         }
 
-        // Calculate bounty from first token's balance if applicable
+        // Calculate bounty from token's balance if applicable
         let mut available = total;
+        let mut token_bounty: i128 = 0;
         if should_pay_bounty && bounty_amount == 0 {
-            bounty_amount = proportional_share(total, will.keeper_bounty_bps);
-            available = (total - bounty_amount).max(0);
+            let calculated = proportional_share(total, will.keeper_bounty_bps);
+            if calculated > 0 {
+                bounty_amount = calculated;
+                token_bounty = calculated;
+                available = (total - calculated).max(0);
+            }
         }
 
         if hashed_bps > 0 {
@@ -3419,7 +3425,7 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
             }
         }
 
-        transfer_plan.push_back((token_addr, shares));
+        transfer_plan.push_back((token_addr, shares, token_bounty));
     }
 
     // --- EFFECTS: mutate and persist all state before any external call ---
@@ -3443,7 +3449,7 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     storage::save_will(env, will);
 
     // --- INTERACTIONS: external token transfers execute after state is settled ---
-    for (token_addr, shares) in transfer_plan.iter() {
+    for (token_addr, shares, token_bounty) in transfer_plan.iter() {
         let token_client = token::Client::new(env, &token_addr);
         for (beneficiary_addr, share) in shares.iter() {
             if share > 0 {
@@ -3451,13 +3457,12 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
             }
         }
 
-        // Pay keeper bounty from first token if applicable
-        if should_pay_bounty && bounty_amount > 0 {
+        // Pay keeper bounty from the specific token it was deducted from
+        if should_pay_bounty && token_bounty > 0 {
             if let Some(keeper_addr) = keeper {
-                token_client.transfer(&contract_address, keeper_addr, &bounty_amount);
-                events::keeper_bounty_paid(env, will.id, keeper_addr, bounty_amount);
+                token_client.transfer(&contract_address, keeper_addr, &token_bounty);
+                events::keeper_bounty_paid(env, will.id, keeper_addr, token_bounty);
             }
-            bounty_amount = 0; // Only pay once
         }
     }
 
