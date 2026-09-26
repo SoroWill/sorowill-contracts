@@ -221,3 +221,91 @@ fn distribute_with_keeper_bounty_reduces_beneficiary_shares() {
     assert_eq!(beneficiary_balance, expected_beneficiary_share);
     assert_eq!(beneficiary_balance + keeper_balance, locked_amount);
 }
+
+/// Issue #378: Assert that when a multi-token will has a first token whose keeper
+/// bounty rounds down to zero, the keeper bounty is calculated from and paid out of
+/// the subsequent token whose calculation is strictly positive, leaving the first token
+/// intact and using the matching token client for the transfer.
+#[test]
+fn distribute_multi_token_first_token_rounds_bounty_to_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    let owner = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let keeper = Address::generate(&env);
+
+    let sac_a = env.register_stellar_asset_contract_v2(owner.clone());
+    let token_a_address = sac_a.address();
+    StellarAssetClient::new(&env, &token_a_address).mint(&owner, &1_000_000);
+    let token_a = TokenClient::new(&env, &token_a_address);
+
+    let sac_b = env.register_stellar_asset_contract_v2(owner.clone());
+    let token_b_address = sac_b.address();
+    StellarAssetClient::new(&env, &token_b_address).mint(&owner, &1_000_000);
+    let token_b = TokenClient::new(&env, &token_b_address);
+
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+
+    let (first_addr, first_token, second_addr, second_token) = if token_a_address < token_b_address
+    {
+        (token_a_address, token_a, token_b_address, token_b)
+    } else {
+        (token_b_address, token_b, token_a_address, token_a)
+    };
+
+    let first_token_amount = 100_i128;
+    let second_token_amount = 1_000_000_i128;
+    let keeper_bounty_bps = 50_u32;
+
+    let tokens: SorobanVec<(Address, i128)> = vec![
+        &env,
+        (first_addr.clone(), first_token_amount),
+        (second_addr.clone(), second_token_amount),
+    ];
+
+    let beneficiaries: SorobanVec<Beneficiary> = vec![
+        &env,
+        Beneficiary {
+            address: beneficiary.clone(),
+            allocation: Allocation::Percentage(10_000),
+        },
+    ];
+
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &Some(keeper_bounty_bps),
+        &0,
+    );
+
+    advance(&env, 91);
+    client.trigger_will(&will_id);
+    advance(&env, 8);
+    client.release_inheritance(&will_id, &Some(keeper.clone()));
+
+    let expected_first_bounty = (first_token_amount * keeper_bounty_bps as i128) / 10_000;
+    assert_eq!(expected_first_bounty, 0);
+
+    let expected_second_bounty = (second_token_amount * keeper_bounty_bps as i128) / 10_000;
+    let expected_second_beneficiary = second_token_amount - expected_second_bounty;
+
+    assert_eq!(first_token.balance(&beneficiary), first_token_amount);
+    assert_eq!(first_token.balance(&keeper), 0);
+    assert_eq!(first_token.balance(&contract_id), 0);
+
+    assert_eq!(
+        second_token.balance(&beneficiary),
+        expected_second_beneficiary
+    );
+    assert_eq!(second_token.balance(&keeper), expected_second_bounty);
+    assert_eq!(second_token.balance(&contract_id), 0);
+}
+

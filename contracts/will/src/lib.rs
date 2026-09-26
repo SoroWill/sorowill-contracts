@@ -3290,41 +3290,6 @@ fn assert_valid_periods(env: &Env, checkin_period_days: u64, grace_period_days: 
     }
 }
 
-/// Distributes all token balances across `will.beneficiaries` proportionally
-/// to their basis-point shares, transfers the shares out of the contract,
-/// clears the balances map, marks the will `Released`, and publishes the
-/// `InheritanceReleased` event.
-///
-/// # Rounding Behavior
-///
-/// Each token's distribution is calculated as: `share = balance * (basis_points / 10_000)`.
-/// Integer division truncates toward zero, which may result in zero shares for
-/// beneficiaries with very small calculated amounts. For example, distributing 9 units
-/// equally among 10 beneficiaries (900 basis points each) gives each person 0.9 units,
-/// which truncates to 0.
-///
-/// To ensure no dust is left behind, any rounding remainder is paid to the final
-/// beneficiary in the list. This guarantees the full balance of every token is
-/// always distributed across beneficiaries.
-///
-/// **Note:** Callers should ensure that the will's balance is sufficient to give
-/// each beneficiary at least 1 unit of their share. Extremely small balances relative
-/// to beneficiary counts can result in most recipients getting zero after rounding.
-/// Consider validating a minimum will amount at creation time (see issue #37).
-/// Splits `will.balance` across `will.beneficiaries` proportionally to their
-/// percentages, transfers the shares out of the contract, marks the will
-/// `Released`, and publishes the `InheritanceReleased` event with a full
-/// For each token in `will.balances`, splits the balance across
-/// `will.beneficiaries` proportionally to their basis-point shares, transfers
-/// the shares out of the contract, clears the balances map, marks the will
-/// `Released`, and publishes the `InheritanceReleased` event. Any rounding
-/// remainder from integer division is paid to the final beneficiary so the
-/// full balance of every token is always distributed with no dust left behind.
-///
-/// Follows checks-effects-interactions ordering: all per-beneficiary share
-/// amounts are computed from the pre-mutation balances, then all state is
-/// committed (status, balances, indexes), and only then are the external
-/// token transfers executed.
 /// Calculates `floor(total * basis_points / 10_000)` without ever forming
 /// the potentially overflowing `total * basis_points` intermediate. The
 /// workspace release profile enables overflow checks, but this decomposition
@@ -3337,6 +3302,32 @@ pub(crate) fn proportional_share(total: i128, basis_points: u32) -> i128 {
     whole * basis_points as i128 + remainder * basis_points as i128 / BASIS_POINTS_TOTAL
 }
 
+/// For each token in `will.balances`, splits the balance across
+/// `will.beneficiaries` proportionally to their basis-point shares, transfers
+/// the shares out of the contract, clears the balances map, marks the will
+/// `Released`, and publishes the `InheritanceReleased` event. Any rounding
+/// remainder from integer division is paid to the final beneficiary so the
+/// full balance of every token is always distributed with no dust left behind.
+///
+/// Follows checks-effects-interactions ordering: all per-beneficiary share
+/// amounts are computed from the pre-mutation balances, then all state is
+/// committed (status, balances, indexes), and only then are the external
+/// token transfers executed.
+///
+/// # Rounding Behavior
+///
+/// - **Beneficiary allocations**: Each percentage-based beneficiary receives
+///   `floor(remaining * bp / 10_000)` via `proportional_share`. To prevent truncation dust
+///   from being trapped in the contract, the final percentage beneficiary absorbs the full
+///   remaining balance.
+/// - **Keeper bounty**: If `keeper_bounty_bps > 0` and a non-owner keeper triggers
+///   release, the keeper bounty is computed against the first token in `will.balances`
+///   whose balance yields a strictly positive bounty (`proportional_share(total, bps) > 0`).
+///   If a token's computed bounty rounds down to zero, that token is skipped and no bounty is
+///   deducted from it. The first token with a non-zero bounty is explicitly selected as
+///   the bounty token; its available distribution balance is reduced by the bounty, and
+///   the keeper is paid out using that exact same token's client. If all tokens round to
+///   zero, no keeper bounty is paid.
 fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     let contract_address = env.current_contract_address();
     let count = will.beneficiaries.len();
@@ -3350,9 +3341,7 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
         .map(|k| k != &will.owner && will.keeper_bounty_bps > 0)
         .unwrap_or(false);
 
-    // Build a Vec of (token_addr, Vec<(beneficiary_addr, share)>) so we can
-    // commit all state before any external call fires.
-    let mut transfer_plan: Vec<(Address, Vec<(Address, i128)>)> = Vec::new(env);
+    let mut transfer_plan: Vec<(Address, Vec<(Address, i128)>, i128)> = Vec::new(env);
 
     // Any beneficiary added via `add_hashed_beneficiary` who has not yet
     // called `reveal_and_claim` has a standing claim on this fraction of
@@ -3367,11 +3356,15 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
             continue;
         }
 
-        // Calculate bounty from first token's balance if applicable
         let mut available = total;
+        let mut token_bounty: i128 = 0;
         if should_pay_bounty && bounty_amount == 0 {
-            bounty_amount = proportional_share(total, will.keeper_bounty_bps);
-            available = (total - bounty_amount).max(0);
+            let calculated = proportional_share(total, will.keeper_bounty_bps);
+            if calculated > 0 {
+                bounty_amount = calculated;
+                token_bounty = calculated;
+                available = (total - calculated).max(0);
+            }
         }
 
         if hashed_bps > 0 {
@@ -3419,7 +3412,7 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
             }
         }
 
-        transfer_plan.push_back((token_addr, shares));
+        transfer_plan.push_back((token_addr, shares, token_bounty));
     }
 
     // --- EFFECTS: mutate and persist all state before any external call ---
@@ -3443,7 +3436,7 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     storage::save_will(env, will);
 
     // --- INTERACTIONS: external token transfers execute after state is settled ---
-    for (token_addr, shares) in transfer_plan.iter() {
+    for (token_addr, shares, token_bounty) in transfer_plan.iter() {
         let token_client = token::Client::new(env, &token_addr);
         for (beneficiary_addr, share) in shares.iter() {
             if share > 0 {
@@ -3451,13 +3444,11 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
             }
         }
 
-        // Pay keeper bounty from first token if applicable
-        if should_pay_bounty && bounty_amount > 0 {
+        if should_pay_bounty && token_bounty > 0 {
             if let Some(keeper_addr) = keeper {
-                token_client.transfer(&contract_address, keeper_addr, &bounty_amount);
-                events::keeper_bounty_paid(env, will.id, keeper_addr, bounty_amount);
+                token_client.transfer(&contract_address, keeper_addr, &token_bounty);
+                events::keeper_bounty_paid(env, will.id, keeper_addr, token_bounty);
             }
-            bounty_amount = 0; // Only pay once
         }
     }
 
