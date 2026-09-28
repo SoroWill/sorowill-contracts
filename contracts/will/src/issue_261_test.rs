@@ -53,7 +53,7 @@ fn create_will_aborts_at_transfer_not_at_the_decimals_probe() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );

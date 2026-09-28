@@ -69,7 +69,7 @@ fn renounce_beneficiary_redistributes_percentages_validly() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -120,7 +120,7 @@ fn renounce_beneficiary_with_rounding_edge_case() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -166,7 +166,7 @@ fn renounce_beneficiary_single_percentage_beneficiary() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

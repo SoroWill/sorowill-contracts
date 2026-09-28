@@ -38,7 +38,7 @@ fn a_fully_cancelled_one_off_token_is_pruned_from_protocol_stats() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );

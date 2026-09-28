@@ -41,7 +41,7 @@ fn preserves_input_order_and_skips_missing_ids() {
             &90,
             &7,
             &vec![&env],
-            &2,
+            &0,
             &None,
             &0,
         )
@@ -107,7 +107,7 @@ fn duplicate_ids_produce_duplicate_result_entries() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

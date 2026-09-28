@@ -78,7 +78,7 @@ fn zero_percentage_hashed_beneficiary_is_rejected_on_a_full_percentage_list() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -123,7 +123,7 @@ fn hashed_beneficiary_percentage_exceeds_limit() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -166,7 +166,7 @@ fn hashed_beneficiary_with_fixed_amount_beneficiaries() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -209,7 +209,7 @@ fn multiple_hashed_beneficiaries() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -255,7 +255,7 @@ fn hashed_beneficiary_funds_preserved_during_release() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

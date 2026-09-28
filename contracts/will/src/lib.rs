@@ -505,7 +505,8 @@ impl WillContract {
     /// - `guardians`: 0 to `MAX_GUARDIANS` distinct addresses that may jointly
     ///   force an early release.
     /// - `guardian_threshold`: number of guardian votes required to trigger.
-    ///   Must be between 1 and `guardians.len()`. Ignored when `guardians` is empty.
+    ///   Must be 0 when `guardians` is empty; must be between 1 and
+    ///   `guardians.len()` when the list is non-empty.
     /// - `keeper_bounty_bps`: optional keeper bounty in basis points.
     ///
     /// # Returns
@@ -576,7 +577,7 @@ impl WillContract {
     ///     &90,  // checkin_period_days
     ///     &7,   // grace_period_days
     ///     &vec![&env],  // no guardians
-    ///     &1,           // guardian_threshold (ignored when no guardians)
+    ///     &0,           // guardian_threshold must be 0 when no guardians
     ///     &None,        // no keeper bounty
     ///     &0,           // confirmation_delay_seconds (0 = starts Active immediately)
     /// );
@@ -628,8 +629,18 @@ impl WillContract {
         assert_valid_guardians(&env, &owner, &guardians);
         assert_valid_periods(&env, checkin_period_days, grace_period_days);
 
-        // Validate guardian threshold when guardians are present.
-        if !guardians.is_empty() {
+        // Validate guardian threshold.
+        //
+        // An empty guardian list disables the guardian mechanism entirely, so a
+        // non-zero threshold would create an unreachable code path in
+        // `guardian_trigger` — votes can never be cast, and the threshold can
+        // never be reached. Reject that combination explicitly. If the list is
+        // non-empty, the threshold must fall in `1..=guardians.len()`.
+        if guardians.is_empty() {
+            if guardian_threshold != 0 {
+                panic_with_error!(&env, WillError::InvalidGuardianThreshold);
+            }
+        } else {
             let threshold_range = 1..=guardians.len();
             if !threshold_range.contains(&guardian_threshold) {
                 panic_with_error!(&env, WillError::InvalidGuardianThreshold);
@@ -2811,7 +2822,14 @@ impl WillContract {
             }
             assert_valid_guardians(&env, &owner, &guardians);
             assert_valid_periods(&env, checkin_period_days, grace_period_days);
-            if !guardians.is_empty() {
+            // Mirror the `create_will` invariant: an empty guardian list
+            // requires threshold == 0; a non-empty list requires
+            // threshold in 1..=guardians.len().
+            if guardians.is_empty() {
+                if guardian_threshold != 0 {
+                    panic_with_error!(&env, WillError::InvalidGuardianThreshold);
+                }
+            } else {
                 let threshold_range = 1..=guardians.len();
                 if !threshold_range.contains(&guardian_threshold) {
                     panic_with_error!(&env, WillError::InvalidGuardianThreshold);
