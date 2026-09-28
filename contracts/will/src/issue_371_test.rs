@@ -28,7 +28,9 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, u64) {
     env.ledger().set_timestamp(1_700_000_000);
 
     let owner = Address::generate(&env);
-    let token_address = env.register_stellar_asset_contract_v2(owner.clone()).address();
+    let token_address = env
+        .register_stellar_asset_contract_v2(owner.clone())
+        .address();
     StellarAssetClient::new(&env, &token_address).mint(&owner, &1_000_000);
 
     let contract_id = env.register(WillContract, ());
@@ -176,12 +178,7 @@ fn owner_and_status_checks_still_take_precedence() {
     let bad_commitment = Bytes::from_array(&env, &[1u8; 31]);
 
     assert_eq!(
-        client.try_add_hashed_beneficiary(
-            &will_id,
-            &Address::generate(&env),
-            &bad_commitment,
-            &0
-        ),
+        client.try_add_hashed_beneficiary(&will_id, &Address::generate(&env), &bad_commitment, &0),
         Err(Ok(WillError::NotOwner.into())),
     );
 

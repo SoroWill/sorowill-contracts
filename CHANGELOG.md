@@ -12,6 +12,43 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ### Added
 
+- `WillError::NoFailedPayout` (code 50): raised by the new
+  `retry_failed_payout(will_id, token, recipient)` entry point when no failed
+  payout is recorded for that exact tuple. `README.md` is updated for the new
+  code.
+- New entry point `retry_failed_payout(will_id, token, recipient)`: delivers a
+  beneficiary share, owner refund, or keeper bounty that failed during a
+  previous `distribute` call (#459). Permissionless, and deliberately never
+  loads or validates the parent will — the recorded amount is self-sufficient
+  — so it keeps working even after the will has been archived. Extended
+  `docs/FUZZING.md`'s target list accordingly.
+- `distribute` now uses `try_transfer` for every payout (beneficiary shares,
+  owner refunds, keeper bounty) instead of the panicking `transfer` (#459). A
+  SEP-41 token can refuse a specific transfer for reasons outside this
+  contract's control (a frozen or unauthorized recipient, a paused token, a
+  missing trustline). Previously, since `distribute` commits its own state
+  before any transfer fires and runs once for every beneficiary and token,
+  *one* permanently-unreachable recipient blocked *every* beneficiary's
+  inheritance indefinitely, not just their own — the same failing transfer
+  would be reached again on every retry. A failed transfer's amount is now
+  recorded and left for anyone to retry via `retry_failed_payout`, while every
+  other transfer in the same call still succeeds normally. New events
+  `payout_failed` and `payout_retried`.
+- Restored `contracts/will/src/issue_370_test.rs` and
+  `contracts/will/src/issue_371_test.rs` to the crate's module tree — neither
+  had a `mod` declaration in `lib.rs`, so despite testing real, currently
+  correct behavior (`InvalidPreimageLength` and `InvalidCommitmentLength`,
+  #370/#371), they were never compiled or run by `cargo test`.
+  `issue_370_test.rs` additionally needed its fixtures updated: its pre-images
+  were not derived from the claimant address the way #369's later
+  address-binding check requires, so several of its cases were actually
+  exercising `PreimageAddressMismatch` rather than the length/commitment
+  checks they were written to cover.
+- `contracts/will/src/issue_461_test.rs`: regression coverage for a hashed
+  beneficiary claiming its share of every locked token on a multi-token will,
+  not just the primary one (#461) — `reveal_and_claim` already did this
+  correctly, but no test exercised more than one token before this.
+
 - `WillError::MergeWithHashedBeneficiaries` (code 47): `merge_wills` is now
   rejected while either will still carries a hashed beneficiary that has not
   revealed and claimed. `merge_beneficiaries` only merges *visible*

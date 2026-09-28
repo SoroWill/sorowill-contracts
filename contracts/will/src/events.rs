@@ -409,3 +409,24 @@ pub fn batch_checkin(env: &Env, owner: &Address, will_ids: &Vec<u64>, count: u32
         (will_ids.clone(), count),
     );
 }
+
+/// Published when `distribute` cannot deliver `amount` of `token` to
+/// `recipient` — the transfer itself failed rather than panicking the whole
+/// release (#459). The amount is recorded in storage and can be delivered
+/// later via `retry_failed_payout`; every other beneficiary and token in the
+/// same `distribute` call is unaffected.
+pub fn payout_failed(env: &Env, will_id: u64, token: &Address, recipient: &Address, amount: i128) {
+    env.events().publish(
+        (symbol_short!("payfail"), will_id),
+        (token.clone(), recipient.clone(), amount),
+    );
+}
+
+/// Published when `retry_failed_payout` successfully delivers a previously
+/// failed payout (#459).
+pub fn payout_retried(env: &Env, will_id: u64, token: &Address, recipient: &Address, amount: i128) {
+    env.events().publish(
+        (symbol_short!("payretry"), will_id),
+        (token.clone(), recipient.clone(), amount),
+    );
+}

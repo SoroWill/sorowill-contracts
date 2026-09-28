@@ -283,6 +283,7 @@ disambiguate.
 | 47 | `MergeWithHashedBeneficiaries` | `merge_wills` was called while either will still had an unrevealed hashed beneficiary, whose committed percentage a merge cannot carry across. |
 | 48 | `DuplicateWillId` | A `batch_check_in` `will_ids` list named the same will more than once. |
 | 49 | `InvalidConsentTransition` | `accept_guardian_role` was called by a guardian who had already `Rejected` the role, which is terminal. |
+| 50 | `NoFailedPayout` | `retry_failed_payout` was called for a `(will_id, token, recipient)` tuple with no recorded failed payout. |
 
 ## Contract spec artifact
 

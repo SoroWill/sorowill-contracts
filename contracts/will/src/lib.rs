@@ -152,10 +152,27 @@ mod issue_425_test;
 #[cfg(test)]
 mod issue_426_test;
 
+#[cfg(test)]
+mod issue_370_test;
+#[cfg(test)]
+mod issue_371_test;
+
 /// Regression tests for issue #427: `get_protocol_stats().total_locked_by_token`
 /// stays consistent across create / top-up / cancel / release operations.
 #[cfg(test)]
 mod issue_427_test;
+
+/// Regression tests for issue #459: a failed SEP-41 transfer mid-`distribute`
+/// does not block any other beneficiary's payout, and is recoverable via
+/// `retry_failed_payout`.
+#[cfg(test)]
+mod issue_459_test;
+
+/// Regression coverage for issue #461: a hashed beneficiary claiming from a
+/// multi-token will is paid its share of *every* locked token, not just the
+/// primary one.
+#[cfg(test)]
+mod issue_461_test;
 
 /// Regression test for issue #184: `merge_wills` refuses mismatched primary tokens.
 #[cfg(test)]
@@ -1103,6 +1120,40 @@ impl WillContract {
         );
 
         distribute(&env, &mut will, &caller);
+    }
+
+    /// Delivers a payout that failed during a previous `distribute` call
+    /// (#459) — a beneficiary share, an owner refund, or a keeper bounty that
+    /// could not be transferred at the time, e.g. because the token was
+    /// paused or the recipient was frozen/unauthorized.
+    ///
+    /// Permissionless, like triggering a release: anyone may call this for
+    /// anyone, since it can only deliver funds to the exact recipient
+    /// `distribute` already computed and reserved for them, not redirect them
+    /// anywhere else. Deliberately does not load or validate the parent will
+    /// at all -- the recorded amount is self-sufficient -- so this keeps
+    /// working even after the will has been archived.
+    ///
+    /// # Panics
+    /// - [`WillError::NoFailedPayout`] if no failed payout is recorded for
+    ///   this exact `(will_id, token, recipient)` tuple (never failed,
+    ///   already retried successfully, or the arguments don't match).
+    /// - Propagates the token contract's own panic if this attempt also
+    ///   fails; the record is left in place for a future retry.
+    pub fn retry_failed_payout(env: Env, will_id: u64, token: Address, recipient: Address) {
+        let amount = match storage::get_failed_payout(&env, will_id, &token, &recipient) {
+            Some(amount) => amount,
+            None => panic_with_error!(&env, WillError::NoFailedPayout),
+        };
+
+        token::Client::new(&env, &token).transfer(
+            &env.current_contract_address(),
+            &recipient,
+            &amount,
+        );
+
+        storage::remove_failed_payout(&env, will_id, &token, &recipient);
+        events::payout_retried(&env, will_id, &token, &recipient, amount);
     }
 
     /// Cancels the will and refunds every locked token balance to the owner.
@@ -4497,32 +4548,102 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     storage::save_will(env, will);
 
     // --- INTERACTIONS: external token transfers execute after state is settled ---
+    //
+    // Every payout below goes through `try_transfer`, not the panicking
+    // `transfer` (#459). A SEP-41 token can refuse a transfer for reasons
+    // entirely outside this contract's control -- a frozen or unauthorized
+    // recipient, a paused token, a missing trustline for a classic asset
+    // wrapped as a token contract -- and `distribute` runs once, for every
+    // beneficiary and token on the will, in a single atomic call. If any one
+    // of those transfers panicked, Soroban's all-or-nothing transaction
+    // semantics would roll back the *entire* call, including every other
+    // transfer that already succeeded earlier in the same loop -- and because
+    // this contract's own state (`will.status = Released`, `will.balances`
+    // cleared) was already committed above, on retry the same failing
+    // transfer would be reached again, forever. One permanently-unreachable
+    // recipient would therefore block every other beneficiary's inheritance
+    // indefinitely, not just their own.
+    //
+    // A failed transfer's amount is instead recorded via
+    // `storage::set_failed_payout` and left for anyone to retry later through
+    // `retry_failed_payout`, while every other transfer in this same call
+    // still goes through normally. The retry path never re-reads or
+    // re-validates the will -- it only needs the recorded amount -- so it
+    // keeps working even after this will is archived.
     for (token_addr, amount) in refund_plan.iter() {
-        if amount > 0 {
-            token::Client::new(env, &token_addr).transfer(&contract_address, &will.owner, &amount);
+        if amount > 0
+            && pay_or_record_failure(
+                env,
+                &token_addr,
+                &contract_address,
+                &will.owner,
+                amount,
+                will.id,
+            )
+        {
             events::leftover_refunded(env, will.id, &token_addr, &will.owner, amount);
         }
     }
 
     for (token_addr, shares) in transfer_plan.iter() {
-        let token_client = token::Client::new(env, &token_addr);
         for (beneficiary_addr, share) in shares.iter() {
             if share > 0 {
-                token_client.transfer(&contract_address, &beneficiary_addr, &share);
+                pay_or_record_failure(
+                    env,
+                    &token_addr,
+                    &contract_address,
+                    &beneficiary_addr,
+                    share,
+                    will.id,
+                );
             }
         }
 
         // Pay the keeper bounty out of the very token it was computed from,
         // whose balance was reduced to make room for it above (#378).
         if let (Some((bounty_addr, bounty_amount)), Some(keeper_addr)) = (&bounty_token, keeper) {
-            if bounty_addr == &token_addr && *bounty_amount > 0 {
-                token_client.transfer(&contract_address, keeper_addr, bounty_amount);
+            if bounty_addr == &token_addr
+                && *bounty_amount > 0
+                && pay_or_record_failure(
+                    env,
+                    &token_addr,
+                    &contract_address,
+                    keeper_addr,
+                    *bounty_amount,
+                    will.id,
+                )
+            {
                 events::keeper_bounty_paid(env, will.id, keeper_addr, *bounty_amount);
             }
         }
     }
 
     events::inheritance_released(env, will.id, token_count, count);
+}
+
+/// Attempts to transfer `amount` of `token_addr` from `from` to `to`,
+/// returning whether it succeeded so the caller can publish its own
+/// success-specific event (`leftover_refunded`, `keeper_bounty_paid`, or
+/// nothing for an ordinary beneficiary share) exactly as it did before #459.
+/// On failure, records the amount via `storage::set_failed_payout` and
+/// publishes `events::payout_failed` instead of panicking, so one
+/// recipient's transfer failure cannot block any other transfer in the same
+/// `distribute` call.
+fn pay_or_record_failure(
+    env: &Env,
+    token_addr: &Address,
+    from: &Address,
+    to: &Address,
+    amount: i128,
+    will_id: u64,
+) -> bool {
+    let result = token::Client::new(env, token_addr).try_transfer(from, to, &amount);
+    if result.is_ok() {
+        return true;
+    }
+    storage::set_failed_payout(env, will_id, token_addr, to, amount);
+    events::payout_failed(env, will_id, token_addr, to, amount);
+    false
 }
 
 /// Combines the two `GuardianConsent` states recorded for one guardian address

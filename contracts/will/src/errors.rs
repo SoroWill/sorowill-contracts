@@ -187,4 +187,9 @@ pub enum WillError {
     /// `update_guardians` / `update_guardians_weighted`, which resets the list
     /// to `Pending` (#374).
     InvalidConsentTransition = 49,
+    /// `retry_failed_payout` was called for a `(will_id, token, recipient)`
+    /// tuple with no recorded failed payout — either it was never recorded,
+    /// it was already retried successfully, or the arguments do not match any
+    /// payout `distribute` attempted (#459).
+    NoFailedPayout = 50,
 }
