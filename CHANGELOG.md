@@ -87,6 +87,35 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ### Fixed
 
+- `top_up` now enforces the same `MAX_TOKENS` distinct-token cap `create_will`
+  applies, raising `InvalidTokenCount` when the token is not already in the
+  will's `balances` map and the map already holds `MAX_TOKENS` entries.
+  `distribute` and `cancel_will` iterate every entry of that map, so an owner
+  could previously grow it one token at a time until a release or refund no
+  longer fit in a Soroban transaction, leaving the will's funds unreachable.
+  Topping up a token the will already holds is unchanged and still works at the
+  cap (#358).
+- `get_guardian_vote_status` no longer panics when the current ledger time is
+  earlier than a stored vote timestamp. It computed `now - record.timestamp`
+  with a raw `u64` subtraction, so a skewed clock (or a test that rewinds the
+  ledger) underflowed and trapped the read-only query. The expiry rule is now
+  one shared `storage::vote_is_live` helper used by this query and by
+  `has_guardian_voted` / `has_guardian_cancel_voted`, so the three call sites
+  cannot diverge again; a record timestamped after `now` is reported as-is by
+  the query and as "not voted" by the quorum counters (#359).
+- `get_wills_by_owner_and_status` now returns an empty page for `limit == 0`,
+  matching `get_wills_by_owner` and `get_wills_by_beneficiary`. It pushed a
+  matching will *before* comparing the page length against the page size, so a
+  caller paginating with a computed limit that reached zero received one will
+  while the id-based queries returned none (#360).
+- `renounce_beneficiary` now rejects the last remaining beneficiary with
+  `TooManyBeneficiaries` instead of leaving the will with an empty beneficiary
+  list. `create_will` and `update_beneficiaries` both require between 1 and
+  `MAX_BENEFICIARIES` entries, and `assert_valid_allocations` cannot catch the
+  emptied list because a `Vec` with no entries passes every check it makes, so
+  a sole beneficiary could renounce and leave an `Active` or `Triggered` will
+  with nobody for `release_inheritance` to pay. The rationale recorded for
+  `InvalidPercentages` in the function's rustdoc has been corrected (#361).
 - `update_guardians_weighted` now accumulates guardian weights with
   `checked_add` and enforces a new public `MAX_GUARDIAN_WEIGHT` (1_000_000) cap
   per guardian. A weight list whose `u32` total overflows used to abort the call

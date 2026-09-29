@@ -245,7 +245,7 @@ disambiguate.
 | 9 | `NotGuardian` | The caller is not a designated guardian of this will. |
 | 10 | `CheckinNotDue` | `trigger_will` was called before the check-in deadline passed. |
 | 11 | `ZeroAmount` | An amount of zero (or less) was supplied where a positive amount is required. |
-| 12 | `TooManyBeneficiaries` | A list-length cap was exceeded: a `beneficiaries` list that is empty or longer than `MAX_BENEFICIARIES`, a `guardians` list longer than `MAX_GUARDIANS`, or a `batch_create_wills` spec list that is empty or longer than `BATCH_MAX`. Token-list bounds are **not** reported here — those raise `InvalidTokenCount`. |
+| 12 | `TooManyBeneficiaries` | A list-length cap was exceeded: a `beneficiaries` list that is empty or longer than `MAX_BENEFICIARIES`, a `renounce_beneficiary` call that would leave the will with no beneficiaries at all (the last beneficiary cannot renounce), a `guardians` list longer than `MAX_GUARDIANS`, or a `batch_create_wills` spec list that is empty or longer than `BATCH_MAX`. Token-list bounds are **not** reported here — those raise `InvalidTokenCount`. |
 | 13 | `WillNotSettled` | The requested action requires the will to be `Released` or `Cancelled`. |
 | 14 | `WillNotBothActive` | Both wills in a merge must be `Active`. |
 | 15 | `SameWillId` | The same will id was supplied for both sides of a merge. |
@@ -275,7 +275,7 @@ disambiguate.
 | 39 | `PrimaryTokenMismatch` | Cannot merge: the two wills' primary tokens differ. |
 | 40 | `DuplicateToken` | The same token address was supplied more than once in a `tokens` list. |
 | 41 | `BatchTooLarge` | A `batch_check_in` call supplied more than `MAX_BATCH_CHECK_IN` (50) will ids. |
-| 42 | `InvalidTokenCount` | The token list supplied to `create_will`, `clone_will`, `split_will`, or `batch_create_wills` was empty, or contained more than `MAX_TOKENS` entries. |
+| 42 | `InvalidTokenCount` | The token list supplied to `create_will`, `clone_will`, `split_will`, or `batch_create_wills` was empty, or contained more than `MAX_TOKENS` entries. Also raised by `top_up` when the token is not already in the will's `balances` map and that map already holds `MAX_TOKENS` distinct tokens; topping up an already-held token stays allowed at the cap. |
 | 43 | `InvalidPreimageLength` | `reveal_and_claim` was called with a pre-image that is not exactly 32 bytes, so its SHA-256 could never match a stored commitment. |
 | 44 | `InvalidCommitmentLength` | A hashed-beneficiary commitment was not exactly 32 bytes (a SHA-256 digest) and could never be matched by a pre-image. |
 | 45 | `DuplicateCommitment` | The same commitment hash is already registered on the will, making the second slot unreachable. |
