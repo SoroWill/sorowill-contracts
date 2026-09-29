@@ -160,6 +160,25 @@ pub struct ProtocolStats {
     pub total_locked_by_token: Vec<TokenLockedBalance>,
 }
 
+/// Aggregate statistics for the wills owned by a single address (issue #447).
+///
+/// Returned by `get_owner_stats` so clients can show ownership totals
+/// alongside a paginated `get_wills_by_owner` listing without walking every
+/// page themselves.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnerStats {
+    /// Total number of wills indexed under this owner, in any status.
+    pub total_wills: u32,
+    /// Number of those wills that are still non-terminal
+    /// (`PendingConfirmation`, `Active` or `Triggered`).
+    pub active_wills: u32,
+    /// Locked balances by token, summed across the owner's non-terminal wills.
+    pub total_locked_by_token: Vec<TokenLockedBalance>,
+}
+
+
+
 /// A beneficiary's claimable share in a pull-based distribution.
 ///
 /// Stored in persistent storage keyed by `(will_id, beneficiary_address)`.
@@ -293,6 +312,8 @@ pub struct Will {
     pub guardian_list_updated_at: u64,
     /// Schema version for this will. Used to track which contract version
     /// wrote this state and enable forward/backward compatible migrations.
+    /// See `migration.rs` and the "Storage schema versioning" section of
+    /// CONTRIBUTING.md for how new versions are introduced.
     pub schema_version: u32,
     /// Optional keeper bounty in basis points (e.g., 10 = 0.1%).
     /// When set, a portion of the inheritance is paid to callers who trigger

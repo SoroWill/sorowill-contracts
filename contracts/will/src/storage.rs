@@ -7,9 +7,10 @@
 //! `(will_id, guardian)` pair with a timestamp so they can expire over time,
 //! and cleared independently when a guardian-release cycle resets.
 
-use soroban_sdk::{contracttype, panic_with_error, Address, Env, Vec};
+use soroban_sdk::{contracttype, panic_with_error, Address, Env, Val, Vec};
 
 use crate::errors::WillError;
+use crate::migration;
 use crate::types::{
     Beneficiary, GuardianVoteReason, ProtocolStats, TokenLockedBalance, Will, WillStatus,
     WillStatusTransition,
@@ -278,12 +279,21 @@ pub fn save_will(env: &Env, will: &Will) {
 /// not implementable with the current SDK version, so this documentation is
 /// the contract's contract with its consumers until the storage API grows an
 /// archived-entry probe.
+///
+/// # Schema versioning (issue #446)
+///
+/// The entry is read as a raw `Val` and decoded through
+/// [`migration::decode_will`], so wills written with an older `Will` layout
+/// still load after a field is added. A will that matches no known layout
+/// yields [`WillError::UnsupportedSchemaVersion`].
 pub fn load_will(env: &Env, will_id: u64) -> Result<Will, WillError> {
     let key = DataKey::Will(will_id);
-    env.storage()
+    let raw: Val = env
+        .storage()
         .persistent()
         .get(&key)
-        .ok_or(WillError::WillNotFound)
+        .ok_or(WillError::WillNotFound)?;
+    migration::decode_will(env, &raw)
 }
 
 /// Adds `will_id` to the index list stored at `key`, if not already present.

@@ -48,6 +48,7 @@
 mod batch_check_in_limit;
 mod errors;
 mod events;
+mod migration;
 mod guardian_vote_freshness;
 mod split_uniqueness_check;
 mod storage;
@@ -324,6 +325,15 @@ mod update_will_settings_test;
 mod wills_by_owner_status_test;
 
 use soroban_sdk::{
+    contract, contractimpl, log, panic_with_error, symbol_short, token, Address, Bytes, Env, Map,
+    Vec,
+};
+
+pub use errors::WillError;
+pub use migration::CURRENT_SCHEMA_VERSION;
+pub use types::{
+    Allocation, Beneficiary, Guardian, GuardianVoteReason, HashedBeneficiary, OwnerStats,
+    ProtocolStats, TokenLockedBalance, Will, WillStatus, WillStatusTransition,
     contract, contractimpl, panic_with_error, symbol_short, token, xdr::ToXdr, Address, Bytes, Env,
     Map, Vec,
 };
@@ -354,7 +364,19 @@ pub const CONTRACT_VERSION: u32 = 1_002_000;
 /// stored on a `Will` into absolute ledger timestamps.
 const SECONDS_PER_DAY: u64 = 86_400;
 
-/// Maximum number of beneficiaries a single will may have.
+/// Maximum number of beneficiaries a single will may have: **10**.
+///
+/// Enforced by `create_will`, `batch_create_wills`, `update_beneficiaries`,
+/// `update_will_settings` and `merge_wills`. Supplying more panics with
+/// [`WillError::TooManyBeneficiaries`] (code `12`), or
+/// [`WillError::MergeWouldExceedLimits`] (code `16`) for a merge.
+///
+/// The cap exists because `release_inheritance` pays every beneficiary in a
+/// single transaction: each payout is a token transfer, and an unbounded list
+/// could push the release past Soroban's per-transaction CPU, memory and
+/// ledger-entry limits, leaving the funds permanently unreleasable. See the
+/// README's "FAQ: why is there a beneficiary limit?" for details and
+/// workarounds (e.g. splitting across several wills).
 ///
 /// Re-exported at the crate root so off-chain tooling can reference the
 /// canonical value without hardcoding a duplicate.
@@ -519,6 +541,10 @@ impl WillContract {
     ///
     /// # Panics
     /// - [`WillError::ZeroAmount`] if any token amount is not positive.
+    /// - [`WillError::TooManyBeneficiaries`] if the beneficiary/guardian/token lists are
+    ///   empty or exceed their respective caps (at most [`MAX_BENEFICIARIES`] = 10
+    ///   beneficiaries).
+    /// - [`WillError::InvalidPercentages`] if beneficiary basis points do not sum to 10,000.
     /// - [`WillError::TooManyBeneficiaries`] if the beneficiary or guardian
     ///   lists are empty or exceed their respective caps.
     /// - [`WillError::InvalidTokenCount`] if the token list is empty or
@@ -628,9 +654,7 @@ impl WillContract {
             }
             seen_tokens.push_back(token_addr);
         }
-        if beneficiaries.is_empty() || beneficiaries.len() > MAX_BENEFICIARIES {
-            panic_with_error!(&env, WillError::TooManyBeneficiaries);
-        }
+        assert_beneficiary_count(&env, &beneficiaries);
         assert_valid_guardians(&env, &owner, &guardians);
         assert_valid_periods(&env, checkin_period_days, grace_period_days);
 
@@ -1263,6 +1287,8 @@ impl WillContract {
         let mut will = load_owned(&env, will_id, &owner);
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
 
+        assert_beneficiary_count(&env, &beneficiaries);
+        assert_valid_allocations(&env, &beneficiaries, total_balance(&will.balances));
         if beneficiaries.is_empty() || beneficiaries.len() > MAX_BENEFICIARIES {
             panic_with_error!(&env, WillError::TooManyBeneficiaries);
         }
@@ -1738,6 +1764,8 @@ impl WillContract {
 
         // Update beneficiaries if provided
         if let Some(new_beneficiaries) = beneficiaries {
+            assert_beneficiary_count(&env, &new_beneficiaries);
+            assert_valid_allocations(&env, &new_beneficiaries, total_balance(&will.balances));
             if new_beneficiaries.is_empty() || new_beneficiaries.len() > MAX_BENEFICIARIES {
                 panic_with_error!(&env, WillError::TooManyBeneficiaries);
             }
@@ -2039,6 +2067,9 @@ impl WillContract {
     ///   or `0` for the first page.
     /// - `limit`: maximum number of wills to return. Capped at
     ///   [`storage::MAX_PAGE_SIZE`].
+    ///
+    /// For totals across all pages (will count, locked value per token) call
+    /// [`Self::get_owner_stats`] instead of iterating every page.
     pub fn get_wills_by_owner(
         env: Env,
         owner: Address,
@@ -2055,6 +2086,54 @@ impl WillContract {
             });
         }
         wills
+    }
+
+    /// Returns aggregate statistics for every will owned by `owner`
+    /// (issue #447).
+    ///
+    /// Complements the paginated [`Self::get_wills_by_owner`]: a client can
+    /// fetch one page of wills plus this summary in two calls instead of
+    /// walking every page to compute totals. The owner index is capped at
+    /// `storage::MAX_WILLS_PER_INDEX`, which bounds the work done here.
+    ///
+    /// `total_wills` counts every indexed will regardless of status;
+    /// `active_wills` and `total_locked_by_token` cover only non-terminal
+    /// wills (`PendingConfirmation`, `Active`, `Triggered`), matching how
+    /// [`ProtocolStats`] counts locked value.
+    pub fn get_owner_stats(env: Env, owner: Address) -> OwnerStats {
+        let ids = storage::get_owner_wills(&env, &owner);
+        let mut active_wills: u32 = 0;
+        let mut locked: Map<Address, i128> = Map::new(&env);
+        for id in ids.iter() {
+            let will = match storage::load_will(&env, id) {
+                Ok(w) => w,
+                Err(e) => panic_with_error!(&env, e),
+            };
+            if matches!(
+                will.status,
+                WillStatus::PendingConfirmation | WillStatus::Active | WillStatus::Triggered
+            ) {
+                active_wills += 1;
+                for (token_addr, amount) in will.balances.iter() {
+                    let prev = locked.get(token_addr.clone()).unwrap_or(0);
+                    locked.set(token_addr, prev + amount);
+                }
+            }
+        }
+
+        let mut total_locked_by_token = Vec::new(&env);
+        for (token, total_locked) in locked.iter() {
+            total_locked_by_token.push_back(TokenLockedBalance {
+                token,
+                total_locked,
+            });
+        }
+
+        OwnerStats {
+            total_wills: ids.len(),
+            active_wills,
+            total_locked_by_token,
+        }
     }
 
     /// Returns a page of wills owned by `owner` with the given `status`.
@@ -2838,9 +2917,7 @@ impl WillContract {
                 }
                 seen_tokens.push_back(token_addr);
             }
-            if beneficiaries.is_empty() || beneficiaries.len() > MAX_BENEFICIARIES {
-                panic_with_error!(&env, WillError::TooManyBeneficiaries);
-            }
+            assert_beneficiary_count(&env, &beneficiaries);
             assert_valid_guardians(&env, &owner, &guardians);
             assert_valid_periods(&env, checkin_period_days, grace_period_days);
             // Mirror the `create_will` invariant: an empty guardian list
@@ -2959,6 +3036,14 @@ impl WillContract {
     /// this call. This is an owner-initiated per-will migration that allows
     /// users to opt-in to new contract versions without being forced to do so.
     ///
+    /// Runs every step in [`migration::upgrade`] between the will's stored
+    /// `schema_version` and [`CURRENT_SCHEMA_VERSION`] and persists the
+    /// result. Wills written with an older layout are still readable before
+    /// migrating (see [`migration::decode_will`]); migrating rewrites them in
+    /// the current layout.
+    ///
+    /// # Current behavior (v0 → v1)
+    /// Sets the schema_version field to 1.
     /// # Current behavior is a placeholder
     /// [`CURRENT_SCHEMA_VERSION`] (defined in [`storage`] and re-exported at
     /// the crate root) is `1`, and every will created by this
@@ -2993,7 +3078,7 @@ impl WillContract {
         }
 
         // Apply version-specific migrations in sequence
-        will.schema_version = CURRENT_SCHEMA_VERSION;
+        will = migration::upgrade(&env, will);
 
         storage::save_will(&env, &will);
         events::will_migrated(&env, will_id, &owner, old_version, CURRENT_SCHEMA_VERSION);
@@ -3029,6 +3114,7 @@ impl WillContract {
     /// - `will_id_b`: the will that is consumed (marked Cancelled).
     ///
     /// # Panics
+    /// - [`WillError::NotSameOwner`] if the two wills have different owners.
     /// - [`WillError::NotOwner`] if `owner` does not own both wills.
     /// - [`WillError::WillNotBothActive`] if either will is not in `Active` status.
     /// - [`WillError::SameWillId`] if `will_id_a` equals `will_id_b`.
@@ -3050,6 +3136,18 @@ impl WillContract {
             panic_with_error!(&env, WillError::SameWillId);
         }
 
+        // Both wills must belong to the same owner, and that owner must be the
+        // authorized caller. Checking the pair first means a caller who owns
+        // only one of the two ids learns nothing about the other will beyond
+        // "not yours", and can never fold their will into someone else's.
+        let mut will_a = load_will(&env, will_id_a);
+        let mut will_b = load_will(&env, will_id_b);
+        if will_a.owner != will_b.owner {
+            panic_with_error!(&env, WillError::NotSameOwner);
+        }
+        if will_a.owner != owner {
+            panic_with_error!(&env, WillError::NotOwner);
+        }
         let mut will_a = load_owned(&env, will_id_a, &owner);
         let mut will_b = load_will(&env, will_id_b);
         if will_b.owner != owner {
@@ -3097,6 +3195,12 @@ impl WillContract {
         let merged_beneficiaries = merge_beneficiaries(&env, &will_a, &will_b);
 
         if merged_beneficiaries.len() > MAX_BENEFICIARIES {
+            log!(
+                &env,
+                "merged will would have {} beneficiaries; MAX_BENEFICIARIES is {}",
+                merged_beneficiaries.len(),
+                MAX_BENEFICIARIES
+            );
             panic_with_error!(&env, WillError::MergeWouldExceedLimits);
         }
 
@@ -3948,6 +4052,30 @@ fn load_will(env: &Env, will_id: u64) -> Will {
     match storage::load_will(env, will_id) {
         Ok(will) => will,
         Err(e) => panic_with_error!(env, e),
+    }
+}
+
+/// Asserts a beneficiary list is non-empty and holds at most
+/// [`MAX_BENEFICIARIES`] entries, panicking with
+/// [`WillError::TooManyBeneficiaries`] otherwise.
+///
+/// Contract errors carry only a numeric code, so the actual count and the
+/// limit are also written to the diagnostic log, which surfaces in simulation
+/// and in the test host.
+fn assert_beneficiary_count(env: &Env, beneficiaries: &Vec<Beneficiary>) {
+    let count = beneficiaries.len();
+    if count == 0 {
+        log!(env, "a will needs at least 1 beneficiary");
+        panic_with_error!(env, WillError::TooManyBeneficiaries);
+    }
+    if count > MAX_BENEFICIARIES {
+        log!(
+            env,
+            "{} beneficiaries supplied; MAX_BENEFICIARIES is {}",
+            count,
+            MAX_BENEFICIARIES
+        );
+        panic_with_error!(env, WillError::TooManyBeneficiaries);
     }
 }
 
