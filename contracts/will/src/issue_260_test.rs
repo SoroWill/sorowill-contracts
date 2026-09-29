@@ -68,7 +68,7 @@ fn create_will_checks_index_capacity_before_any_token_transfer() {
             &90,
             &7,
             &vec![&env],
-            &1,
+            &0,
             &None,
             &0,
         );
@@ -91,7 +91,7 @@ fn create_will_checks_index_capacity_before_any_token_transfer() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );

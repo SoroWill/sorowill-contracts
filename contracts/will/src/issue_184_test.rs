@@ -77,7 +77,7 @@ fn merge_wills_different_primary_token_panics() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -91,7 +91,7 @@ fn merge_wills_different_primary_token_panics() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

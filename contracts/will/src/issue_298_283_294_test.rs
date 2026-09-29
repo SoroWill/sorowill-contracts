@@ -97,7 +97,7 @@ fn test_close_will_rejects_already_settled() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -132,7 +132,7 @@ fn test_batch_check_in_atomicity_on_invalid_id() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -150,7 +150,7 @@ fn test_batch_check_in_atomicity_on_invalid_id() {
         &60,
         &5,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

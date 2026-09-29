@@ -123,7 +123,7 @@ fn test_create_will_success() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     assert_eq!(will_id, 1);
@@ -162,7 +162,7 @@ fn test_protocol_stats_track_create_cancel_and_release() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -197,7 +197,7 @@ fn test_protocol_stats_track_create_cancel_and_release() {
         &30,
         &3,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -241,7 +241,7 @@ fn test_checkin_resets_deadline() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 }
@@ -265,7 +265,7 @@ fn test_invalid_percentages_rejected() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 }
@@ -283,7 +283,7 @@ fn test_checkin_resets_deadline() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 10 * DAY);
@@ -312,7 +312,7 @@ fn test_trigger_after_missed_checkin() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 91 * DAY);
@@ -341,7 +341,7 @@ fn test_cannot_trigger_before_deadline() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 10 * DAY);
@@ -367,7 +367,7 @@ fn test_get_will_status_active() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     assert_eq!(client.get_will_status(&will_id), WillStatus::Active);
@@ -392,7 +392,7 @@ fn test_get_will_status_triggered() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 91 * DAY);
@@ -417,7 +417,7 @@ fn test_get_time_until_deadline_active() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     // Fresh will: ~90 days (in seconds) remain until the check-in deadline.
@@ -452,7 +452,7 @@ fn test_get_time_until_deadline_triggered() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 91 * DAY);
@@ -490,7 +490,7 @@ fn test_get_time_until_deadline_none_when_not_applicable() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     client.cancel_will(&will_id, &owner);
@@ -517,7 +517,7 @@ fn test_emergency_checkin_cancels_trigger() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 91 * DAY);
@@ -554,7 +554,7 @@ fn test_release_inheritance_splits_correctly() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 91 * DAY);
@@ -579,7 +579,7 @@ fn test_cannot_release_during_grace_period() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 91 * DAY);
@@ -607,7 +607,7 @@ fn test_fractional_three_way_split() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 91 * DAY);
@@ -633,7 +633,7 @@ fn test_release_inheritance_rounding_remainder() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 91 * DAY);
@@ -665,7 +665,7 @@ fn test_release_inheritance_rolls_back_when_one_beneficiary_rejects_transfer() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -714,7 +714,7 @@ fn test_release_inheritance_handles_near_maximum_balance_without_overflow() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -742,7 +742,7 @@ fn test_release_multi_token_proportionally() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 91 * DAY);
@@ -774,7 +774,7 @@ fn test_cancel_will_refunds_owner() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     client.cancel_will(&will_id, &owner);
@@ -793,7 +793,7 @@ fn test_cancel_will_refunds_all_tokens() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     client.cancel_will(&will_id, &owner);
@@ -822,7 +822,7 @@ fn test_update_beneficiaries() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     client.update_beneficiaries(&will_id, &owner, &vec![&env, bp(&b, 5_000), bp(&c, 5_000)]);
@@ -849,7 +849,7 @@ fn test_update_beneficiaries_event_payload() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -905,7 +905,7 @@ fn test_update_beneficiaries_fractional_split() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     client.update_beneficiaries(&will_id, &owner, &vec![&env, bp(&a, 2_500), bp(&b, 7_500)]);
@@ -1002,7 +1002,7 @@ fn test_update_guardians_rejects_non_owner() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     client.update_guardians(&will_id, &non_owner, &vec![&env]);
@@ -1026,7 +1026,7 @@ fn test_update_guardians_rejects_too_many() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -1153,7 +1153,7 @@ fn test_update_guardians_rejected_while_triggered() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 91 * DAY);
@@ -1215,7 +1215,7 @@ fn test_top_up_new_token() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     client.top_up(&will_id, &owner, &token_b_addr, &500_000);
@@ -1235,7 +1235,7 @@ fn test_top_up_existing_token_accumulates() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     client.top_up(&will_id, &owner, &token_a_addr, &250_000);
@@ -1261,7 +1261,7 @@ fn test_top_up_zero_amount_rejected() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -1451,7 +1451,7 @@ fn test_guardian_trigger_multi_token() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     advance_time(&env, 8 * DAY);
@@ -1479,7 +1479,7 @@ fn test_get_wills_by_owner() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     client.create_will(
@@ -1495,7 +1495,7 @@ fn test_get_wills_by_owner() {
         &30,
         &3,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     let wills = client.get_wills_by_owner(&owner, &None, &100);
@@ -1519,7 +1519,7 @@ fn test_get_wills_by_beneficiary() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     let wills = client.get_wills_by_beneficiary(&beneficiary, &None, &100);
@@ -1694,7 +1694,7 @@ fn test_pagination_beneficiary() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -1738,7 +1738,7 @@ fn test_fractional_extreme_one_bp_split() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -1917,7 +1917,7 @@ fn test_clone_will_independent_from_source() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     let clone_id = client.clone_will(
@@ -2303,7 +2303,7 @@ fn test_migrate_will_updates_schema_version() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2337,7 +2337,7 @@ fn test_migrate_will_rejects_non_owner() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2422,7 +2422,7 @@ fn test_migrate_will_emits_event() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2472,7 +2472,7 @@ fn test_migrate_will_while_triggered() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2505,7 +2505,7 @@ fn test_migrate_will_after_emergency_checkin() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2543,7 +2543,7 @@ fn test_new_wills_created_at_current_version() {
             &90,
             &7,
             &vec![&env],
-            &2,
+            &0,
             &None,
         );
 
@@ -2572,7 +2572,7 @@ fn test_merge_wills_basic() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2589,7 +2589,7 @@ fn test_merge_wills_basic() {
         &30,
         &3,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2627,7 +2627,7 @@ fn test_merge_wills_matching_beneficiaries() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2644,7 +2644,7 @@ fn test_merge_wills_matching_beneficiaries() {
         &30,
         &3,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2730,7 +2730,7 @@ fn test_merge_wills_same_will_id() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2808,7 +2808,7 @@ fn test_weighted_guardian_insufficient_weight_stays_active() {
         &30,
         &3,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2877,7 +2877,7 @@ fn test_weighted_guardian_combined_votes() {
         &30,
         &3,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2950,7 +2950,7 @@ fn test_get_wills_by_owner_and_status() {
         &30,
         &3,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -2999,7 +2999,7 @@ fn test_merge_wills_recalculates_percentages() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3033,7 +3033,7 @@ fn test_close_will_marks_settled() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3075,7 +3075,7 @@ fn test_merge_wills_complex_beneficiaries() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3109,7 +3109,7 @@ fn test_merge_wills_complex_beneficiaries() {
         &30,
         &3,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3169,7 +3169,7 @@ fn test_merge_wills_exceeds_beneficiary_limit() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3180,7 +3180,7 @@ fn test_merge_wills_exceeds_beneficiary_limit() {
         &30,
         &3,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3211,7 +3211,7 @@ fn test_merge_wills_exceeds_guardian_limit() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3325,7 +3325,7 @@ fn test_merge_wills_updates_beneficiary_index() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
     let will_id_2 = client.create_will(
@@ -3335,7 +3335,7 @@ fn test_merge_wills_updates_beneficiary_index() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3475,7 +3475,7 @@ fn test_will_history_full_lifecycle_release() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3528,7 +3528,7 @@ fn test_will_history_full_lifecycle_cancel() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3560,7 +3560,7 @@ fn test_will_history_emergency_checkin() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3632,7 +3632,7 @@ fn test_will_history_empty_for_new_will() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3661,7 +3661,7 @@ fn test_archive_released_will() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3699,7 +3699,7 @@ fn test_archive_cancelled_will() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3729,7 +3729,7 @@ fn test_archive_active_will_rejected() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3756,7 +3756,7 @@ fn test_archive_triggered_will_rejected() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -3801,7 +3801,7 @@ fn test_guardian_vote_expiry_defaults_to_grace_period() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -4147,7 +4147,7 @@ fn test_create_will_with_grace_tiers() {
         &90,
         &14,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -4170,7 +4170,7 @@ fn test_release_tier_first_milestone() {
         &90,
         &14,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -4765,7 +4765,7 @@ fn test_release_inheritance_still_works_with_empty_tiers() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -4802,7 +4802,7 @@ fn test_grace_tiers_three_way_split() {
         &90,
         &30,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -4885,7 +4885,7 @@ fn test_request_guardian_replacement_rejects_non_guardian() {
         &30,
         &5,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -5003,7 +5003,7 @@ fn test_batch_checkin_rejects_non_active_will() {
         &30,
         &5,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -5032,7 +5032,7 @@ fn test_batch_checkin_emits_event() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -5049,7 +5049,7 @@ fn test_batch_checkin_emits_event() {
         &60,
         &5,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -5346,7 +5346,7 @@ fn test_remove_beneficiary_index_extends_ttl() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -5395,7 +5395,7 @@ fn test_cancel_will_removes_beneficiary_index() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -5429,7 +5429,7 @@ fn test_cancel_will_removes_all_beneficiary_indexes() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -5461,7 +5461,7 @@ fn test_release_inheritance_removes_indexes() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -5546,7 +5546,7 @@ fn test_cancel_will_status_committed_before_transfer() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 
@@ -5572,7 +5572,7 @@ fn test_release_inheritance_status_committed_before_transfer() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
     );
 

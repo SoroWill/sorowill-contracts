@@ -38,6 +38,51 @@ For example: `feat/42-guardian-quorum-check` or `fix/17-checkin-deadline-roundin
   the crate `version` in `contracts/will/Cargo.toml` and regenerate the
   contract spec artifact — see [spec/README.md](./spec/README.md).
 
+## Storage schema versioning
+
+Every persisted `Will` has a `schema_version` field. Soroban decodes a
+`#[contracttype]` struct strictly by field name. If you add, remove or rename
+a field on `Will`, every will stored by an older contract version stops
+decoding unless you also ship a migration path. The machinery is in
+[`contracts/will/src/migration.rs`](./contracts/will/src/migration.rs):
+
+- `CURRENT_SCHEMA_VERSION` is the version stamped on every newly created or
+  migrated will.
+- `decode_will` handles every read of a `DataKey::Will` entry. It tries the
+  current layout first, then each legacy layout, and converts a legacy entry
+  into the current `Will` shape. The converted will keeps its old
+  `schema_version`.
+- `upgrade` runs the `migrate_vN_to_vN+1` steps in order up to
+  `CURRENT_SCHEMA_VERSION`. The owner-authorized `migrate_will` entry point
+  calls it and persists the result.
+
+**Version history**
+
+| Version | Change |
+|---|---|
+| 0 | Wills written before `schema_version` was populated. |
+| 1 | Current layout. |
+
+**To introduce version N+1** (for example, adding a field to `Will`):
+
+1. Copy the current `Will` definition unchanged into a legacy type, e.g.
+   `WillV1` in a `legacy` module, keeping `#[contracttype]` and the original
+   field names. This is the only way old entries can still be decoded.
+2. Change `Will` (add the field) and bump `CURRENT_SCHEMA_VERSION` to N+1.
+3. In `decode_will`, add a fallback that tries `WillVN::try_from_val` and
+   converts it into `Will`. Give new fields a safe default and leave
+   `schema_version` at N.
+4. Add a `migrate_vN_to_vN1` step and wire it into the `match` in `upgrade`.
+   Every version below `CURRENT_SCHEMA_VERSION` needs an arm.
+5. Add a row to the version history table above and a CHANGELOG entry.
+6. Add a test that writes a `WillVN` directly under `DataKey::Will(id)`,
+   loads it through `get_will`, and calls `migrate_will` to confirm it ends up
+   at N+1 with the new field set.
+
+Never reorder, rename or retype an existing field without going through these
+steps. Entry points must also accept wills that have not been migrated yet,
+since `migrate_will` is opt-in.
+
 ## Before opening a PR
 
 Run every command used by the [Test CI workflow](./.github/workflows/test.yml) and confirm it succeeds:
