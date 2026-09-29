@@ -12,7 +12,13 @@ use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillError
 
 const DAY: u64 = 86_400;
 
-fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Address) {
+fn setup<'a>() -> (
+    Env,
+    WillContractClient<'a>,
+    Address,
+    TokenClient<'a>,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -25,7 +31,13 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Addres
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    (env.clone(), client, owner, TokenClient::new(&env, &token_address), token_address)
+    (
+        env.clone(),
+        client,
+        owner,
+        TokenClient::new(&env, &token_address),
+        token_address,
+    )
 }
 
 /// Test asserting a delegate set via `set_delegate` can successfully call
@@ -38,11 +50,24 @@ fn delegate_can_check_in() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: beneficiary, allocation: Allocation::Percentage(10_000) },
+        Beneficiary {
+            address: beneficiary,
+            allocation: Allocation::Percentage(10_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
 
-    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     // Set the delegate
     client.set_delegate(&will_id, &owner, &Some(delegate.clone()));
@@ -69,11 +94,24 @@ fn clearing_delegate_removes_permission() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: beneficiary, allocation: Allocation::Percentage(10_000) },
+        Beneficiary {
+            address: beneficiary,
+            allocation: Allocation::Percentage(10_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
 
-    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     // Set the delegate
     client.set_delegate(&will_id, &owner, &Some(delegate.clone()));
@@ -104,11 +142,24 @@ fn non_owner_non_delegate_cannot_check_in() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: beneficiary, allocation: Allocation::Percentage(10_000) },
+        Beneficiary {
+            address: beneficiary,
+            allocation: Allocation::Percentage(10_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
 
-    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     // Set a delegate
     client.set_delegate(&will_id, &owner, &Some(delegate.clone()));

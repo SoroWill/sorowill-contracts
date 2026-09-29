@@ -2,11 +2,14 @@
 //!
 //! Every state-changing entry point publishes exactly one event so that
 //! off-chain indexers (such as the SoroWill SDK/app) can reconstruct will
-//! history without re-simulating transactions.
+//! history without re-simulating transactions. That includes the guardian
+//! consent transitions: [`guardian_accepted_role`] and
+//! [`guardian_rejected_role`] report when a named guardian becomes eligible to
+//! vote in `guardian_trigger`, or loses that eligibility.
 
-use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{symbol_short, Address, Bytes, Env, Symbol, Vec};
 
-use crate::types::Beneficiary;
+use crate::types::{Beneficiary, Guardian};
 
 /// Published when a new will is created.
 ///
@@ -78,12 +81,7 @@ pub fn emergency_checkin(env: &Env, will_id: u64, owner: &Address, next_deadline
 /// Published when inheritance is released to all beneficiaries.
 ///
 /// `token_count` is the number of distinct tokens distributed.
-pub fn inheritance_released(
-    env: &Env,
-    will_id: u64,
-    token_count: u32,
-    beneficiaries_count: u32,
-) {
+pub fn inheritance_released(env: &Env, will_id: u64, token_count: u32, beneficiaries_count: u32) {
     env.events().publish(
         (symbol_short!("released"), will_id),
         (token_count, beneficiaries_count),
@@ -121,9 +119,15 @@ pub fn beneficiaries_updated(
 }
 
 /// Published when the owner updates the guardian list.
-pub fn guardians_updated(env: &Env, will_id: u64, owner: &Address) {
-    env.events()
-        .publish((symbol_short!("guardup"), will_id), owner.clone());
+///
+/// `guardians` is the full new guardian list (address + weight pairs), so
+/// off-chain indexers can learn the new set without a follow-up `get_will`
+/// call, mirroring [`beneficiaries_updated`].
+pub fn guardians_updated(env: &Env, will_id: u64, owner: &Address, guardians: &Vec<Guardian>) {
+    env.events().publish(
+        (symbol_short!("guardup"), will_id),
+        (owner.clone(), guardians.clone()),
+    );
 }
 
 /// Published when the owner closes a Released will, marking it Settled.
@@ -171,12 +175,7 @@ pub fn guardian_cancel_voted(
 
 /// Published when guardian cancel-trigger votes reach quorum and the will is
 /// returned to `Active` status with a fresh check-in deadline.
-pub fn guardian_cancelled_trigger(
-    env: &Env,
-    will_id: u64,
-    guardian: &Address,
-    next_deadline: u64,
-) {
+pub fn guardian_cancelled_trigger(env: &Env, will_id: u64, guardian: &Address, next_deadline: u64) {
     env.events().publish(
         (symbol_short!("gcancel"), will_id),
         (guardian.clone(), next_deadline),
@@ -184,16 +183,27 @@ pub fn guardian_cancelled_trigger(
 }
 
 /// Published when two wills are merged into one.
+///
+/// `beneficiaries` is the surviving will's full post-merge beneficiary list
+/// (address + allocation pairs, already proportionally recalculated), so an
+/// off-chain indexer can reconstruct the new split directly from this event
+/// without a follow-up `get_will` call. Bounded by `MAX_BENEFICIARIES`.
 pub fn wills_merged(
     env: &Env,
     surviving_will_id: u64,
     consumed_will_id: u64,
     owner: &Address,
     new_balance: i128,
+    beneficiaries: &Vec<Beneficiary>,
 ) {
     env.events().publish(
         (symbol_short!("merged"), surviving_will_id),
-        (owner.clone(), consumed_will_id, new_balance),
+        (
+            owner.clone(),
+            consumed_will_id,
+            new_balance,
+            beneficiaries.clone(),
+        ),
     );
 }
 
@@ -246,15 +256,51 @@ pub fn periods_updated(
 }
 
 /// Published when a beneficiary renounces their inheritance share.
-pub fn beneficiary_renounced(env: &Env, will_id: u64, beneficiary: &Address, owner: &Address) {
+///
+/// `beneficiaries` is the will's full post-renunciation beneficiary list
+/// (address + allocation pairs, already redistributed), so an off-chain
+/// indexer can reconstruct the new split directly from this event without a
+/// follow-up `get_will` call. Bounded by `MAX_BENEFICIARIES`.
+pub fn beneficiary_renounced(
+    env: &Env,
+    will_id: u64,
+    beneficiary: &Address,
+    owner: &Address,
+    beneficiaries: &Vec<Beneficiary>,
+) {
     env.events().publish(
         (symbol_short!("renounce"), will_id),
-        (beneficiary.clone(), owner.clone()),
+        (beneficiary.clone(), owner.clone(), beneficiaries.clone()),
     );
 }
 
-/// Published when multiple will settings (beneficiaries, guardians, periods) are updated atomically.
-pub fn will_settings_updated(env: &Env, will_id: u64, owner: &Address, update_fields: &Vec<Symbol>) {
+/// Published when multiple will settings (beneficiaries, guardians, periods) are updated atomically
+/// via [`crate::WillContract::update_will_settings`].
+///
+/// `update_fields` is a `Vec<Symbol>` listing every field that was changed in this call.
+/// The possible symbols are:
+///
+/// | Symbol     | Meaning                              |
+/// |------------|--------------------------------------|
+/// | `"benef"`  | Beneficiary list was replaced        |
+/// | `"guard"`  | Guardian list was replaced           |
+/// | `"checkin"`| Check-in period (days) was changed   |
+/// | `"grace"`  | Grace period (days) was changed      |
+///
+/// This is the **canonical** way to detect which fields changed when using the composite
+/// entry point. Inspect `update_fields` for `"guard"` to detect a guardian change made
+/// through `update_will_settings`.
+///
+/// When a guardian change is included, this event is emitted **together with**
+/// [`guardians_updated`] so that off-chain consumers subscribed to the dedicated
+/// `"guardup"` topic receive the notification consistently, regardless of which
+/// entry point (`update_guardians` or `update_will_settings`) made the change.
+pub fn will_settings_updated(
+    env: &Env,
+    will_id: u64,
+    owner: &Address,
+    update_fields: &Vec<Symbol>,
+) {
     env.events().publish(
         (symbol_short!("setupd"), will_id),
         (owner.clone(), update_fields.clone()),
@@ -263,13 +309,32 @@ pub fn will_settings_updated(env: &Env, will_id: u64, owner: &Address, update_fi
 
 /// Published when a keeper bounty is paid for calling trigger_will or release_inheritance.
 pub fn keeper_bounty_paid(env: &Env, will_id: u64, keeper: &Address, amount: i128) {
+    env.events()
+        .publish((symbol_short!("bounty"), will_id), (keeper.clone(), amount));
+}
+
+/// Published when part of a released will's balance had no beneficiary left to
+/// receive it and was refunded to the owner instead (issue #383).
+///
+/// This only happens on a `FixedAmount`-only will (no `Allocation::Percentage`
+/// beneficiaries), which `assert_valid_allocations` deliberately allows to be
+/// under-allocated: the fixed amounts are paid out of the primary token and
+/// whatever is left over — including the whole balance of any secondary token,
+/// since fixed amounts are denominated in the primary token only — is returned
+/// to the owner rather than left stranded in the contract.
+pub fn leftover_refunded(env: &Env, will_id: u64, token: &Address, owner: &Address, amount: i128) {
     env.events().publish(
-        (symbol_short!("bounty"), will_id),
-        (keeper.clone(), amount),
+        (symbol_short!("lftback"), will_id),
+        (token.clone(), owner.clone(), amount),
     );
 }
 
 /// Published when a will is split into two independent wills (issue #45).
+///
+/// `split_amount` is the amount moved of the *primary* (first) token in a
+/// multi-token split; it does not reflect amounts moved of any secondary
+/// tokens. An indexer that needs the full per-token breakdown of the new
+/// child will (`new_id`) must fall back to `get_will`.
 pub fn will_split(env: &Env, original_id: u64, new_id: u64, owner: &Address, split_amount: i128) {
     env.events().publish(
         (symbol_short!("split"), original_id),
@@ -286,6 +351,22 @@ pub fn hashed_claimed(env: &Env, will_id: u64, claimant: &Address, amount: i128)
     );
 }
 
+/// Published when the owner adds a hashed beneficiary commitment to a will
+/// (issue #185). Without this, off-chain indexers reconstructing will state
+/// purely from events would silently miss every hashed beneficiary.
+pub fn hashed_beneficiary_added(
+    env: &Env,
+    will_id: u64,
+    owner: &Address,
+    commitment: &Bytes,
+    percentage: u32,
+) {
+    env.events().publish(
+        (symbol_short!("hadd"), will_id),
+        (owner.clone(), commitment.clone(), percentage),
+    );
+}
+
 /// Published when the owner sets or replaces the delegate address that may
 /// call `check_in` on their behalf.
 pub fn delegate_set(env: &Env, will_id: u64, owner: &Address, delegate: &Address) {
@@ -299,6 +380,25 @@ pub fn delegate_set(env: &Env, will_id: u64, owner: &Address, delegate: &Address
 pub fn delegate_cleared(env: &Env, will_id: u64, owner: &Address) {
     env.events()
         .publish((symbol_short!("delegclr"), will_id), owner.clone());
+}
+
+/// Published when a named guardian accepts their role via `accept_guardian_role`.
+///
+/// Consent is what gates a guardian's `guardian_trigger` vote, so without this
+/// event an indexer rebuilding state from events alone cannot tell when a
+/// guardian became eligible to vote.
+pub fn guardian_accepted_role(env: &Env, will_id: u64, guardian: &Address) {
+    env.events()
+        .publish((symbol_short!("gaccept"), will_id), guardian.clone());
+}
+
+/// Published when a named guardian rejects their role via `reject_guardian_role`.
+///
+/// A rejected guardian can no longer vote, so this is the event an indexer
+/// needs in order to drop them from its set of eligible voters.
+pub fn guardian_rejected_role(env: &Env, will_id: u64, guardian: &Address) {
+    env.events()
+        .publish((symbol_short!("greject"), will_id), guardian.clone());
 }
 
 /// Published when a batch check-in resets the deadline for multiple wills in

@@ -25,7 +25,7 @@ SoroWill is a trustless, on-chain inheritance protocol for Stellar Soroban. It l
 5. **Release.** If the grace period expires without an emergency check-in, anyone can call `release_inheritance`, which distributes the locked balance to every beneficiary proportionally, in one transaction.
 6. **Cancel anytime.** While the will is active, the owner can call `cancel_will` to withdraw the full balance.
 7. **Update beneficiaries.** While active, the owner can call `update_beneficiaries` to change who inherits and in what proportions.
-8. **Guardian override.** A will can name up to 3 guardians. Any 2 of them calling `guardian_trigger` force an immediate release — useful if the owner is known to be incapacitated rather than simply inactive. See [docs/adr/0001-guardian-threshold.md](./docs/adr/0001-guardian-threshold.md) for the rationale behind the 2-of-3 default, its known limitations, and how it relates to the proposed configurable M-of-N guardian feature.
+8. **Guardian override.** A will can name up to 3 guardians. Once the will's guardian threshold is reached (2 by default, configurable per will), their `guardian_trigger` calls force an immediate release — useful if the owner is known to be incapacitated rather than simply inactive. See [docs/adr/0001-guardian-threshold.md](./docs/adr/0001-guardian-threshold.md) for the rationale behind the 2-of-3 default, its known limitations, and how it relates to the proposed configurable M-of-N guardian feature.
 
 ## Tech Stack
 
@@ -42,8 +42,8 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 # Add the Soroban wasm target
 rustup target add wasm32v1-none
 
-# Install the Stellar CLI
-cargo install --locked stellar-cli --features opt
+# Install the Stellar CLI (>= 22.0.0)
+cargo install --locked stellar-cli
 
 # Clone and test
 git clone https://github.com/SoroWill/sorowill-contracts.git
@@ -107,11 +107,12 @@ The following limits are defined as `pub const` in `lib.rs` and re-exported from
 | Constant | Value | Meaning |
 |---|---|---|
 | `MAX_BENEFICIARIES` | `10` | Maximum number of beneficiaries per will |
-| `MAX_GUARDIANS` | `3` | Maximum number of guardians per will |
-| `GUARDIAN_THRESHOLD` | `2` | Default number of guardian votes required to force an early release |
+| `MAX_GUARDIAN_WEIGHT` | `1000000` | Maximum vote weight a single guardian may be given via `update_guardians_weighted`. A weight of `0` is normalised to `1` |
+| `MAX_GUARDIANS` | `3` | Maximum number of guardians per will (private to the crate, not exported) |
+| `GUARDIAN_THRESHOLD` | `2` | Default number of guardian votes required to force an early release (private to the crate, not exported) |
 
 ```rust
-use will::{MAX_BENEFICIARIES, MAX_GUARDIANS, GUARDIAN_THRESHOLD};
+use will::MAX_BENEFICIARIES;
 ```
 
 ## Contract Functions
@@ -131,9 +132,50 @@ use will::{MAX_BENEFICIARIES, MAX_GUARDIANS, GUARDIAN_THRESHOLD};
 | `get_time_until_deadline` | Seconds until the will's next relevant deadline (check-in or grace period); negative if past due, `None` if not applicable to the current status | `will_id` | `Option<i64>` |
 | `get_wills_by_owner` | Lists every will owned by an address | `owner` | `Vec<Will>` |
 | `get_wills_by_beneficiary` | Lists every will an address is named in | `beneficiary` | `Vec<Will>` |
+| `get_will_history` | Reads a will's on-chain audit trail (capped at the newest `MAX_HISTORY_ENTRIES` transitions) | `will_id` | `Vec<WillStatusTransition>` |
+| `get_will_history_page` | Reads a bounded, cursor-paged slice of a will's audit trail | `will_id`, `cursor`, `limit` | `Vec<WillStatusTransition>` |
 | `guardian_trigger` | Casts a guardian vote; 2 of 3 forces an early release | `will_id`, `guardian` | — |
 
 `checkin_period_days` and `grace_period_days` passed to `create_will` must each be at least `1` day (and at most `MAX_PERIOD_DAYS`); a value of `0` panics with `WillError::InvalidPeriod`.
+
+## Contract Events
+
+Every state-mutating entry point publishes exactly one event so that off-chain indexers and SDK consumers can reconstruct will history without re-simulating transactions. The topic is a tuple of `(symbol, will_id)` unless noted otherwise. Payload fields are listed in order.
+
+| Entry point | Topic symbol | Payload |
+|---|---|---|
+| `create_will` | `"created"` | `(owner: Address, token_count: u32, beneficiaries: Vec<Beneficiary>, checkin_deadline: u64)` |
+| `confirm_will` | `"confirmed"` | `owner: Address` |
+| `check_in` | `"checkin"` | `(owner: Address, next_deadline: u64)` |
+| `trigger_will` | `"triggered"` | `grace_period_ends: u64` |
+| `emergency_checkin` | `"emerg"` | `(owner: Address, next_deadline: u64)` |
+| `release_inheritance` | `"released"` | `(token_count: u32, beneficiaries_count: u32)` |
+| `cancel_will` | `"cancelled"` | `(owner: Address, token_count: u32)` |
+| `update_beneficiaries` | `"benefup"` | `(owner: Address, beneficiary_count: u32, beneficiaries: Vec<Beneficiary>)` |
+| `update_guardians` | `"guardup"` | `(owner: Address, guardians: Vec<Guardian>)` |
+| `update_will_settings` | `"setupd"` | `(owner: Address, update_fields: Vec<Symbol>)` — also emits `"guardup"` when guardians change |
+| `close_will` | `"closed"` | `owner: Address` |
+| `top_up` | `"topup"` | `(owner: Address, token: Address, amount: i128, new_balance: i128)` |
+| `guardian_trigger` | `"gvote"` | `(guardian: Address, weight: u32, total_weight: u32)` |
+| `accept_guardian_role` | `"gaccept"` | `guardian: Address` |
+| `reject_guardian_role` | `"greject"` | `guardian: Address` |
+| `guardian_cancel` (cancel vote) | `"gcvote"` | `(guardian: Address, weight: u32, total_weight: u32)` |
+| `guardian_cancel` (quorum reached) | `"gcancel"` | `(guardian: Address, next_deadline: u64)` |
+| `merge_wills` | `"merged"` | `(owner: Address, consumed_will_id: u64, new_balance: i128, beneficiaries: Vec<Beneficiary>)` — topic uses surviving will id |
+| `migrate_will` | `"migrated"` | `(owner: Address, from_version: u32, to_version: u32)` |
+| `clone_will` | `"cloned"` | `(source_id: u64, owner: Address)` — topic uses new will id |
+| `batch_create_wills` | `"batch"` | `will_ids: Vec<u64>` — topic is `(symbol, owner)` instead of `(symbol, will_id)` |
+| `archive_will` | `"archived"` | `owner: Address` |
+| `update_will_settings` (periods) | `"periodu"` | `(owner: Address, new_checkin_period_days: u64, new_grace_period_days: u64, next_deadline: u64)` |
+| `renounce_inheritance` | `"renounce"` | `(beneficiary: Address, owner: Address, beneficiaries: Vec<Beneficiary>)` |
+| `keeper_bounty` | `"bounty"` | `(keeper: Address, amount: i128)` |
+| `split_will` | `"split"` | `(new_id: u64, owner: Address, split_amount: i128)` — topic uses original will id |
+| `reveal_and_claim` | `"hclaim"` | `(claimant: Address, amount: i128)` |
+| `set_delegate` | `"delegset"` | `(owner: Address, delegate: Address)` |
+| `clear_delegate` | `"delegclr"` | `owner: Address` |
+| `batch_checkin` | `"batchchk"` | `(will_ids: Vec<u64>, count: u32)` — topic is `(symbol, owner)` instead of `(symbol, will_id)` |
+
+The canonical source of truth for each event's exact topic and payload is [`contracts/will/src/events.rs`](./contracts/will/src/events.rs).
 
 ### Reading wills and Soroban's archival model (issue #166)
 
@@ -162,6 +204,24 @@ was explicitly archived) from one that never existed. This is documented on
 probe. See [issue #166](https://github.com/SoroWill/sorowill-contracts/issues/166)
 for the full context.
 
+### What `archive_will` removes
+
+`archive_will` is permissionless: once a will is `Released` or `Cancelled`, any
+account may call it to reclaim storage. Beyond the will entry and the
+owner/beneficiary/Triggered indexes, it also drops the will's on-chain
+`WillHistory` entry and every `GuardianVote` / `GuardianCancelVote` entry
+belonging to its guardians.
+
+**History does not survive archival.** Those keys are only ever read to describe
+a *live* will, so retaining them would strand ledger state — paid for out of the
+protocol's rent — for entries no query can resolve. Consumers that need the
+audit trail after a will is archived must use the **off-chain event log**,
+which is append-only and never trimmed; the archived `Will` itself keeps the
+final status, balances, and parties until Soroban's state archival collects it.
+In particular, `get_will_history` returns an empty trail for an archived will
+and must not be used as a post-archival recovery path. See
+[issue #393](https://github.com/SoroWill/sorowill-contracts/issues/393).
+
 ## Error codes
 
 Every failure mode is a `#[contracterror]` variant of `WillError`
@@ -179,13 +239,13 @@ disambiguate.
 | 3 | `WillNotActive` | The requested action requires the will to be `Active`. |
 | 4 | `WillNotTriggered` | The requested action requires the will to be `Triggered`. |
 | 5 | `GracePeriodNotExpired` | `release_inheritance` was called before the grace period elapsed. |
-| 6 | `GracePeriodExpired` | `emergency_checkin` was called after the grace period already elapsed. |
+| 6 | `GracePeriodExpired` | `emergency_checkin` (or `guardian_cancel_trigger`) was called after the grace period already elapsed. A `Triggered` will can no longer be returned to `Active` once the grace period is over. |
 | 7 | `InvalidPercentages` | Beneficiary percentages did not sum to exactly 10,000 basis points. |
 | 8 | `AlreadyVoted` | The guardian has already voted to trigger this will. |
 | 9 | `NotGuardian` | The caller is not a designated guardian of this will. |
 | 10 | `CheckinNotDue` | `trigger_will` was called before the check-in deadline passed. |
 | 11 | `ZeroAmount` | An amount of zero (or less) was supplied where a positive amount is required. |
-| 12 | `TooManyBeneficiaries` | Too many beneficiaries (or guardians) were supplied. |
+| 12 | `TooManyBeneficiaries` | A list-length cap was exceeded: a `beneficiaries` list that is empty or longer than `MAX_BENEFICIARIES`, a `guardians` list longer than `MAX_GUARDIANS`, or a `batch_create_wills` spec list that is empty or longer than `BATCH_MAX`. Token-list bounds are **not** reported here — those raise `InvalidTokenCount`. |
 | 13 | `WillNotSettled` | The requested action requires the will to be `Released` or `Cancelled`. |
 | 14 | `WillNotBothActive` | Both wills in a merge must be `Active`. |
 | 15 | `SameWillId` | The same will id was supplied for both sides of a merge. |
@@ -193,8 +253,8 @@ disambiguate.
 | 17 | `OwnerCannotBeGuardian` | The owner cannot designate themselves as a guardian of their own will. |
 | 18 | `BeneficiaryNotFound` | A beneficiary is not found in the will's beneficiary list. |
 | 19 | `KeeperBountyExceedsMax` | Keeper bounty basis points exceed the maximum allowed (100 bps / 1%). |
-| 20 | `InvalidGuardianThreshold` | Guardian threshold is out of range (must be between 1 and `guardians.len()`). |
-| 21 | `FixedAmountExceedsBalance` | The sum of every `Allocation::FixedAmount` beneficiary exceeds the will's balance, or (for a will with no percentage-based beneficiaries) does not exactly account for the whole balance. |
+| 20 | `InvalidGuardianThreshold` | `guardian_threshold` is outside the range the guardian list can reach. Quorum is compared against accumulated guardian **weight**, so the range is `1..=guardians.len()` for unweighted lists and `1..=sum(weights)` for lists installed via `update_guardians_weighted`. Also raised when shrinking a non-empty guardian list would leave the stored threshold unreachable. |
+| 21 | `FixedAmountExceedsBalance` | The sum of every `Allocation::FixedAmount` entry exceeds the will's **primary-token** balance. A `FixedAmount`-only will is allowed to leave headroom unaccounted for (reserved for a later `add_hashed_beneficiary`, otherwise refunded to the owner at release) — only an over-commitment is an error. |
 | 22 | `InvalidPercentage` | A beneficiary percentage is not in the valid range (1..=10000 basis points). |
 | 23 | `WillNotReleased` | The requested action requires the will to be `Released`. |
 | 24 | `NotSameOwner` | Cannot merge: both wills must be owned by the same address. |
@@ -206,11 +266,24 @@ disambiguate.
 | 30 | `WillNotConfirmed` | `confirm_will` was called on a will that is not `PendingConfirmation`. |
 | 31 | `ConfirmationWindowExpired` | `confirm_will` was called after the confirmation deadline elapsed. |
 | 32 | `TooManyIds` | `get_wills` was called with more ids than `MAX_GET_WILLS_IDS`. |
-| 33 | `InsufficientBalance` | `split_will` was asked to split more than the will's current balance. |
+| 33 | `InsufficientBalance` | `split_will` was asked to move more of a token than the will currently holds of it. |
 | 34 | `InvalidSplit` | `split_will` was called with an empty beneficiary-to-split list, or a split that would leave the source or new will with an invalid state. |
 | 35 | `InvalidPreimage` | `reveal_and_claim` was called with a pre-image that does not start with the claimant's XDR-encoded address or does not match any stored `HashedBeneficiary` commitment on the will, or `add_hashed_beneficiary` was given a commitment that is not 32 bytes. |
+| 35 | `InvalidPreimage` | `reveal_and_claim` was called with a 64-byte pre-image whose SHA-256 does not match any stored `HashedBeneficiary` commitment on the will. |
 | 36 | `AlreadyClaimed` | `reveal_and_claim` was called for a hashed beneficiary slot that has already been claimed. |
 | 37 | `TooManyWills` | An owner or beneficiary index list is already at `MAX_WILLS_PER_INDEX` and cannot accept another will id. |
+| 38 | `GuardianNotConsented` | A guardian has not accepted their role and cannot vote. |
+| 39 | `PrimaryTokenMismatch` | Cannot merge: the two wills' primary tokens differ. |
+| 40 | `DuplicateToken` | The same token address was supplied more than once in a `tokens` list. |
+| 41 | `BatchTooLarge` | A `batch_check_in` call supplied more than `MAX_BATCH_CHECK_IN` (50) will ids. |
+| 42 | `InvalidTokenCount` | The token list supplied to `create_will`, `clone_will`, `split_will`, or `batch_create_wills` was empty, or contained more than `MAX_TOKENS` entries. |
+| 43 | `InvalidPreimageLength` | `reveal_and_claim` was called with a pre-image that is not exactly 32 bytes, so its SHA-256 could never match a stored commitment. |
+| 44 | `InvalidCommitmentLength` | A hashed-beneficiary commitment was not exactly 32 bytes (a SHA-256 digest) and could never be matched by a pre-image. |
+| 45 | `DuplicateCommitment` | The same commitment hash is already registered on the will, making the second slot unreachable. |
+| 46 | `PreimageAddressMismatch` | A `reveal_and_claim` pre-image was not bound to the `claimant` address, so a third party could replay it and take the reserved share. |
+| 47 | `MergeWithHashedBeneficiaries` | `merge_wills` was called while either will still had an unrevealed hashed beneficiary, whose committed percentage a merge cannot carry across. |
+| 48 | `DuplicateWillId` | A `batch_check_in` `will_ids` list named the same will more than once. |
+| 49 | `InvalidConsentTransition` | `accept_guardian_role` was called by a guardian who had already `Rejected` the role, which is terminal. |
 
 ## Contract spec artifact
 
@@ -259,6 +332,20 @@ DEPLOY_IDENTITY=deployer ./scripts/deploy-testnet.sh
 Requires `stellar-cli` (same version as [Local Setup](#local-setup)) and a funded testnet identity passed via `DEPLOY_IDENTITY`. `NETWORK` and `RPC_URL` are optional overrides — see the script header for details.
 
 After running it, review and commit the updated `deployments/testnet.json` on its own — see [CONTRIBUTING.md](./CONTRIBUTING.md#updating-deploymentstestnetjson-after-a-redeploy) for the full checklist. A scheduled CI job also checks daily that this file's contract id still matches the on-chain wasm, so a forgotten update won't drift silently — see [Testnet Deployment Drift Check](.github/workflows/testnet-drift-check.yml).
+
+## Documentation
+
+All supplementary docs live under [`docs/`](./docs):
+
+| Document | What it covers |
+|---|---|
+| [docs/FUZZING.md](./docs/FUZZING.md) | Fuzz-testing setup, invariants checked, how to run `cargo-fuzz` targets, and how to add a new target |
+| [docs/RESOURCE_COSTS.md](./docs/RESOURCE_COSTS.md) | Per-entry-point resource profiles (CPU, ledger reads/writes, storage rent) and the storage layout trade-offs behind them |
+| [docs/WASM_SIZE.md](./docs/WASM_SIZE.md) | Release build profile tuning for `.wasm` binary size (deploy cost) |
+| [docs/SECURITY-REVIEW.md](./docs/SECURITY-REVIEW.md) | Internal security review findings, threat model, and resolved/open items |
+| [docs/adr/0001-guardian-threshold.md](./docs/adr/0001-guardian-threshold.md) | ADR: rationale behind the 2-of-3 default guardian threshold, known limitations, and the proposed configurable M-of-N feature |
+| [docs/adr/0002-legacy-token-balance-mirror.md](./docs/adr/0002-legacy-token-balance-mirror.md) | ADR: legacy token balance mirror design |
+| [docs/adr/0002-total-locked-by-token-scalability.md](./docs/adr/0002-total-locked-by-token-scalability.md) | ADR: scalability trade-offs in the total-locked-by-token protocol stats entry |
 
 ## Security Policy
 

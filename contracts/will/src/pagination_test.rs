@@ -12,9 +12,16 @@ use soroban_sdk::{
 
 use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
+#[allow(dead_code)]
 const DAY: u64 = 86_400;
 
-fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Address) {
+fn setup<'a>() -> (
+    Env,
+    WillContractClient<'a>,
+    Address,
+    TokenClient<'a>,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -27,7 +34,13 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Addres
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    (env.clone(), client, owner, TokenClient::new(&env, &token_address), token_address)
+    (
+        env.clone(),
+        client,
+        owner,
+        TokenClient::new(&env, &token_address),
+        token_address,
+    )
 }
 
 #[test]
@@ -36,7 +49,7 @@ fn pagination_respects_limit_parameter() {
     let beneficiary = Address::generate(&env);
 
     // Create multiple wills with the same beneficiary
-    let mut will_ids = vec![];
+    let mut will_ids = vec![&env];
     for i in 0..5 {
         let will_id = client.create_will(
             &owner,
@@ -55,7 +68,7 @@ fn pagination_respects_limit_parameter() {
             &None,
             &0,
         );
-        will_ids.push(will_id);
+        will_ids.push_back(will_id);
     }
 
     // Fetch with limit=2
@@ -63,7 +76,8 @@ fn pagination_respects_limit_parameter() {
     assert_eq!(first_page.len(), 2);
 
     // Fetch with cursor pointing to second page
-    let second_page = client.get_wills_by_beneficiary(&beneficiary, &first_page.get(1).map(|w| w.id), &2);
+    let second_page =
+        client.get_wills_by_beneficiary(&beneficiary, &first_page.get(1).map(|w| w.id), &2);
     assert_eq!(second_page.len(), 2);
 
     // Verify no duplicates between pages
@@ -80,7 +94,7 @@ fn pagination_handles_all_results() {
     let beneficiary = Address::generate(&env);
 
     // Create 3 wills
-    let mut will_ids = vec![];
+    let mut will_ids = vec![&env];
     for i in 0..3 {
         let will_id = client.create_will(
             &owner,
@@ -99,7 +113,7 @@ fn pagination_handles_all_results() {
             &None,
             &0,
         );
-        will_ids.push(will_id);
+        will_ids.push_back(will_id);
     }
 
     // Fetch all without pagination (limit = 0 or very high)

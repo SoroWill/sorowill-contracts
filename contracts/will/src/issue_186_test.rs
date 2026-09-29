@@ -10,14 +10,22 @@
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token::{Client as TokenClient, StellarAssetClient},
-    vec, Address, Bytes, Env, Vec as SorobanVec,
+    vec,
+    xdr::ToXdr,
+    Address, Bytes, Env, Vec as SorobanVec,
 };
 
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient, PREIMAGE_LENGTH};
 
 const DAY: u64 = 86_400;
 
-fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Address) {
+fn setup<'a>() -> (
+    Env,
+    WillContractClient<'a>,
+    Address,
+    TokenClient<'a>,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -30,7 +38,13 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Addres
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    (env.clone(), client, owner, TokenClient::new(&env, &token_address), token_address)
+    (
+        env.clone(),
+        client,
+        owner,
+        TokenClient::new(&env, &token_address),
+        token_address,
+    )
 }
 
 fn advance(env: &Env, days: u64) {
@@ -47,19 +61,39 @@ fn hashed_beneficiary_percentage_basis_points_payout() {
     let public_beneficiary = Address::generate(&env);
     let secret_address = Address::generate(&env);
 
+    // A hashed beneficiary's reserved share can only come out of FixedAmount
+    // headroom (a Percentage-based beneficiary list must already sum to
+    // 10,000, leaving no room to reserve) -- see hashed_beneficiary_test.rs.
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
         Beneficiary {
             address: public_beneficiary.clone(),
-            allocation: Allocation::Percentage(5_000), // 50%
+            allocation: Allocation::FixedAmount(500_000), // 50% of the 1,000,000 balance
         },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 1_000_000_i128)];
 
-    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
-    // Create hashed beneficiary commitment
-    let preimage_bytes = [0u8; 64];
+    // Create hashed beneficiary commitment. The pre-image layout is
+    // `sha256(xdr(address)) || salt` (see `PREIMAGE_ADDRESS_LENGTH`), and
+    // `reveal_and_claim` requires the address half to be the fingerprint of the
+    // claimant (#369), so it has to be derived from `secret_address` rather
+    // than arbitrary bytes.
+    let mut preimage_bytes = [0xA5u8; PREIMAGE_LENGTH as usize]; // salt fills the tail
+    let secret_address_digest = env.crypto().sha256(&secret_address.clone().to_xdr(&env));
+    preimage_bytes[..32].copy_from_slice(&secret_address_digest.to_array());
+
     let preimage = Bytes::from_array(&env, &preimage_bytes);
     let commitment = env.crypto().sha256(&preimage);
     let commitment_bytes = Bytes::from_array(&env, &commitment.to_array());
@@ -73,8 +107,8 @@ fn hashed_beneficiary_percentage_basis_points_payout() {
     advance(&env, 8);
 
     // Record initial balances
-    let secret_initial = token.balance(&secret_address);
-    let public_initial = token.balance(&public_beneficiary);
+    let _secret_initial = token.balance(&secret_address);
+    let _public_initial = token.balance(&public_beneficiary);
 
     // Release inheritance - both beneficiaries should receive 50% each
     client.release_inheritance(&will_id, &None);

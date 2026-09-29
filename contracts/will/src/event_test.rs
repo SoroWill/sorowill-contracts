@@ -83,7 +83,10 @@ fn will_created_event_includes_full_beneficiary_list() {
         let data: (Address, u32, soroban_sdk::Vec<Beneficiary>, u64) =
             event.2.try_into_val(&env).unwrap();
         assert_eq!(data.0, owner, "event owner does not match the creator");
-        assert_eq!(data.1, 1, "event token_count does not match the locked token count");
+        assert_eq!(
+            data.1, 1,
+            "event token_count does not match the locked token count"
+        );
         assert_eq!(
             data.2, beneficiaries,
             "event beneficiary list does not match what was supplied to create_will"

@@ -6,11 +6,11 @@ use soroban_sdk::{
     vec, Address, Env, Vec as SorobanVec,
 };
 
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatus};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
 const DAY: u64 = 86_400;
 
-fn setup<'a>() -> (Env, WillContractClient<'a>, Address) {
+fn setup<'a>() -> (Env, WillContractClient<'a>, Address, Address) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -23,7 +23,7 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address) {
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    (env, client, owner)
+    (env, client, owner, token_address)
 }
 
 fn create_active_will(
@@ -45,7 +45,9 @@ fn create_active_will(
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![env, (token_address.clone(), 1_000_000_i128)];
 
-    let will_id = client.create_will(
+    // confirmation_delay_seconds is 0 above, so the will starts Active
+    // immediately -- no confirm_will call is needed (or valid).
+    client.create_will(
         owner,
         &tokens,
         &beneficiaries,
@@ -55,20 +57,22 @@ fn create_active_will(
         &1,
         &None,
         &0,
-    );
-
-    client.confirm_will(&will_id, owner);
-    will_id
+    )
 }
 
 #[test]
 fn test_get_time_until_deadline_active_will_positive_time_remaining() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let checkin_period_days = 30;
-    let will_id = create_active_will(&env, &client, &owner, &token_address, checkin_period_days, 7);
+    let will_id = create_active_will(
+        &env,
+        &client,
+        &owner,
+        &token_address,
+        checkin_period_days,
+        7,
+    );
 
     // Will was just created, so check-in deadline is ~30 days away
     let time_until_deadline = client.get_time_until_deadline(&will_id);
@@ -78,20 +82,29 @@ fn test_get_time_until_deadline_active_will_positive_time_remaining() {
     // Should be approximately 30 days in seconds
     let expected_approx = (checkin_period_days * DAY) as i64;
     let diff = (seconds_remaining - expected_approx).abs();
-    assert!(diff < 100, "Deadline should be ~30 days away, got {} seconds", seconds_remaining);
+    assert!(
+        diff < 100,
+        "Deadline should be ~30 days away, got {} seconds",
+        seconds_remaining
+    );
 }
 
 #[test]
 fn test_get_time_until_deadline_active_will_negative_after_missed_deadline() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let checkin_period_days = 30;
-    let will_id = create_active_will(&env, &client, &owner, &token_address, checkin_period_days, 7);
+    let will_id = create_active_will(
+        &env,
+        &client,
+        &owner,
+        &token_address,
+        checkin_period_days,
+        7,
+    );
 
     // Advance time past the check-in deadline but don't trigger yet
-    env.ledger().with_mut(|l| l.timestamp += (31 * DAY) as u64);
+    env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
 
     let time_until_deadline = client.get_time_until_deadline(&will_id);
     assert!(time_until_deadline.is_some());
@@ -107,16 +120,21 @@ fn test_get_time_until_deadline_active_will_negative_after_missed_deadline() {
 
 #[test]
 fn test_get_time_until_deadline_triggered_will_counts_grace_period() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let checkin_period_days = 30;
     let grace_period_days = 7;
-    let will_id = create_active_will(&env, &client, &owner, &token_address, checkin_period_days, grace_period_days);
+    let will_id = create_active_will(
+        &env,
+        &client,
+        &owner,
+        &token_address,
+        checkin_period_days,
+        grace_period_days,
+    );
 
     // Advance past check-in deadline
-    env.ledger().with_mut(|l| l.timestamp += (31 * DAY) as u64);
+    env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
 
     // Trigger the will
     client.trigger_will(&will_id);
@@ -137,22 +155,27 @@ fn test_get_time_until_deadline_triggered_will_counts_grace_period() {
 
 #[test]
 fn test_get_time_until_deadline_triggered_will_negative_after_grace_expires() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let checkin_period_days = 30;
     let grace_period_days = 7;
-    let will_id = create_active_will(&env, &client, &owner, &token_address, checkin_period_days, grace_period_days);
+    let will_id = create_active_will(
+        &env,
+        &client,
+        &owner,
+        &token_address,
+        checkin_period_days,
+        grace_period_days,
+    );
 
     // Advance past check-in deadline
-    env.ledger().with_mut(|l| l.timestamp += (31 * DAY) as u64);
+    env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
 
     // Trigger the will
     client.trigger_will(&will_id);
 
     // Advance past grace period
-    env.ledger().with_mut(|l| l.timestamp += (8 * DAY) as u64);
+    env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
 
     let time_until_deadline = client.get_time_until_deadline(&will_id);
     assert!(time_until_deadline.is_some());
@@ -168,9 +191,7 @@ fn test_get_time_until_deadline_triggered_will_negative_after_grace_expires() {
 
 #[test]
 fn test_get_time_until_deadline_pending_confirmation_returns_none() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let beneficiary = Address::generate(&env);
     let beneficiaries: SorobanVec<Beneficiary> = vec![
@@ -191,55 +212,79 @@ fn test_get_time_until_deadline_pending_confirmation_returns_none() {
         &vec![&env],
         &1,
         &None,
-        &0,
+        &3600,
     );
 
     // Don't confirm the will - it's in PendingConfirmation status
     let time_until_deadline = client.get_time_until_deadline(&will_id);
-    assert!(time_until_deadline.is_none(), "PendingConfirmation status should return None");
+    assert!(
+        time_until_deadline.is_none(),
+        "PendingConfirmation status should return None"
+    );
 }
 
 #[test]
 fn test_get_time_until_deadline_released_returns_none() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let checkin_period_days = 30;
     let grace_period_days = 7;
-    let will_id = create_active_will(&env, &client, &owner, &token_address, checkin_period_days, grace_period_days);
+    let will_id = create_active_will(
+        &env,
+        &client,
+        &owner,
+        &token_address,
+        checkin_period_days,
+        grace_period_days,
+    );
 
     // Advance past check-in deadline
-    env.ledger().with_mut(|l| l.timestamp += (31 * DAY) as u64);
+    env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
 
     // Trigger and release
     client.trigger_will(&will_id);
-    env.ledger().with_mut(|l| l.timestamp += (8 * DAY) as u64);
+    env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
 
     let time_until_deadline = client.get_time_until_deadline(&will_id);
-    assert!(time_until_deadline.is_none(), "Released status should return None");
+    assert!(
+        time_until_deadline.is_none(),
+        "Released status should return None"
+    );
 }
 
 #[test]
 fn test_get_time_until_deadline_cancelled_returns_none() {
-    let (env, client, owner) = setup();
-    let sac = env.register_stellar_asset_contract_v2(owner.clone());
-    let token_address = sac.address();
+    let (env, client, owner, token_address) = setup();
 
     let checkin_period_days = 30;
-    let will_id = create_active_will(&env, &client, &owner, &token_address, checkin_period_days, 7);
+    let will_id = create_active_will(
+        &env,
+        &client,
+        &owner,
+        &token_address,
+        checkin_period_days,
+        7,
+    );
 
     // Cancel the will
     client.cancel_will(&will_id, &owner);
 
     let time_until_deadline = client.get_time_until_deadline(&will_id);
-    assert!(time_until_deadline.is_none(), "Cancelled status should return None");
+    assert!(
+        time_until_deadline.is_none(),
+        "Cancelled status should return None"
+    );
 }
 
 #[test]
-#[should_panic(match = "WillNotFound")]
 fn test_get_time_until_deadline_nonexistent_will_panics() {
-    let (env, client, _owner) = setup();
-    client.get_time_until_deadline(&9999);
+    let (_env, client, _owner, _token_address) = setup();
+    // Soroban's panic message only shows the numeric error code, never the
+    // enum variant name, so should_panic(expected = "WillNotFound") can
+    // never match -- use try_get_time_until_deadline instead.
+    assert_eq!(
+        client.try_get_time_until_deadline(&9999),
+        Err(Ok(crate::WillError::WillNotFound.into())),
+    );
 }

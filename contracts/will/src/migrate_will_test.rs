@@ -21,6 +21,28 @@ use crate::{
     CURRENT_SCHEMA_VERSION,
 };
 
+/// #367: the crate-root `CURRENT_SCHEMA_VERSION` is a plain re-export of
+/// `storage::CURRENT_SCHEMA_VERSION`, so there is exactly one definition and
+/// the entry points can never drift from the storage layer. This assertion
+/// fails to *compile* if a second, separate constant is reintroduced at the
+/// crate root — which is what the old "must match storage::CURRENT_SCHEMA_VERSION"
+/// comment asked maintainers to remember by hand.
+const _: () = assert!(CURRENT_SCHEMA_VERSION == storage::CURRENT_SCHEMA_VERSION);
+
+/// A will created by this contract version is stamped with the single source
+/// of truth, which is why `migrate_will` is a no-op for every will the
+/// contract can actually produce.
+#[test]
+fn a_fresh_will_is_stamped_with_the_storage_schema_version() {
+    let (env, contract_id, _owner, will_id) = setup();
+    let client = WillContractClient::new(&env, &contract_id);
+
+    assert_eq!(
+        client.get_will(&will_id).schema_version,
+        storage::CURRENT_SCHEMA_VERSION
+    );
+}
+
 fn setup() -> (Env, Address, Address, u64) {
     let env = Env::default();
     env.mock_all_auths();
@@ -94,14 +116,17 @@ fn migrate_bumps_a_stale_will_to_the_current_schema_version() {
 
     client.migrate_will(&will_id, &owner);
 
-    assert_eq!(
-        client.get_will(&will_id).schema_version,
-        CURRENT_SCHEMA_VERSION
-    );
+    // Checked before any further client call: env.events().all() in
+    // Soroban's test host only retains events from the most recent
+    // top-level invocation, so a later get_will() call would wipe this.
     assert_eq!(
         migrated_event_count(&env),
         1,
         "a completed migration must publish exactly one will_migrated event"
+    );
+    assert_eq!(
+        client.get_will(&will_id).schema_version,
+        CURRENT_SCHEMA_VERSION
     );
 }
 
