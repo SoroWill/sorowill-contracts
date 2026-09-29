@@ -32,6 +32,9 @@ pub enum WillError {
     CheckinNotDue = 10,
     /// An amount of zero (or less) was supplied where a positive amount is required.
     ZeroAmount = 11,
+    /// Too many beneficiaries (or guardians/tokens) were supplied, or the list
+    /// was empty. A will may name at most `MAX_BENEFICIARIES` (10)
+    /// beneficiaries; see the README FAQ for why the cap exists.
     /// A list-length cap was exceeded. Raised by:
     /// - a `beneficiaries` list that is empty or longer than
     ///   `MAX_BENEFICIARIES` — `create_will`, `update_beneficiaries`,
@@ -136,6 +139,9 @@ pub enum WillError {
     TooManyWills = 37,
     /// A guardian has not accepted their role and cannot vote.
     GuardianNotConsented = 38,
+    /// A stored will could not be decoded as the current `Will` layout or any
+    /// known legacy layout (see `migration.rs`).
+    UnsupportedSchemaVersion = 39,
     /// Cannot merge: the two wills' primary tokens differ, so summing their
     /// legacy `balance` fields would be nonsensical.
     PrimaryTokenMismatch = 39,

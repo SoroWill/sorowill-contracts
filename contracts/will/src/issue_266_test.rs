@@ -49,7 +49,7 @@ fn create_will_rejects_a_zero_basis_point_beneficiary() {
             &90,
             &7,
             &vec![&env],
-            &1,
+            &0,
             &None,
             &0,
         ),
@@ -98,7 +98,7 @@ fn split_will_ignores_a_skewed_caller_allocation_and_uses_the_source_entry() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );

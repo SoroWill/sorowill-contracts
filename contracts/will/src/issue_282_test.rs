@@ -44,7 +44,7 @@ fn renouncing_twice_from_the_same_address_is_rejected() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );

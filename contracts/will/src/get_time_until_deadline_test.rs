@@ -210,7 +210,7 @@ fn test_get_time_until_deadline_pending_confirmation_returns_none() {
         &30,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &3600,
     );

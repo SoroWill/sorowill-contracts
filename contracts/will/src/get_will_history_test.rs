@@ -116,7 +116,7 @@ fn get_will_history_records_lifecycle_transition_sequence() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

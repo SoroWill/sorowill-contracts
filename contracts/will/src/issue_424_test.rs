@@ -56,7 +56,7 @@ fn overdue_active_will_returns_negative_seconds() {
         &30, // 30-day check-in period
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );
@@ -106,7 +106,7 @@ fn overdue_triggered_will_returns_negative_seconds() {
         &30, // 30-day check-in period
         &7,  // 7-day grace period
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );

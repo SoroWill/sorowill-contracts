@@ -7,9 +7,10 @@
 //! `(will_id, guardian)` pair with a timestamp so they can expire over time,
 //! and cleared independently when a guardian-release cycle resets.
 
-use soroban_sdk::{contracttype, panic_with_error, Address, Env, Vec};
+use soroban_sdk::{contracttype, panic_with_error, Address, Env, Val, Vec};
 
 use crate::errors::WillError;
+use crate::migration;
 use crate::types::{
     Beneficiary, GuardianVoteReason, ProtocolStats, TokenLockedBalance, Will, WillStatus,
     WillStatusTransition,
@@ -207,6 +208,88 @@ pub fn adjust_locked_value(env: &Env, token: &Address, delta: i128) {
     save_protocol_stats(env, &stats);
 }
 
+/// Applies `sign * amount` to the protocol's locked totals for every entry in
+/// a will's `balances` map. Use `1` when balances enter the contract and `-1`
+/// when they leave it (release, cancellation), so multi-token wills keep the
+/// per-token totals in sync with [`recompute_protocol_stats`].
+pub fn adjust_locked_for_balances(env: &Env, balances: &Map<Address, i128>, sign: i128) {
+    for (token, amount) in balances.iter() {
+        if amount != 0 {
+            adjust_locked_value(env, &token, sign * amount);
+        }
+    }
+}
+
+/// Returns `true` when a will in `status` still counts towards
+/// `ProtocolStats::active_will_count` and `total_locked_by_token`.
+pub fn is_live_status(status: WillStatus) -> bool {
+    matches!(
+        status,
+        WillStatus::PendingConfirmation | WillStatus::Active | WillStatus::Triggered
+    )
+}
+
+/// Recomputes protocol statistics from scratch by walking every will id ever
+/// allocated (`1..=NextWillId`) and summing live wills.
+///
+/// Archived wills live under `DataKey::ArchivedWill` and are terminal, so
+/// they are skipped along with any id whose entry no longer exists. Each id
+/// costs one persistent read, so this is only intended for audits/repairs and
+/// will exceed the per-transaction budget once the protocol holds enough
+/// wills; callers should fall back to off-chain reconciliation at that point.
+pub fn recompute_protocol_stats(env: &Env) -> ProtocolStats {
+    let last_id: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::NextWillId)
+        .unwrap_or(0);
+
+    let mut active_will_count: u64 = 0;
+    let mut totals: Map<Address, i128> = Map::new(env);
+    let mut id = 1u64;
+    while id <= last_id {
+        if let Some(will) = env
+            .storage()
+            .persistent()
+            .get::<_, Will>(&DataKey::Will(id))
+        {
+            if is_live_status(will.status) {
+                active_will_count += 1;
+                for (token, amount) in will.balances.iter() {
+                    let prev = totals.get(token.clone()).unwrap_or(0);
+                    totals.set(token, prev + amount);
+                }
+            }
+        }
+        id += 1;
+    }
+
+    // Preserve the token order of the stored stats so the result can be
+    // compared field-for-field; tokens that are no longer locked anywhere are
+    // reported with a zero total rather than dropped.
+    let stored = get_protocol_stats(env);
+    let mut total_locked_by_token = Vec::new(env);
+    for entry in stored.total_locked_by_token.iter() {
+        let total = totals.get(entry.token.clone()).unwrap_or(0);
+        totals.remove(entry.token.clone());
+        total_locked_by_token.push_back(TokenLockedBalance {
+            token: entry.token,
+            total_locked: total,
+        });
+    }
+    for (token, total) in totals.iter() {
+        total_locked_by_token.push_back(TokenLockedBalance {
+            token,
+            total_locked: total,
+        });
+    }
+
+    ProtocolStats {
+        active_will_count,
+        total_locked_by_token,
+    }
+}
+
 /// Persists a will's state and refreshes its storage TTL.
 /// Persists a will's state, refreshing its storage TTL unless the will has
 /// reached a terminal state.
@@ -278,12 +361,21 @@ pub fn save_will(env: &Env, will: &Will) {
 /// not implementable with the current SDK version, so this documentation is
 /// the contract's contract with its consumers until the storage API grows an
 /// archived-entry probe.
+///
+/// # Schema versioning (issue #446)
+///
+/// The entry is read as a raw `Val` and decoded through
+/// [`migration::decode_will`], so wills written with an older `Will` layout
+/// still load after a field is added. A will that matches no known layout
+/// yields [`WillError::UnsupportedSchemaVersion`].
 pub fn load_will(env: &Env, will_id: u64) -> Result<Will, WillError> {
     let key = DataKey::Will(will_id);
-    env.storage()
+    let raw: Val = env
+        .storage()
         .persistent()
         .get(&key)
-        .ok_or(WillError::WillNotFound)
+        .ok_or(WillError::WillNotFound)?;
+    migration::decode_will(env, &raw)
 }
 
 /// Adds `will_id` to the index list stored at `key`, if not already present.

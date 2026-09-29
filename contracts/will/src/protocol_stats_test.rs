@@ -59,7 +59,7 @@ fn create_will_increments_locked_value() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -91,7 +91,7 @@ fn create_will_increments_locked_value() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -129,7 +129,7 @@ fn top_up_increments_locked_value() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -180,7 +180,7 @@ fn cancel_will_decrements_locked_value() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -234,7 +234,7 @@ fn multiple_tokens_track_independently() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -253,7 +253,7 @@ fn multiple_tokens_track_independently() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

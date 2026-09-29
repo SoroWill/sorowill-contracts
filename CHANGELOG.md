@@ -33,6 +33,19 @@ gets its own [contract spec artifact](./spec) once exported.
   `sha256(beneficiary.to_xdr() || salt)`.
 ### Added
 
+- `get_owner_stats(owner)` entry point returning `OwnerStats` (total wills,
+  non-terminal wills, locked value per token) so clients don't have to walk
+  every `get_wills_by_owner` page to compute totals (#447).
+- Storage schema versioning: `migration.rs` with a legacy-aware
+  `decode_will` used by every will load, stepwise `upgrade` used by
+  `migrate_will`, and a new `UnsupportedSchemaVersion` error (code 39) (#446).
+- Diagnostic log messages stating the supplied count and `MAX_BENEFICIARIES`
+  when a beneficiary list is rejected; README FAQ on the limit (#444).
+
+### Changed
+
+- `merge_wills` now explicitly rejects wills with different owners with
+  `NotSameOwner` (code 24) before checking that the caller owns them (#445).
 - `WillError::MergeWithHashedBeneficiaries` (code 47): `merge_wills` is now
   rejected while either will still carries a hashed beneficiary that has not
   revealed and claimed. `merge_beneficiaries` only merges *visible*

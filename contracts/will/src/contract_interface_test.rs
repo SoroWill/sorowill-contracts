@@ -43,7 +43,7 @@ fn contract_interface_is_available() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );
