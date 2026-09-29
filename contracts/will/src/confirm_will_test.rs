@@ -12,7 +12,13 @@ use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillError
 
 const DAY: u64 = 86_400;
 
-fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Address) {
+fn setup<'a>() -> (
+    Env,
+    WillContractClient<'a>,
+    Address,
+    TokenClient<'a>,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -25,7 +31,13 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Addres
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    (env.clone(), client, owner, TokenClient::new(&env, &token_address), token_address)
+    (
+        env.clone(),
+        client,
+        owner,
+        TokenClient::new(&env, &token_address),
+        token_address,
+    )
 }
 
 /// Test asserting a successful `confirm_will` transitions `PendingConfirmation`
@@ -37,7 +49,10 @@ fn successful_confirmation_transitions_to_active() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: beneficiary, allocation: Allocation::Percentage(10_000) },
+        Beneficiary {
+            address: beneficiary,
+            allocation: Allocation::Percentage(10_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
 
@@ -55,7 +70,10 @@ fn successful_confirmation_transitions_to_active() {
     );
 
     // Verify will is in PendingConfirmation state
-    assert_eq!(client.get_will(&will_id).status, WillStatus::PendingConfirmation);
+    assert_eq!(
+        client.get_will(&will_id).status,
+        WillStatus::PendingConfirmation
+    );
 
     // Confirm the will before the window expires
     client.confirm_will(&will_id, &owner);
@@ -73,7 +91,10 @@ fn non_owner_cannot_confirm() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: beneficiary, allocation: Allocation::Percentage(10_000) },
+        Beneficiary {
+            address: beneficiary,
+            allocation: Allocation::Percentage(10_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
 
@@ -104,13 +125,25 @@ fn cannot_confirm_active_will() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: beneficiary, allocation: Allocation::Percentage(10_000) },
+        Beneficiary {
+            address: beneficiary,
+            allocation: Allocation::Percentage(10_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
 
     // Create will that is immediately Active (confirmation_delay_seconds = 0)
-    let will_id =
-        client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     // Verify will is Active
     assert_eq!(client.get_will(&will_id).status, WillStatus::Active);
@@ -131,7 +164,10 @@ fn confirmation_window_expiration() {
 
     let beneficiaries: SorobanVec<Beneficiary> = vec![
         &env,
-        Beneficiary { address: beneficiary, allocation: Allocation::Percentage(10_000) },
+        Beneficiary {
+            address: beneficiary,
+            allocation: Allocation::Percentage(10_000),
+        },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
 
@@ -150,7 +186,8 @@ fn confirmation_window_expiration() {
     );
 
     // Advance time past the confirmation window
-    env.ledger().with_mut(|l| l.timestamp += confirmation_window + 1);
+    env.ledger()
+        .with_mut(|l| l.timestamp += confirmation_window + 1);
 
     // Attempting to confirm after the window should fail
     assert_eq!(

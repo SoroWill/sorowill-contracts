@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so check-changelog.sh can diff against origin/<base>.
+          fetch-depth: 0
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -26,11 +29,18 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
       - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Run tests
         run: cargo test --workspace
+
+      - name: Check CHANGELOG.md is updated with CONTRACT_VERSION changes
+        run: bash .github/scripts/check-changelog.sh
+        if: github.event_name == 'pull_request'
 
       # The contract is `no_std` for wasm and only links `std` under `cfg(test)`
       # or the `fuzzing` feature. Building for the real target keeps that split
@@ -38,3 +48,18 @@ jobs:
       # tests above and only fail at deploy time.
       - name: Build contract for wasm
         run: cargo build --workspace --release --target wasm32v1-none
+
+      - name: Verify WASM binary size budget
+        run: |
+          WASM_PATH="target/wasm32v1-none/release/will.wasm"
+          MAX_BYTES=150000
+          if [ ! -f "$WASM_PATH" ]; then
+            echo "::error::WASM binary not found at $WASM_PATH"
+            exit 1
+          fi
+          SIZE=$(stat -c%s "$WASM_PATH")
+          echo "Compiled WASM size: $SIZE bytes (Budget: $MAX_BYTES bytes)"
+          if [ "$SIZE" -gt "$MAX_BYTES" ]; then
+            echo "::error::WASM size ($SIZE bytes) exceeds budget of $MAX_BYTES bytes documented in docs/WASM_SIZE.md"
+            exit 1
+          fi

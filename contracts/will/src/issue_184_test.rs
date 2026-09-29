@@ -10,7 +10,7 @@ use soroban_sdk::{
     vec, Address, Env, Vec as SorobanVec,
 };
 
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillError};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient};
 
 fn setup_with_two_tokens<'a>() -> (
     Env,
@@ -70,12 +70,32 @@ fn merge_wills_different_primary_token_panics() {
 
     // Create will_a with token_address_1
     let tokens_1: SorobanVec<(Address, i128)> = vec![&env, (token_address_1, 1_000_000_i128)];
-    let will_id_a = client.create_will(&owner, &tokens_1, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id_a = client.create_will(
+        &owner,
+        &tokens_1,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     // Create will_b with token_address_2
     let tokens_2: SorobanVec<(Address, i128)> = vec![&env, (token_address_2, 1_000_000_i128)];
-    let will_id_b = client.create_will(&owner, &tokens_2, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id_b = client.create_will(
+        &owner,
+        &tokens_2,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     // Attempt to merge - this should panic because the primary tokens differ
-    client.merge_wills(&owner, will_id_a, will_id_b);
+    client.merge_wills(&owner, &will_id_a, &will_id_b);
 }

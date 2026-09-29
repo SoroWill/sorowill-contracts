@@ -10,13 +10,17 @@ use soroban_sdk::{
     vec, Address, Env, Vec as SorobanVec,
 };
 
-use crate::{
-    Allocation, Beneficiary, WillContract, WillContractClient, WillError, WillStatus,
-};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillError, WillStatus};
 
 const DAY: u64 = 86_400;
 
-fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Address) {
+fn setup<'a>() -> (
+    Env,
+    WillContractClient<'a>,
+    Address,
+    TokenClient<'a>,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -29,7 +33,13 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Addres
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    (env.clone(), client, owner, TokenClient::new(&env, &token_address), token_address)
+    (
+        env.clone(),
+        client,
+        owner,
+        TokenClient::new(&env, &token_address),
+        token_address,
+    )
 }
 
 fn advance(env: &Env, days: u64) {
@@ -43,14 +53,13 @@ fn release(env: &Env, client: &WillContractClient, will_id: u64) {
     client.release_inheritance(&will_id, &None);
 }
 
-/// Issue #182: Test that `add_hashed_beneficiary` works with percentage-based regular beneficiaries.
-///
-/// Previously, `assert_valid_percentages` would reject any hashed beneficiary percentage
-/// when regular beneficiaries with percentage allocations already summed to 10,000.
-/// This test verifies that hashed beneficiaries can be added with 0% when regular
-/// beneficiaries use percentage allocation.
+/// Issue #182 / #371: a percentage-based beneficiary list already consumes the
+/// whole 10,000 bps, so the only hashed share that fits is zero — and a zero
+/// percentage is now rejected outright (it reserves nothing yet still occupies
+/// a slot and dilutes every other hashed beneficiary's share of the withheld
+/// pool). Before #371 this test asserted that a 0% slot was accepted.
 #[test]
-fn hashed_beneficiary_with_percentage_regular_beneficiaries() {
+fn zero_percentage_hashed_beneficiary_is_rejected_on_a_full_percentage_list() {
     let (env, client, owner, _token, token_address) = setup();
     let reg_beneficiary = Address::generate(&env);
 
@@ -62,17 +71,27 @@ fn hashed_beneficiary_with_percentage_regular_beneficiaries() {
         },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
-    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     let hashed_commitment = env.crypto().sha256(&soroban_sdk::Bytes::new(&env));
     let hashed_bytes = soroban_sdk::Bytes::from_array(&env, &hashed_commitment.to_array());
 
-    // This should succeed (fixing issue #182)
-    client.add_hashed_beneficiary(&will_id, &owner, &hashed_bytes, &0);
-
-    let will = client.get_will(&will_id);
-    assert_eq!(will.hashed_beneficiaries.len(), 1);
-    assert_eq!(will.hashed_beneficiaries.get_unchecked(0).percentage, 0);
+    // Zero is rejected for being zero, not for overflowing the 10,000 bps cap.
+    assert_eq!(
+        client.try_add_hashed_beneficiary(&will_id, &owner, &hashed_bytes, &0),
+        Err(Ok(WillError::InvalidPercentages.into())),
+    );
+    assert_eq!(client.get_will(&will_id).hashed_beneficiaries.len(), 0);
 }
 
 /// Issue #182: Test that `add_hashed_beneficiary` validates combined percentages correctly.
@@ -80,7 +99,6 @@ fn hashed_beneficiary_with_percentage_regular_beneficiaries() {
 /// Ensures that percentage-based beneficiaries plus hashed beneficiary percentages
 /// cannot exceed 10,000 basis points.
 #[test]
-#[should_panic(expected = "InvalidPercentages")]
 fn hashed_beneficiary_percentage_exceeds_limit() {
     let (env, client, owner, _, token_address) = setup();
     let reg_beneficiary_a = Address::generate(&env);
@@ -98,13 +116,29 @@ fn hashed_beneficiary_percentage_exceeds_limit() {
         },
     ];
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
-    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     let hashed_commitment = env.crypto().sha256(&soroban_sdk::Bytes::new(&env));
     let hashed_bytes = soroban_sdk::Bytes::from_array(&env, &hashed_commitment.to_array());
 
-    // This should panic with InvalidPercentages
-    client.add_hashed_beneficiary(&will_id, &owner, &hashed_bytes, &100);
+    // This should be rejected with InvalidPercentages. Soroban's panic
+    // message only shows the numeric error code, never the enum variant
+    // name, so #[should_panic(expected = "InvalidPercentages")] can never
+    // match -- use try_add_hashed_beneficiary instead.
+    assert_eq!(
+        client.try_add_hashed_beneficiary(&will_id, &owner, &hashed_bytes, &100),
+        Err(Ok(WillError::InvalidPercentages.into())),
+    );
 }
 
 /// Issue #182: Test that `add_hashed_beneficiary` works with fixed-amount beneficiaries.
@@ -124,8 +158,18 @@ fn hashed_beneficiary_with_fixed_amount_beneficiaries() {
             allocation: Allocation::FixedAmount(500_000),
         },
     ];
-    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
-    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 500_000_i128)];
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     let hashed_commitment = env.crypto().sha256(&soroban_sdk::Bytes::new(&env));
     let hashed_bytes = soroban_sdk::Bytes::from_array(&env, &hashed_commitment.to_array());
@@ -141,7 +185,10 @@ fn hashed_beneficiary_with_fixed_amount_beneficiaries() {
 /// Issue #182: Test that multiple hashed beneficiaries can be added.
 ///
 /// Multiple hashed beneficiaries can coexist on the same will as long as
-/// their combined percentages don't exceed the validation limit.
+/// their combined percentages don't exceed the validation limit. Since #371
+/// each must also carry a *distinct* 32-byte commitment — a duplicate would be
+/// permanently unclaimable, since `reveal_and_claim` always matches the first
+/// matching slot.
 #[test]
 fn multiple_hashed_beneficiaries() {
     let (env, client, owner, _token, token_address) = setup();
@@ -154,12 +201,23 @@ fn multiple_hashed_beneficiaries() {
             allocation: Allocation::FixedAmount(500_000),
         },
     ];
-    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
-    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 500_000_i128)];
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
-    // Add multiple hashed beneficiaries
-    for i in 0..3 {
-        let hashed_commitment = env.crypto().sha256(&soroban_sdk::Bytes::new(&env));
+    // Add multiple hashed beneficiaries, each with its own commitment.
+    for i in 0..3u8 {
+        let preimage = soroban_sdk::Bytes::from_array(&env, &[i; 64]);
+        let hashed_commitment = env.crypto().sha256(&preimage);
         let hashed_bytes = soroban_sdk::Bytes::from_array(&env, &hashed_commitment.to_array());
         client.add_hashed_beneficiary(&will_id, &owner, &hashed_bytes, &2_000);
     }
@@ -186,8 +244,21 @@ fn hashed_beneficiary_funds_preserved_during_release() {
             allocation: Allocation::FixedAmount(800_000),
         },
     ];
+    // 1,000,000 total leaves 200,000 of headroom beyond the 800,000
+    // FixedAmount commitment -- exactly what the 2,000 bps (20%) hashed
+    // beneficiary below reserves.
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 1_000_000_i128)];
-    let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     // Add hashed beneficiary with a percentage share from the remaining balance
     let hashed_commitment = env.crypto().sha256(&soroban_sdk::Bytes::new(&env));
@@ -206,5 +277,8 @@ fn hashed_beneficiary_funds_preserved_during_release() {
     // The contract should still hold funds for the hashed beneficiary
     // (exact amount depends on implementation of reserve logic)
     let contract_balance = token.balance(&client.address);
-    assert!(contract_balance > 0, "Hashed beneficiary share should be reserved in contract");
+    assert!(
+        contract_balance > 0,
+        "Hashed beneficiary share should be reserved in contract"
+    );
 }

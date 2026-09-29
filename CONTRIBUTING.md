@@ -42,6 +42,7 @@ For example: `feat/42-guardian-quorum-check` or `fix/17-checkin-deadline-roundin
 
 Run every command used by the [Test CI workflow](./.github/workflows/test.yml) and confirm it succeeds:
 
+- [ ] `cargo fmt --all -- --check`
 - [ ] `cargo clippy --all-targets -- -D warnings`
 - [ ] `cargo test --workspace`
 - [ ] `cargo build --workspace --release --target wasm32v1-none`
@@ -50,6 +51,47 @@ Run every command used by the [Test CI workflow](./.github/workflows/test.yml) a
 ## Local setup
 
 See the [README](./README.md#local-setup) for toolchain installation and how to run the test suite.
+
+## Task runner (just)
+
+This repo ships a [`justfile`](./justfile) with shortcuts for the commands
+above, so you don't have to remember or copy them by hand. Install
+[`just`](https://github.com/casey/just#installation), then:
+
+```bash
+just --list    # see every available recipe
+just lint      # cargo clippy --all-targets -- -D warnings
+just test      # cargo test --workspace
+just build     # cargo build --workspace --release --target wasm32v1-none
+just fmt       # cargo fmt --all
+just ci        # runs lint, test, and build in order — the full "Before opening a PR" checklist above in one command
+```
+
+If you don't have `just` installed, the raw `cargo` commands in
+[Before opening a PR](#before-opening-a-pr) work identically.
+
+## Cargo.lock policy
+
+`Cargo.lock` is committed at the workspace root, and that's intentional:
+every crate in this workspace is built and deployed as a Soroban
+**contract** (compiled to a `wasm32v1-none` binary and deployed on-chain),
+not published as a library for other crates to depend on via crates.io.
+Committing the lockfile gives reproducible CI builds and deployments — the
+same dependency graph every time, regardless of what's newest on crates.io
+the day CI happens to run.
+
+This does **not** constrain anyone who depends on a crate from this
+workspace (e.g. `contracts/will`) as a path or git dependency in their own
+project: Cargo resolves and locks dependencies per top-level workspace, so a
+downstream consumer's own `Cargo.lock` governs their build, not this one.
+Our committed lockfile only pins builds performed *inside this repository*
+(CI, local `cargo test`/`cargo build`, `scripts/export-spec.sh`, etc.).
+
+If this workspace ever adds a crate meant to be published to crates.io as a
+reusable library (as opposed to an on-chain contract), revisit this policy
+for that crate specifically — published library crates conventionally do
+**not** commit `Cargo.lock`, so their consumers can resolve compatible
+dependency versions themselves rather than inheriting exact pins.
 
 ## Mutation testing (cargo-mutants)
 
@@ -61,11 +103,9 @@ closes that gap: it systematically rewrites small pieces of the contract
 the test suite against each mutant. A mutant that **survives** (tests still
 pass) means no test would have caught that bug.
 
-CI runs mutation testing automatically via `.github/workflows/mutants.yml`
-on every push and PR to `main`, but it is currently **advisory only**
-(`continue-on-error: true`) — a survived mutant does not fail the build. It
-will graduate to a blocking check once we've triaged an initial baseline
-and trust the signal.
+There is currently no CI workflow for mutation testing: it is a manual,
+advisory check you run locally (see below). A survived mutant is a signal to
+add a test, not a build failure.
 
 ### Running it locally
 
@@ -106,6 +146,69 @@ a test in `contracts/will/src/test.rs` before merge, once the check is
 blocking; until then, treat a growing survivor count as a signal to
 prioritize test-writing, and file a follow-up issue for anything
 out of scope for the PR at hand.
+
+## Fuzzing (`fuzz/` workspace member)
+
+`fuzz/` is a separate Cargo workspace member with its own `Cargo.toml` and
+`fuzz_targets/` directory. It is excluded from the root workspace
+(`cargo test --workspace` and `cargo clippy --all-targets` never build it)
+because it requires a nightly toolchain and links against libFuzzer. Coverage-guided fuzzing is run manually on demand; there is no scheduled CI fuzzing workflow.
+
+### Running existing targets
+
+```sh
+rustup toolchain install nightly
+cargo install cargo-fuzz
+
+cd fuzz
+cargo +nightly fuzz run create_will
+cargo +nightly fuzz run update_beneficiaries
+```
+
+For a time-bounded run (e.g. in CI or a quick local sanity-check):
+
+```sh
+cargo +nightly fuzz run create_will -- -max_total_time=300
+```
+
+See [docs/FUZZING.md](./docs/FUZZING.md) for the full list of flags, how to
+replay and minimise a crash, how to generate a coverage report, and how the
+harness is structured.
+
+### When to add a new fuzz target
+
+Every **state-mutating entry point** that handles user-supplied structured
+input (amounts, arrays of beneficiaries/guardians, periods, etc.) is a
+candidate for coverage-guided fuzzing. The current targets only cover
+`create_will` and `update_beneficiaries`. As new entry points are added —
+especially those that mutate balances, beneficiary/guardian indexes, or
+involve multi-will operations like `merge_wills` or `split_will` — the fuzz
+corpus should grow with them.
+
+**Add a new target when your PR introduces:**
+
+- A new entry point that accepts numeric amounts, arrays of addresses, or
+  other structural input.
+- A new validation path that existing fuzz targets do not exercise.
+- A multi-will operation (merge, split, batch) where cross-will invariants
+  could be violated by adversarial input.
+
+### How to add a target
+
+1. Add an input struct (with `#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]`)
+   and a `run_*` function to
+   [`contracts/will/src/fuzz_harness.rs`](./contracts/will/src/fuzz_harness.rs).
+   Follow the existing `CreateWillInput` / `run_create_will` pair as a template.
+2. Add a new file `fuzz/fuzz_targets/<name>.rs` that calls your `run_*` function.
+3. Register the new target as a `[[bin]]` entry in `fuzz/Cargo.toml`.
+4. Add a `proptest` property in
+   [`contracts/will/src/fuzz_test.rs`](./contracts/will/src/fuzz_test.rs)
+   that drives the same runner with `proptest!`/`any::<YourInput>()`, so the
+   new invariants are checked in CI on every PR without requiring a nightly
+   toolchain.
+
+See [docs/FUZZING.md § Adding a target](./docs/FUZZING.md#adding-a-target) for
+the full step-by-step and the invariants that every target is expected to check.
 
 ## Code coverage (cargo-llvm-cov)
 

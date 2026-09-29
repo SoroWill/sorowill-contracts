@@ -8,11 +8,30 @@ use soroban_sdk::{
     vec, Address, Env, Vec as SorobanVec,
 };
 
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatus};
+use crate::{
+    Allocation, Beneficiary, GuardianVoteReason, WillContract, WillContractClient, WillStatus,
+};
 
 const DAY: u64 = 86_400;
 
-fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Address) {
+/// One entry of a `batch_create_wills` call:
+/// `(tokens, beneficiaries, checkin_interval_days, grace_period_days, guardians, guardian_threshold)`.
+type BatchWillSpec = (
+    SorobanVec<(Address, i128)>,
+    SorobanVec<Beneficiary>,
+    u64,
+    u64,
+    SorobanVec<Address>,
+    u32,
+);
+
+fn setup<'a>() -> (
+    Env,
+    WillContractClient<'a>,
+    Address,
+    TokenClient<'a>,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -25,7 +44,13 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, TokenClient<'a>, Addres
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    (env.clone(), client, owner, TokenClient::new(&env, &token_address), token_address)
+    (
+        env.clone(),
+        client,
+        owner,
+        TokenClient::new(&env, &token_address),
+        token_address,
+    )
 }
 
 /// Issue #191: Regression test asserting `active_will_count` increases after `clone_will`.
@@ -46,7 +71,17 @@ fn issue_191_clone_will_increments_active_count() {
     let initial_stats = client.get_protocol_stats();
     let initial_count = initial_stats.active_will_count;
 
-    let source_will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let source_will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     let stats_after_create = client.get_protocol_stats();
     assert_eq!(stats_after_create.active_will_count, initial_count + 1);
@@ -55,7 +90,11 @@ fn issue_191_clone_will_increments_active_count() {
     let _cloned_will_id = client.clone_will(&source_will_id, &owner, &clone_tokens);
 
     let stats_after_clone = client.get_protocol_stats();
-    assert_eq!(stats_after_clone.active_will_count, initial_count + 2, "clone_will should increment active_will_count");
+    assert_eq!(
+        stats_after_clone.active_will_count,
+        initial_count + 2,
+        "clone_will should increment active_will_count"
+    );
 }
 
 /// Issue #192: Regression test asserting `active_will_count` increases by the batch size.
@@ -75,18 +114,14 @@ fn issue_192_batch_create_wills_increments_active_count() {
         },
     ];
 
-    let spec1_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 100_000_i128)];
-    let spec2_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 50_000_i128)];
-    let spec3_tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 75_000_i128)];
+    let spec1_tokens: SorobanVec<(Address, i128)> =
+        vec![&env, (token_address.clone(), 100_000_i128)];
+    let spec2_tokens: SorobanVec<(Address, i128)> =
+        vec![&env, (token_address.clone(), 50_000_i128)];
+    let spec3_tokens: SorobanVec<(Address, i128)> =
+        vec![&env, (token_address.clone(), 75_000_i128)];
 
-    let specs: SorobanVec<(
-        SorobanVec<(Address, i128)>,
-        SorobanVec<Beneficiary>,
-        u64,
-        u64,
-        SorobanVec<Address>,
-        u32,
-    )> = vec![
+    let specs: SorobanVec<BatchWillSpec> = vec![
         &env,
         (spec1_tokens, beneficiaries.clone(), 90, 7, vec![&env], 2),
         (spec2_tokens, beneficiaries.clone(), 90, 7, vec![&env], 2),
@@ -122,7 +157,17 @@ fn issue_194_get_wills_by_owner_and_status_with_pagination() {
     for i in 0..5 {
         let amount = 100_000 + (i as i128) * 10_000;
         let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), amount)];
-        let will_id = client.create_will(&owner, &tokens, &beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+        let will_id = client.create_will(
+            &owner,
+            &tokens,
+            &beneficiaries,
+            &90,
+            &7,
+            &vec![&env],
+            &2,
+            &None,
+            &0,
+        );
         created_ids.push_back(will_id);
     }
 
@@ -130,21 +175,33 @@ fn issue_194_get_wills_by_owner_and_status_with_pagination() {
     let page1 = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &None, &2);
     assert_eq!(page1.len(), 2, "First page should have 2 wills");
 
-    if page1.len() > 0 {
+    if !page1.is_empty() {
         let last_id_page1 = page1.get_unchecked(page1.len() - 1).id;
-        let page2 = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &Some(last_id_page1), &2);
-        assert!(page2.len() > 0, "Second page should have results");
+        let page2 = client.get_wills_by_owner_and_status(
+            &owner,
+            &WillStatus::Active,
+            &Some(last_id_page1),
+            &2,
+        );
+        assert!(!page2.is_empty(), "Second page should have results");
         assert!(page2.len() <= 2, "Second page should respect limit");
 
-        if page2.len() > 0 {
+        if !page2.is_empty() {
             let first_page2_id = page2.get_unchecked(0).id;
-            assert!(first_page2_id > last_id_page1, "Pagination cursor should work correctly");
+            assert!(
+                first_page2_id > last_id_page1,
+                "Pagination cursor should work correctly"
+            );
         }
     }
 
     // Test total count across pages (large limit)
     let all_wills = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &None, &50);
-    assert_eq!(all_wills.len(), 5, "Should get all 5 wills when limit is large enough");
+    assert_eq!(
+        all_wills.len(),
+        5,
+        "Should get all 5 wills when limit is large enough"
+    );
 }
 
 /// Issue #193: Regression test for cursor pagination with beneficiary removal/re-addition.
@@ -167,13 +224,33 @@ fn issue_193_paginate_with_remove_readd_beneficiary() {
     ];
 
     let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 200_000_i128)];
-    let will_id = client.create_will(&owner, &tokens, &initial_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &initial_beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &2,
+        &None,
+        &0,
+    );
 
     // Create multiple more wills to test pagination
     for i in 0..3 {
         let amount = 100_000 + (i as i128) * 10_000;
         let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), amount)];
-        let _will_id = client.create_will(&owner, &tokens, &initial_beneficiaries, &90, &7, &vec![&env], &2, &None, &0);
+        let _will_id = client.create_will(
+            &owner,
+            &tokens,
+            &initial_beneficiaries,
+            &90,
+            &7,
+            &vec![&env],
+            &2,
+            &None,
+            &0,
+        );
     }
 
     // Remove beneficiary2 from first will
@@ -187,27 +264,89 @@ fn issue_193_paginate_with_remove_readd_beneficiary() {
     client.update_beneficiaries(&will_id, &owner, &updated_beneficiaries);
 
     // Test pagination on beneficiary index after removal
-    let beneficiary2_wills = client.get_wills_by_beneficiary(&beneficiary2);
-    let will_ids_set = SorobanVec::new(&env);
+    let beneficiary2_wills = client.get_wills_by_beneficiary(&beneficiary2, &None, &100);
+    let mut will_ids_set: SorobanVec<u64> = SorobanVec::new(&env);
 
     // Verify no duplicates in pagination
     for will in beneficiary2_wills.iter() {
-        let already_seen = false;
         for seen_will in will_ids_set.iter() {
             if seen_will == will.id {
                 panic!("Pagination should not duplicate wills after removal/re-addition");
             }
         }
-        assert!(!already_seen, "No duplicates should exist in pagination");
+        will_ids_set.push_back(will.id);
     }
 
     // Verify we can get all beneficiary wills without gaps
-    let page1 = client.get_wills_by_beneficiary(&beneficiary2);
+    let page1 = client.get_wills_by_beneficiary(&beneficiary2, &None, &100);
     if page1.len() > 1 {
-        let ids_in_pages = SorobanVec::new(&env);
+        let mut ids_in_pages: SorobanVec<u64> = SorobanVec::new(&env);
         for will in page1.iter() {
             ids_in_pages.push_back(will.id);
         }
-        assert_eq!(ids_in_pages.len(), page1.len(), "Should retrieve all beneficiary wills without gaps");
+        assert_eq!(
+            ids_in_pages.len(),
+            page1.len(),
+            "Should retrieve all beneficiary wills without gaps"
+        );
     }
+}
+
+/// Regression test for stale guardian votes after a guardian is removed and re-added.
+#[test]
+fn stale_guardian_vote_cleared_when_guardian_removed() {
+    let (env, client, owner, _token, token_address) = setup();
+    let guardian = Address::generate(&env);
+    let second_guardian = Address::generate(&env);
+    let replacement_guardian = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+
+    let beneficiaries: SorobanVec<Beneficiary> = vec![
+        &env,
+        Beneficiary {
+            address: beneficiary.clone(),
+            allocation: Allocation::Percentage(10_000),
+        },
+    ];
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address, 100_000_i128)];
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env, guardian.clone(), second_guardian.clone()],
+        &2,
+        &None,
+        &0,
+    );
+
+    client.accept_guardian_role(&will_id, &guardian);
+
+    // Guardian-list cooldown must elapse before a trigger vote is accepted.
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 8 * DAY);
+
+    client.guardian_trigger(&will_id, &guardian, &GuardianVoteReason::Other);
+    assert!(client
+        .get_guardian_vote_status(&will_id, &guardian)
+        .is_some());
+
+    client.update_guardians(
+        &will_id,
+        &owner,
+        &vec![&env, replacement_guardian.clone(), second_guardian.clone()],
+    );
+    client.update_guardians(
+        &will_id,
+        &owner,
+        &vec![&env, guardian.clone(), second_guardian.clone()],
+    );
+
+    assert!(
+        client
+            .get_guardian_vote_status(&will_id, &guardian)
+            .is_none(),
+        "re-added guardian should not retain a vote from before removal"
+    );
 }

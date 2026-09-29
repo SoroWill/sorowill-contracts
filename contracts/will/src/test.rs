@@ -3003,21 +3003,21 @@ fn test_merge_wills_recalculates_percentages() {
         &None,
     );
 
-    let active_wills = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active);
+    let active_wills = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &None, &100);
     assert_eq!(active_wills.len(), 2);
 
     advance_time(&env, 91 * DAY);
     client.trigger_will(&will_id_1);
 
-    let active_wills = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active);
+    let active_wills = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &None, &100);
     assert_eq!(active_wills.len(), 1);
     assert_eq!(active_wills.get(0).unwrap().id, will_id_2);
 
-    let triggered_wills = client.get_wills_by_owner_and_status(&owner, &WillStatus::Triggered);
+    let triggered_wills = client.get_wills_by_owner_and_status(&owner, &WillStatus::Triggered, &None, &100);
     assert_eq!(triggered_wills.len(), 1);
     assert_eq!(triggered_wills.get(0).unwrap().id, will_id_1);
 
-    let released_wills = client.get_wills_by_owner_and_status(&owner, &WillStatus::Released);
+    let released_wills = client.get_wills_by_owner_and_status(&owner, &WillStatus::Released, &None, &100);
     assert_eq!(released_wills.len(), 0);
 }
 

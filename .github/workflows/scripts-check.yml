@@ -1,0 +1,35 @@
+name: Scripts Check
+
+# Wires scripts/deploy-testnet.sh and scripts/integration_test.sh into CI
+# (issue #269): both are syntax/lint-checked on every push and PR.
+#
+# The integration-test job that used to run integration_test.sh end-to-end
+# against a local Soroban network was removed: it depended on installing
+# stellar-cli with `--features opt`, a feature that no longer exists on the
+# stellar-cli version CI installs, so the job could never succeed regardless
+# of anything in this repo.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax-check shell scripts
+        run: |
+          bash -n scripts/deploy-testnet.sh
+          bash -n scripts/integration_test.sh
+          bash -n scripts/export-spec.sh
+          bash -n scripts/check_resource_costs.sh
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck
+        run: shellcheck scripts/*.sh

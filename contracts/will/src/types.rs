@@ -4,12 +4,24 @@ use soroban_sdk::{contracttype, Address, Bytes, Map, Symbol, Vec};
 ///
 /// - `Percentage(bp)` is a share expressed in basis points (1 bp = 0.01 %) of
 ///   whatever balance remains *after* every `FixedAmount` beneficiary on the
-///   same will has been paid. All `Percentage` shares on a will must sum to
-///   exactly 10,000 (100 % of the remainder).
+///   same will has been paid, applied to **every** token the will holds. All
+///   `Percentage` shares on a will must sum to exactly 10,000 (100 % of the
+///   remainder).
 /// - `FixedAmount(amount)` entitles the beneficiary to exactly `amount` of
-///   the will's token, paid before any percentage-based split is computed.
-///   The sum of all `FixedAmount` entries on a will can never exceed the
-///   will's balance (enforced by `assert_valid_allocations`).
+///   the will's **primary token** ([`Will::token`], the first entry of the
+///   `tokens` list passed to `create_will`), paid before any percentage-based
+///   split is computed. The sum of all `FixedAmount` entries on a will can
+///   never exceed that token's balance (enforced by
+///   `assert_valid_allocations`).
+///
+/// # Fixed amounts and multi-token wills
+///
+/// A `FixedAmount` is a claim on one specific token, not on "the will's
+/// value". A will holding two tokens and a `FixedAmount(100)` beneficiary
+/// pays that beneficiary 100 units of the primary token **in total** — the
+/// secondary token's balance is not drawn on to satisfy it, and is instead
+/// split among the percentage beneficiaries or, if there are none, refunded
+/// to the owner at release time (issue #384, #383).
 ///
 /// A single will may mix both kinds: e.g. one beneficiary with a fixed
 /// amount and the rest splitting the remainder by percentage.
@@ -29,6 +41,29 @@ pub enum Allocation {
 pub struct Beneficiary {
     pub address: Address,
     pub allocation: Allocation,
+}
+
+/// Consent status for a named guardian.
+///
+/// A guardian must explicitly accept before they can cast a `guardian_trigger`
+/// vote. The owner may also reject a guardian's acceptance.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuardianConsent {
+    /// Guardian has been named but has not yet responded.
+    Pending = 0,
+    /// Guardian has accepted the role and may vote.
+    Accepted = 1,
+    /// Guardian has declined the role.
+    Rejected = 2,
+}
+
+/// A guardian definition used by the weighted-guardian API.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuardianSpec {
+    pub address: Address,
+    pub weight: u32,
 }
 
 /// A guardian entry: an address paired with a vote weight and consent status.
@@ -65,11 +100,26 @@ pub struct HashedBeneficiary {
 /// Lifecycle state of a will.
 ///
 /// ```text
-/// Active --(missed check-in)--> Triggered --(grace period expires)--> Released --(close_will)--> Settled
-///   |                               |
-///   |--(cancel_will)--> Cancelled   |--(emergency_checkin)--> Active
-///   |--(partial_release)--> Active  (balance reduced, subset paid)
+/// create_will --(confirmation delay)--> PendingConfirmation
+/// create_will --(no delay)------------> Active
+///     |                                    |
+///     |--(confirm_will)--> Active <--------+
+///     |
+///     |   Active --(missed check-in / trigger_will)--> Triggered
+///     |      |                                            |
+///     |      |--(cancel_will)--> Cancelled               |--(grace period expires)--> Released
+///     |      |                                            |    |
+///     |      |--(emergency_checkin)--> Active            |    |--(close_will)--> Settled
+///     |      |--(guardian_cancel_trigger)--> Active       |    |
+///     |      |--(guardian_trigger quorum)--> Released ----+    |
+///     |                                                          |
+///     +--(cancel_will)--> Cancelled <--(cancel_will, PendingConfirmation)
+///
+/// PendingConfirmation --(cancel_will)--> Cancelled
 /// ```
+///
+/// Every arrow above is a real transition performed by the named entry point;
+/// `check_in` and the other settings updates do not change `status`.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WillStatus {
@@ -173,24 +223,54 @@ pub struct Will {
     /// The primary owner address. Used for backwards-compatible single-owner
     /// flows and as the refund destination on cancellation.
     pub owner: Address,
-    /// The token contract address (e.g. a USDC Stellar Asset Contract, or the
-    /// native XLM asset address when `is_native` is true) held by the will.
     /// Map of token contract address → amount currently locked in the will,
     /// in each token's base units. A will may hold any number of distinct
     /// SEP-41 compliant tokens simultaneously.
     pub balances: Map<Address, i128>,
-    /// The beneficiaries and their percentage shares. Always sums to 100.
     /// The token contract (e.g. a USDC Stellar Asset Contract) held by the will.
     pub token: Address,
     /// Whether the held asset is native XLM (as opposed to a token contract).
     /// When `true`, transfers use `env.transfer()` instead of the token client.
     pub is_native: bool,
     /// The amount of `token` currently locked in the will, in the token's base units.
+    /// A legacy mirror of `balances[token]` kept for backward compatibility;
+    /// every writer that touches the primary token's balance must update both
+    /// fields together until this mirror is fully removed.
     pub balance: i128,
-    /// The beneficiaries and their basis-point shares. Always sums to 10,000.
+    /// The visible beneficiaries of the will and how each is allocated.
+    ///
+    /// Entries may mix two allocation kinds (see [`Allocation`]), so this
+    /// list does **not** always describe a split of 10,000 basis points.
+    /// `assert_valid_allocations` enforces, on every write:
+    /// - every `Allocation::Percentage(bp)` is non-zero, and the `Percentage`
+    ///   entries together sum to exactly 10,000 basis points. This check only
+    ///   applies when at least one `Percentage` entry is present — a
+    ///   `FixedAmount`-only list has no percentage total to check;
+    /// - every `Allocation::FixedAmount(amount)` is positive, and their sum
+    ///   does not exceed the will's **primary-token** balance
+    ///   ([`Will::token`]). A sum *below* that balance is allowed, since the
+    ///   headroom is reserved for a later `add_hashed_beneficiary` and is
+    ///   otherwise refunded to the owner at release;
+    /// - no address appears twice ([`crate::WillError::DuplicateBeneficiary`]).
+    ///
+    /// So: percentages must sum to 10,000 when present, while fixed amounts
+    /// are bounded above by the primary-token balance and need not account for
+    /// the whole of it.
     pub beneficiaries: Vec<Beneficiary>,
     /// Privacy-preserving beneficiaries registered by commitment hash (issue #46).
-    /// Their percentages count towards the 100-sum together with `beneficiaries`.
+    ///
+    /// Each `HashedBeneficiary::percentage` is expressed in the same basis
+    /// points (1 bp = 0.01 %, 10,000 = 100 %) as `Allocation::Percentage`, not
+    /// in whole percent. They are withheld from the visible beneficiaries'
+    /// share of each token and are claimable later via `reveal_and_claim` once
+    /// the pre-image is revealed.
+    ///
+    /// `assert_valid_percentages` requires the visible `Percentage` entries
+    /// plus every hashed percentage to total at most 10,000 basis points — the
+    /// hashed entries take priority, and the remainder is what the visible
+    /// percentage split divides. Unlike `beneficiaries`, a will with no
+    /// percentage beneficiaries at all is legal, and its leftover primary-token
+    /// balance is refunded to the owner on release.
     pub hashed_beneficiaries: Vec<HashedBeneficiary>,
     /// How many days the owner may go without checking in before the will
     /// can be triggered.
@@ -212,7 +292,9 @@ pub struct Will {
     /// via a weight-based quorum using `guardian_trigger`.
     pub guardians: Vec<Guardian>,
     /// Accumulated weight of guardian votes cast in the current cycle.
-    /// Release triggers when this reaches `guardian_threshold`.
+    /// Quorum is reached when this reaches (or exceeds) `guardian_threshold`;
+    /// see [`Will::guardian_threshold`] for the comparison and
+    /// [`Will::guardian_votes`] for the corresponding head count.
     pub guardian_vote_weight: u32,
     /// Number of distinct guardians who have voted to trigger the current
     /// guardian-release cycle.
@@ -223,8 +305,23 @@ pub struct Will {
     pub guardian_cancel_vote_weight: u32,
     /// Number of distinct guardians who have voted to cancel the current trigger.
     pub guardian_cancel_votes: u32,
-    /// Number of distinct guardian votes required to force an early release.
-    /// Must be between 1 and `guardians.len()`.
+    /// The weight that a guardian quorum must accumulate to take effect.
+    ///
+    /// This is compared against the **accumulated vote weight**
+    /// ([`Will::guardian_vote_weight`], and
+    /// [`Will::guardian_cancel_vote_weight`] for the cancel path), not against
+    /// [`Will::guardian_votes`]. With every guardian weighted 1 the two are
+    /// equivalent, but a weighted guardian list installed via
+    /// `update_guardians_weighted` lets a single guardian of weight 3 satisfy a
+    /// threshold of 3 on its own.
+    ///
+    /// It is validated in `1..=total_weight`, where `total_weight` is
+    /// `guardians.len()` for the unweighted lists that `create_will`,
+    /// `update_guardians` and `update_will_settings` produce, and the sum of
+    /// the supplied weights for a weighted list. Shrinking a non-empty guardian
+    /// list below the stored threshold is rejected, since the quorum would
+    /// become unreachable. An empty guardian list disables the mechanism and no
+    /// threshold is checked.
     pub guardian_threshold: u32,
     /// Unix timestamp (seconds) of the last guardian-list change.
     /// `guardian_trigger` is only effective after a cooldown period has
@@ -278,4 +375,17 @@ pub struct WillStatusTransition {
     /// A short label describing what caused the transition
     /// (e.g. "create", "checkin", "trigger", "release").
     pub action: Symbol,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_guardian_vote_reason_discriminants() {
+        assert_eq!(GuardianVoteReason::Deceased as u32, 0);
+        assert_eq!(GuardianVoteReason::Incapacitated as u32, 1);
+        assert_eq!(GuardianVoteReason::Unreachable as u32, 2);
+        assert_eq!(GuardianVoteReason::Other as u32, 3);
+    }
 }
