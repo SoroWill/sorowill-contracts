@@ -42,6 +42,14 @@ jobs:
         run: bash .github/scripts/check-changelog.sh
         if: github.event_name == 'pull_request'
 
+      # Guard against the CONTRACT_VERSION constant drifting from the git
+      # version tag. If the constant is bumped without a matching tag (or a
+      # tag is pushed without bumping the constant), fail the build so SDKs
+      # can trust the version reported by get_contract_version.
+      - name: Verify CONTRACT_VERSION matches git version tag
+        run: bash .github/scripts/check-contract-version.sh
+        if: github.event_name == 'pull_request'
+
       # The contract is `no_std` for wasm and only links `std` under `cfg(test)`
       # or the `fuzzing` feature. Building for the real target keeps that split
       # honest — a `std` dependency leaking into the contract would pass the

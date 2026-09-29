@@ -16,3 +16,17 @@ if git diff --name-only "$BASE_REF" | grep -q 'contracts/will/src/lib.rs'; then
         fi
     fi
 fi
+
+# Issue #439: CONTRACT_VERSION is compiled into the contract and is immutable
+# after deployment. If the constant is bumped in source, the git version tag
+# must be bumped in lockstep so SDKs can rely on the reported version to detect
+# behavioral changes. Fail the merge when the constant changed but no version
+# tag was added/updated in the same change set.
+if git diff --name-only "$BASE_REF" | grep -q 'contracts/will/src/lib.rs'; then
+    if git diff "$BASE_REF" -- contracts/will/src/lib.rs | grep -q 'CONTRACT_VERSION'; then
+        if ! git diff "$BASE_REF" -- . | grep -qE '^\+.*(v[0-9]+\.[0-9]+\.[0-9]+|version[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+")'; then
+            echo "::error::CONTRACT_VERSION changed in contracts/will/src/lib.rs but no matching version tag/bump was found in the diff. Bump the git version tag (e.g. vX.Y.Z) alongside CONTRACT_VERSION."
+            exit 1
+        fi
+    fi
+fi

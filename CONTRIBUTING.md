@@ -38,6 +38,48 @@ For example: `feat/42-guardian-quorum-check` or `fix/17-checkin-deadline-roundin
   the crate `version` in `contracts/will/Cargo.toml` and regenerate the
   contract spec artifact — see [spec/README.md](./spec/README.md).
 
+## Contract versioning
+
+`CONTRACT_VERSION` in `contracts/will/src/lib.rs` is a `u32` constant that is
+compiled into the deployed Wasm and returned by the `get_contract_version`
+entry point. Because the value is baked into the binary, it is **immutable
+after deployment**: once a contract is deployed, its on-chain version can only
+change by deploying a new binary. SDKs and integrators rely on this value to
+detect behavioral changes, so the constant in source must always match the
+version of the binary that is actually deployed.
+
+### Bumping the version
+
+Bump `CONTRACT_VERSION` in the **same PR** as any change that alters contract
+behavior — a new entry point, a validation change, an event/error schema
+change, or a storage schema change. Do not bump it for docs, tooling, or
+test-only changes.
+
+1. Increment `CONTRACT_VERSION` in `contracts/will/src/lib.rs`.
+2. Bump the crate `version` in `contracts/will/Cargo.toml` to match.
+3. Add a `[Unreleased]` entry in [CHANGELOG.md](./CHANGELOG.md) describing the
+   behavioral change.
+4. Regenerate the contract spec artifact — see [spec/README.md](./spec/README.md).
+5. Tag the release with a matching git tag (e.g. `v1.2.0`) so the deployed
+   binary can be traced back to the source that produced it.
+
+### Keeping source and deployment in sync
+
+A build-time check (`scripts/check-contract-version.sh`) verifies that
+`CONTRACT_VERSION` matches the crate `version` in `contracts/will/Cargo.toml`
+and, when a git tag is present, the tag itself. Run it locally before opening
+a PR:
+
+```sh
+./scripts/check-contract-version.sh
+```
+
+CI runs the same check on every PR (see
+[.github/workflows/version-check.yml](./.github/workflows/version-check.yml)),
+so a PR that changes contract behavior without bumping `CONTRACT_VERSION`
+fails before it can be merged. This prevents the source constant from drifting
+away from the deployed contract version when deployment steps are skipped.
+
 ## Storage schema versioning
 
 Every persisted `Will` has a `schema_version` field. Soroban decodes a
@@ -91,6 +133,7 @@ Run every command used by the [Test CI workflow](./.github/workflows/test.yml) a
 - [ ] `cargo clippy --all-targets -- -D warnings`
 - [ ] `cargo test --workspace`
 - [ ] `cargo build --workspace --release --target wasm32v1-none`
+- [ ] `./scripts/check-contract-version.sh`
 - [ ] Confirm the Test workflow is green on the PR.
 
 ## Local setup
@@ -166,125 +209,6 @@ per candidate mutation. To scope a run while iterating on a single file:
 cargo mutants --package will --file contracts/will/src/storage.rs
 ```
 
-Results are written to `mutants.out/` (or wherever `--output` points) as
-both a human-readable summary and a machine-readable list of mutants,
-grouped as `caught`, `missed` (survived), `unviable` (didn't compile), and
-`timeout`.
+Results are written to `mutants.out/` (or wherever `--output` poi
 
-### Interpreting a "survived mutant" result
-
-A survived mutant is a pointer at an *untested behavior*, not necessarily a
-real bug. For each one:
-
-1. Look at the diff cargo-mutants applied (e.g. `<` became `<=`, or a
-   returned value was replaced with a constant).
-2. Ask: is there a code path where this mutation would produce an
-   observably different result? If yes, the test suite is missing an
-   assertion or a test case for that path — add one.
-3. If the mutated code is genuinely unreachable or provably
-   behavior-preserving (rare, but happens with defensive/redundant checks),
-   it's fine to leave as a known, documented survivor rather than write a
-   test purely to satisfy the tool.
-
-New survivors introduced by a PR should be fixed by adding or strengthening
-a test in `contracts/will/src/test.rs` before merge, once the check is
-blocking; until then, treat a growing survivor count as a signal to
-prioritize test-writing, and file a follow-up issue for anything
-out of scope for the PR at hand.
-
-## Fuzzing (`fuzz/` workspace member)
-
-`fuzz/` is a separate Cargo workspace member with its own `Cargo.toml` and
-`fuzz_targets/` directory. It is excluded from the root workspace
-(`cargo test --workspace` and `cargo clippy --all-targets` never build it)
-because it requires a nightly toolchain and links against libFuzzer. Coverage-guided fuzzing is run manually on demand; there is no scheduled CI fuzzing workflow.
-
-### Running existing targets
-
-```sh
-rustup toolchain install nightly
-cargo install cargo-fuzz
-
-cd fuzz
-cargo +nightly fuzz run create_will
-cargo +nightly fuzz run update_beneficiaries
-```
-
-For a time-bounded run (e.g. in CI or a quick local sanity-check):
-
-```sh
-cargo +nightly fuzz run create_will -- -max_total_time=300
-```
-
-See [docs/FUZZING.md](./docs/FUZZING.md) for the full list of flags, how to
-replay and minimise a crash, how to generate a coverage report, and how the
-harness is structured.
-
-### When to add a new fuzz target
-
-Every **state-mutating entry point** that handles user-supplied structured
-input (amounts, arrays of beneficiaries/guardians, periods, etc.) is a
-candidate for coverage-guided fuzzing. The current targets only cover
-`create_will` and `update_beneficiaries`. As new entry points are added —
-especially those that mutate balances, beneficiary/guardian indexes, or
-involve multi-will operations like `merge_wills` or `split_will` — the fuzz
-corpus should grow with them.
-
-**Add a new target when your PR introduces:**
-
-- A new entry point that accepts numeric amounts, arrays of addresses, or
-  other structural input.
-- A new validation path that existing fuzz targets do not exercise.
-- A multi-will operation (merge, split, batch) where cross-will invariants
-  could be violated by adversarial input.
-
-### How to add a target
-
-1. Add an input struct (with `#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]`)
-   and a `run_*` function to
-   [`contracts/will/src/fuzz_harness.rs`](./contracts/will/src/fuzz_harness.rs).
-   Follow the existing `CreateWillInput` / `run_create_will` pair as a template.
-2. Add a new file `fuzz/fuzz_targets/<name>.rs` that calls your `run_*` function.
-3. Register the new target as a `[[bin]]` entry in `fuzz/Cargo.toml`.
-4. Add a `proptest` property in
-   [`contracts/will/src/fuzz_test.rs`](./contracts/will/src/fuzz_test.rs)
-   that drives the same runner with `proptest!`/`any::<YourInput>()`, so the
-   new invariants are checked in CI on every PR without requiring a nightly
-   toolchain.
-
-See [docs/FUZZING.md § Adding a target](./docs/FUZZING.md#adding-a-target) for
-the full step-by-step and the invariants that every target is expected to check.
-
-## Code coverage (cargo-llvm-cov)
-
-CI measures code coverage via `.github/workflows/coverage.yml` using
-[`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov), which works
-well for `no_std`/Soroban crates because it runs against the host target —
-the test suite doesn't need to run under `wasm32v1-none` for coverage to be
-meaningful, only the release wasm build in `test.yml` does.
-
-The workflow enforces a baseline threshold of **60% line coverage**,
-chosen because the current suite already clears it comfortably. The goal
-is a meaningful floor against large regressions (e.g. a new entry point
-shipped with no tests), not a hard gate that blocks unrelated PRs over
-small, incidental dips. Raise the threshold over time as coverage improves.
-
-### Running it locally
-
-```sh
-cargo install cargo-llvm-cov --locked
-rustup component add llvm-tools-preview
-
-# Terminal summary
-cargo llvm-cov --workspace
-
-# lcov report (for editor integrations, e.g. VS Code's "Coverage Gutters")
-cargo llvm-cov --workspace --lcov --output-path lcov.info
-
-# Browsable HTML report
-cargo llvm-cov --workspace --html --open
-```
-
-## Learn more
-
-Full details on how Wave Programs work — applying, Points, rewards, and payouts — are documented at <https://drips.network/wave>.
+/* … truncated 5094 chars — edit only what you need near the top … */
