@@ -128,6 +128,17 @@ mod issue_355_test;
 mod issue_356_test;
 #[cfg(test)]
 mod issue_357_test;
+/// Regression tests for issues #358-#361: the distinct-token cap in `top_up`,
+/// the shared guardian-vote expiry rule, `limit == 0` pagination parity in
+/// `get_wills_by_owner_and_status`, and renouncing the last beneficiary.
+#[cfg(test)]
+mod issue_358_test;
+#[cfg(test)]
+mod issue_359_test;
+#[cfg(test)]
+mod issue_360_test;
+#[cfg(test)]
+mod issue_361_test;
 /// Regression tests for issues #378-#381: keeper-bounty token selection,
 /// guardian dedup by address, hashed beneficiaries in a merge, and the merge
 /// status transitions.
@@ -1390,8 +1401,17 @@ impl WillContract {
     /// - [`WillError::WillNotFound`] if the will does not exist.
     /// - [`WillError::BeneficiaryNotFound`] if `beneficiary` is not named in the will.
     /// - [`WillError::WillNotActive`] if the will is not in `Active` or `Triggered` status.
-    /// - [`WillError::InvalidPercentages`] if redistribution would result in invalid
-    ///   percentages (shouldn't happen with a single beneficiary, but caught for safety).
+    /// - [`WillError::TooManyBeneficiaries`] if `beneficiary` is the will's only
+    ///   beneficiary. A will must always name between 1 and
+    ///   [`MAX_BENEFICIARIES`] beneficiaries — the same bound `create_will` and
+    ///   `update_beneficiaries` enforce — so the last remaining beneficiary
+    ///   cannot renounce; a will with no beneficiaries would leave
+    ///   `release_inheritance` with nobody to pay and its balance stranded. The
+    ///   owner can still replace the beneficiary through
+    ///   `update_beneficiaries` (#361).
+    /// - [`WillError::InvalidPercentages`] / [`WillError::FixedAmountExceedsBalance`]
+    ///   if the redistributed allocations fail validation (defensive: the
+    ///   redistribution keeps every percentage share summing to 10,000 bps).
     pub fn renounce_beneficiary(env: Env, will_id: u64, beneficiary: Address) {
         beneficiary.require_auth();
         let mut will = load_will(&env, will_id);
@@ -1425,6 +1445,16 @@ impl WillContract {
             }
         }
 
+        // A will must always keep at least one beneficiary: `create_will` and
+        // `update_beneficiaries` both require 1..=MAX_BENEFICIARIES, and a will
+        // with none would leave `release_inheritance` with nobody to pay, so
+        // the balance could never be distributed and would stay locked in the
+        // contract (#361). `assert_valid_allocations` below cannot catch this —
+        // an empty list trivially satisfies every check it makes.
+        if new_beneficiaries.is_empty() {
+            panic_with_error!(&env, WillError::TooManyBeneficiaries);
+        }
+
         // A renounced `FixedAmount` share needs no redistribution: `distribute`
         // computes fixed payouts dynamically from the current beneficiary
         // list, so simply removing the entry leaves more of the balance for
@@ -1435,7 +1465,7 @@ impl WillContract {
             _ => 0,
         };
 
-        if renounced_basis_points > 0 && !new_beneficiaries.is_empty() {
+        if renounced_basis_points > 0 {
             // Redistribute the renounced basis points proportionally across
             // the remaining percentage-based beneficiaries.
             let mut remaining_basis_points: u32 = 0;
@@ -1492,7 +1522,8 @@ impl WillContract {
             }
         } else {
             // Either the renounced share was a fixed amount (nothing to
-            // redistribute), or this was the only beneficiary.
+            // redistribute), or no percentage beneficiary is left to absorb a
+            // percentage share.
             will.beneficiaries = new_beneficiaries;
         }
 
@@ -1887,12 +1918,18 @@ impl WillContract {
     /// Adds `amount` of a specific `token` to an existing will's locked
     /// balance. Only possible while the will is `Active`. The token does not
     /// need to have been part of the original `create_will` call — new tokens
-    /// can be added via `top_up`.
+    /// can be added via `top_up`, up to the same [`MAX_TOKENS`]
+    /// distinct-token cap `create_will` enforces.
     ///
     /// # Panics
     /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
     /// - [`WillError::WillNotActive`] if the will is not `Active`.
     /// - [`WillError::ZeroAmount`] if `amount` is not positive.
+    /// - [`WillError::InvalidTokenCount`] if `token` is not already in the
+    ///   will's `balances` map and that map already holds [`MAX_TOKENS`]
+    ///   distinct tokens (#358). Topping up a token the will already holds is
+    ///   always allowed, including at the cap, because it does not grow the
+    ///   map.
     pub fn top_up(env: Env, will_id: u64, owner: Address, token: Address, amount: i128) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -1900,6 +1937,17 @@ impl WillContract {
 
         if amount <= 0 {
             panic_with_error!(&env, WillError::ZeroAmount);
+        }
+
+        // Bound the token count exactly as `create_will` does. `distribute`
+        // and `cancel_will` iterate every entry of `balances`, so an unbounded
+        // map would let the owner add one distinct token at a time until a
+        // release or a refund no longer fits in a Soroban transaction, leaving
+        // the will's funds effectively unreachable (#358). Below the cap there
+        // is nothing to check; at the cap an already-held token is still
+        // allowed because topping it up does not grow the map.
+        if will.balances.len() >= MAX_TOKENS && !will.balances.contains_key(token.clone()) {
+            panic_with_error!(&env, WillError::InvalidTokenCount);
         }
 
         // Snapshot values needed after state mutation (checks-effects-interactions).
@@ -2025,6 +2073,14 @@ impl WillContract {
     /// Lets a guardian's own dashboard show "you already voted" state
     /// directly from chain state, without replaying `guardian_voted` events
     /// off-chain (#263).
+    ///
+    /// Expiry is decided by the same [`storage::vote_is_live`] rule
+    /// `has_guardian_voted` and `has_guardian_cancel_voted` use, so this read
+    /// can never panic on a record whose timestamp is later than the current
+    /// ledger time (#359). Unlike those quorum counters, a record timestamped
+    /// after `now` is reported as-is here rather than hidden: this is a
+    /// read-only query over stored state, and swallowing the record would make
+    /// a skewed ledger clock look like "no vote was ever cast".
     pub fn get_guardian_vote_status(
         env: Env,
         will_id: u64,
@@ -2033,8 +2089,7 @@ impl WillContract {
         let will = load_will(&env, will_id);
         let record = storage::get_guardian_vote(&env, will_id, &guardian)?;
         let now = env.ledger().timestamp();
-        let expiry_secs = will.grace_period_days * SECONDS_PER_DAY;
-        if now - record.timestamp <= expiry_secs {
+        if storage::vote_is_live(now, record.timestamp, will.grace_period_days) {
             Some(record)
         } else {
             None
@@ -2218,7 +2273,10 @@ impl WillContract {
     /// - `cursor`: optional will id to paginate after (exclusive). Pass `None`
     ///   or `0` for the first page.
     /// - `limit`: maximum number of wills to return. Capped at
-    ///   [`storage::MAX_PAGE_SIZE`].
+    ///   [`storage::MAX_PAGE_SIZE`]. A `limit` of `0` returns an empty page,
+    ///   matching [`Self::get_wills_by_owner`] and
+    ///   [`Self::get_wills_by_beneficiary`], which build their pages through
+    ///   [`storage::paginate_ids`] (#360).
     pub fn get_wills_by_owner_and_status(
         env: Env,
         owner: Address,
@@ -2234,6 +2292,14 @@ impl WillContract {
         let mut skipping = skip;
 
         for id in ids.iter() {
+            // Check the page size *before* considering another will, exactly
+            // like `storage::paginate_ids` does: with `limit == 0` the loop
+            // exits immediately and the page comes back empty, instead of
+            // collecting one will before a post-push size check could stop it
+            // (#360).
+            if wills.len() >= page_size {
+                break;
+            }
             if skipping {
                 if id <= cursor_val {
                     continue;
@@ -2246,9 +2312,6 @@ impl WillContract {
             };
             if will.status == status {
                 wills.push_back(will);
-                if wills.len() >= page_size {
-                    break;
-                }
             }
         }
         wills

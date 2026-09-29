@@ -309,7 +309,7 @@ disambiguate.
 | 39 | `PrimaryTokenMismatch` | Cannot merge: the two wills' primary tokens differ. |
 | 40 | `DuplicateToken` | The same token address was supplied more than once in a `tokens` list. |
 | 41 | `BatchTooLarge` | A `batch_check_in` call supplied more than `MAX_BATCH_CHECK_IN` (50) will ids. |
-| 42 | `InvalidTokenCount` | The token list supplied to `create_will`, `clone_will`, `split_will`, or `batch_create_wills` was empty, or contained more than `MAX_TOKENS` entries. |
+| 42 | `InvalidTokenCount` | The token list supplied to `create_will`, `clone_will`, `split_will`, or `batch_create_wills` was empty, or contained more than `MAX_TOKENS` entries. Also raised by `top_up` when the token is not already in the will's `balances` map and that map already holds `MAX_TOKENS` distinct tokens; topping up an already-held token stays allowed at the cap. |
 | 43 | `InvalidPreimageLength` | `reveal_and_claim` was called with a pre-image that is not exactly 32 bytes, so its SHA-256 could never match a stored commitment. |
 | 44 | `InvalidCommitmentLength` | A hashed-beneficiary commitment was not exactly 32 bytes (a SHA-256 digest) and could never be matched by a pre-image. |
 | 45 | `DuplicateCommitment` | The same commitment hash is already registered on the will, making the second slot unreachable. |
