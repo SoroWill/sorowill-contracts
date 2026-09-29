@@ -392,3 +392,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-436 -->
 - #436: Will owner validation is weak: no check that the caller is the will owner before allowing cancellations or updates, relying instead on SDK-side logic
+
+<!-- handsoff-issue-438 -->
+- #438: allocate_funds returns a Map of beneficiary to share, but the Map insertion order is arbitrary, so distribute must not depend on processing beneficiaries in a specific orde
