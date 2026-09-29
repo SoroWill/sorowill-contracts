@@ -344,6 +344,8 @@ pub use errors::WillError;
 pub use storage::GuardianVoteRecord;
 pub use storage::CURRENT_SCHEMA_VERSION;
 pub use types::{
+    Allocation, Beneficiary, Guardian, GuardianVoteReason, HashedBeneficiary, ProtocolStats,
+    ProtocolStatsAudit, Will, WillStatus, WillStatusTransition,
     Allocation, Beneficiary, Guardian, GuardianConsent, GuardianSpec, GuardianVoteReason,
     HashedBeneficiary, ProtocolStats, Will, WillStatus, WillStatusTransition,
 };
@@ -1033,8 +1035,7 @@ impl WillContract {
             WillError::WillNotTriggered,
         );
 
-        let trigger_time = will.trigger_time.unwrap_or(0);
-        let grace_deadline = trigger_time + will.grace_period_days * SECONDS_PER_DAY;
+        let grace_deadline = grace_period_end(&env, &will);
         let now = env.ledger().timestamp();
         if now > grace_deadline {
             panic_with_error!(&env, WillError::GracePeriodExpired);
@@ -1093,6 +1094,11 @@ impl WillContract {
     /// in-progress grace period.
     ///
     /// # Panics
+    /// - [`WillError::WillNotTriggered`] if the will is not `Triggered`, or is
+    ///   `Triggered` without a recorded `trigger_time`.
+    /// - [`WillError::GracePeriodNotExpired`] if
+    ///   `env.ledger().timestamp() < trigger_time + grace_period_days` — the
+    ///   grace period deadline has not passed yet.
     /// - [`WillError::WillNotTriggered`] if the will is not `Triggered`.
     /// - [`WillError::GracePeriodNotExpired`] if `now` is at or before the grace
     ///   deadline, i.e. the grace period has not strictly elapsed yet.
@@ -1120,8 +1126,9 @@ impl WillContract {
             WillError::WillNotTriggered,
         );
 
-        let trigger_time = will.trigger_time.unwrap_or(0);
-        let grace_deadline = trigger_time + will.grace_period_days * SECONDS_PER_DAY;
+        // Timing invariant (#442): funds may only leave via this path once
+        // the grace period has fully elapsed, i.e. `now >= grace_period_end`.
+        let grace_deadline = grace_period_end(&env, &will);
         let now = env.ledger().timestamp();
         // Strictly greater: the boundary second belongs to the owner's
         // `emergency_checkin`, so exactly one of these two entry points is
@@ -1191,6 +1198,7 @@ impl WillContract {
 
         // --- EFFECTS: mutate state and persist before any external calls ---
         storage::decrement_active_will_count(&env);
+        storage::adjust_locked_for_balances(&env, &balances_snapshot, -1);
         // Decrement the protocol locked-value total for *every* token the will
         // held, not just the primary-token mirror, so a multi-token
         // cancellation does not leave the other tokens' totals permanently
@@ -2019,10 +2027,58 @@ impl WillContract {
     }
 
     /// Returns aggregate protocol statistics for all wills currently tracked on-chain.
+    ///
+    /// The counters are maintained incrementally and reflect only successful
+    /// operations: a failed invocation rolls back all of its writes, so it
+    /// can never be counted. See [`ProtocolStats`] for the consistency
+    /// invariant and [`Self::audit_protocol_stats`] to verify it.
     pub fn get_protocol_stats(env: Env) -> ProtocolStats {
         storage::get_protocol_stats(&env)
     }
 
+    /// Read-only invariant check (#441): recomputes the protocol stats by
+    /// walking every will in storage and compares them with the stored,
+    /// incrementally maintained counters.
+    ///
+    /// Tokens are compared by total, so a token present in one side with a
+    /// zero total and absent from the other still counts as consistent.
+    ///
+    /// Cost grows linearly with the number of wills ever created; once that
+    /// exceeds the per-invocation budget, run it via simulation only.
+    pub fn audit_protocol_stats(env: Env) -> ProtocolStatsAudit {
+        let stored = storage::get_protocol_stats(&env);
+        let computed = storage::recompute_protocol_stats(&env);
+        let consistent = stats_match(&stored, &computed);
+        ProtocolStatsAudit {
+            stored,
+            computed,
+            consistent,
+        }
+    }
+
+    /// Repairs bookkeeping drift (#441) by overwriting the stored protocol
+    /// stats with the values recomputed from storage, and returns them.
+    ///
+    /// Callable by anyone: the written values are derived purely from
+    /// on-chain will state, so a caller cannot influence them. Tokens whose
+    /// recomputed total is zero are dropped from the stored list.
+    pub fn repair_protocol_stats(env: Env) -> ProtocolStats {
+        let computed = storage::recompute_protocol_stats(&env);
+        let mut total_locked_by_token = Vec::new(&env);
+        for entry in computed.total_locked_by_token.iter() {
+            if entry.total_locked != 0 {
+                total_locked_by_token.push_back(entry);
+            }
+        }
+        let repaired = ProtocolStats {
+            active_will_count: computed.active_will_count,
+            total_locked_by_token,
+        };
+        storage::save_protocol_stats(&env, &repaired);
+        repaired
+    }
+
+    /// Returns the list of will ids currently in `Triggered` status.
     /// Returns a page of the will ids currently in `Triggered` status.
     ///
     /// This is the on-chain index that lets keeper bots and monitoring tools
@@ -2818,6 +2874,7 @@ impl WillContract {
         storage::save_will(&env, &will);
         storage::index_by_owner(&env, &owner, will_id);
         storage::increment_active_will_count(&env);
+        storage::adjust_locked_for_balances(&env, &will.balances, 1);
 
         // Seed the audit trail with the same `create` transition every other
         // creation path records, so `get_will_history` starts with one entry
@@ -3006,6 +3063,7 @@ impl WillContract {
             storage::save_will(&env, &will);
             storage::index_by_owner(&env, &owner, will_id);
             storage::increment_active_will_count(&env);
+            storage::adjust_locked_for_balances(&env, &will.balances, 1);
 
             record_transition(
                 &env,
@@ -3493,6 +3551,11 @@ impl WillContract {
     /// Clients MUST NOT treat `WillNotFound` as proof that a will was never
     /// created or that funds were never distributed.
     ///
+    /// Publishes an `archived` event carrying the owner, the archival
+    /// timestamp and the reason (the terminal status the will was archived
+    /// from), so indexers can explain why the will disappears from queries.
+    /// See [`events::will_archived`].
+    ///
     /// # Panics
     /// - [`WillError::WillNotFound`] if no will exists with this id (see
     ///   the ambiguity note above — this error is also returned for wills
@@ -3504,10 +3567,20 @@ impl WillContract {
             panic_with_error!(&env, WillError::WillNotSettled);
         }
 
-        let archived_will = will.clone();
+        let reason = if will.status == WillStatus::Released {
+            symbol_short!("released")
+        } else {
+            symbol_short!("cancelled")
+        };
         storage::archive_will(&env, &will);
 
-        events::will_archived(&env, will_id, &archived_will.owner);
+        events::will_archived(
+            &env,
+            will_id,
+            &will.owner,
+            env.ledger().timestamp(),
+            reason,
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -3736,6 +3809,9 @@ impl WillContract {
         };
         storage::save_will(&env, &child);
         storage::index_by_owner(&env, &source.owner, new_id);
+        // The child is a new live will. Its balance moved out of the source,
+        // so the locked totals are unchanged.
+        storage::increment_active_will_count(&env);
         storage::increment_active_will_count(&env);
 
         // Seed the child's audit trail with the same `create` transition
@@ -3839,6 +3915,23 @@ impl WillContract {
     /// Verifies a pre-image against a stored commitment hash and, if correct,
     /// immediately transfers that beneficiary's share to the revealed address.
     ///
+    /// The pre-image must be `claimant.to_xdr() || salt`: the XDR encoding of
+    /// the beneficiary `Address` followed by a random salt chosen at
+    /// registration time. The contract checks that the pre-image starts with
+    /// the XDR of `claimant`, so the commitment is bound to one payout address.
+    ///
+    /// # Replay protection (#440)
+    ///
+    /// - Each hashed slot has a `claimed` flag that is set and persisted in
+    ///   the same invocation that pays out; a second call with the same
+    ///   pre-image fails with [`WillError::AlreadyClaimed`], so a replayed
+    ///   transaction cannot pay out twice.
+    /// - Because the pre-image is bound to `claimant` and `claimant` must
+    ///   authorize the call, an attacker who observes the pre-image in a
+    ///   pending or past transaction cannot resubmit it with their own
+    ///   address as the recipient ([`WillError::InvalidPreimage`]).
+    /// - Soroban authorization entries carry their own nonce and expiration
+    ///   ledger, so the signed invocation itself cannot be replayed.
     /// ## Pre-image layout
     ///
     /// The pre-image is exactly [`PREIMAGE_LENGTH`] bytes:
@@ -3898,6 +3991,10 @@ impl WillContract {
     ///   SHA-256 must match a stored commitment.
     ///
     /// # Panics
+    /// - [`WillError::WillNotTriggered`] if the will is not `Triggered`.
+    /// - [`WillError::GracePeriodNotExpired`] if the grace period has not elapsed.
+    /// - [`WillError::InvalidPreimage`] if no matching commitment is found, or
+    ///   the pre-image is not prefixed with the XDR encoding of `claimant`.
     /// - [`WillError::WillNotReleased`] if the will is not `Released`.
     /// - [`WillError::InvalidPreimageLength`] if `preimage` is not exactly
     ///   [`PREIMAGE_LENGTH`] bytes. Checked before hashing, so the empty, short
@@ -3924,6 +4021,9 @@ impl WillContract {
             WillError::WillNotReleased,
         );
 
+        let grace_deadline = grace_period_end(&env, &will);
+        if env.ledger().timestamp() < grace_deadline {
+            panic_with_error!(&env, WillError::GracePeriodNotExpired);
         // Reject a wrong-length pre-image before doing anything with it (#370).
         // The documented pre-image layout is 32 address bytes plus a 32-byte
         // salt, so any other length can never be a valid reveal; catching it
@@ -3947,6 +4047,15 @@ impl WillContract {
         // rather than as a confusing generic mismatch.
         if !preimage_is_bound_to(&env, &claimant, &preimage) {
             panic_with_error!(&env, WillError::PreimageAddressMismatch);
+        }
+
+        // Bind the pre-image to the recipient so an intercepted pre-image
+        // cannot be redirected to a different address (#440).
+        let claimant_xdr = claimant.clone().to_xdr(&env);
+        if preimage.len() <= claimant_xdr.len()
+            || preimage.slice(0..claimant_xdr.len()) != claimant_xdr
+        {
+            panic_with_error!(&env, WillError::InvalidPreimage);
         }
 
         // Hash the supplied pre-image with SHA-256.
@@ -3975,6 +4084,16 @@ impl WillContract {
             panic_with_error!(&env, WillError::AlreadyClaimed);
         }
 
+        let share = will.balance * (hb.percentage as i128) / 100;
+
+        // --- EFFECTS: mark the slot claimed and persist before transferring,
+        // so the payout can never be repeated (#440).
+        will.balance -= share;
+        let primary = will.balances.get(will.token.clone()).unwrap_or(0);
+        will.balances.set(will.token.clone(), primary - share);
+        if share > 0 {
+            storage::adjust_locked_value(&env, &will.token, -share);
+        }
         // --- COMPUTE: each token's share from the current (pre-mutation) balances,
         // and the post-claim balances map, in a single pass ---
         // Mirrors distribute()'s multi-token payout so a hashed beneficiary on
@@ -4029,6 +4148,16 @@ impl WillContract {
         will.hashed_beneficiaries = updated_hb;
         storage::save_will(&env, &will);
 
+        // --- INTERACTIONS ---
+        if share > 0 {
+            token::Client::new(&env, &will.token).transfer(
+                &env.current_contract_address(),
+                &claimant,
+                &share,
+            );
+        }
+
+        events::hashed_claimed(&env, will_id, &claimant, share);
         // --- INTERACTIONS: external token transfers execute after state is settled ---
         let contract_address = env.current_contract_address();
         for (token_addr, share) in transfer_plan.iter() {
@@ -4046,6 +4175,54 @@ impl WillContract {
 }
 
 // ── Private helpers ─────────────────────────────────────────────────────────
+
+/// Returns the timestamp at which a `Triggered` will's grace period ends
+/// (`trigger_time + grace_period_days`).
+///
+/// A `Triggered` will always has a `trigger_time`; a missing one is treated
+/// as "not triggered" rather than defaulting to `0`, which would make the
+/// deadline already elapsed and let funds be released immediately (#442).
+fn grace_period_end(env: &Env, will: &Will) -> u64 {
+    let trigger_time = match will.trigger_time {
+        Some(t) => t,
+        None => panic_with_error!(env, WillError::WillNotTriggered),
+    };
+    match will
+        .grace_period_days
+        .checked_mul(SECONDS_PER_DAY)
+        .and_then(|secs| trigger_time.checked_add(secs))
+    {
+        Some(deadline) => deadline,
+        None => panic_with_error!(env, WillError::InvalidPeriod),
+    }
+}
+
+/// Compares two `ProtocolStats` by value, treating a missing token as a zero
+/// total and ignoring token order.
+fn stats_match(a: &ProtocolStats, b: &ProtocolStats) -> bool {
+    if a.active_will_count != b.active_will_count {
+        return false;
+    }
+    let total_of = |stats: &ProtocolStats, token: &Address| -> i128 {
+        for entry in stats.total_locked_by_token.iter() {
+            if entry.token == *token {
+                return entry.total_locked;
+            }
+        }
+        0
+    };
+    for entry in a.total_locked_by_token.iter() {
+        if total_of(b, &entry.token) != entry.total_locked {
+            return false;
+        }
+    }
+    for entry in b.total_locked_by_token.iter() {
+        if total_of(a, &entry.token) != entry.total_locked {
+            return false;
+        }
+    }
+    true
+}
 
 /// Loads a will by id, panicking with [`WillError::WillNotFound`] if it does not exist.
 fn load_will(env: &Env, will_id: u64) -> Will {
@@ -4645,6 +4822,7 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
 
     // --- EFFECTS: mutate and persist all state before any external call ---
     storage::decrement_active_will_count(env);
+    storage::adjust_locked_for_balances(env, &will.balances, -1);
 
     // Any tokens reserved for still-unclaimed hashed beneficiaries stay in
     // `will.balances` for `reveal_and_claim`; everything else is cleared as

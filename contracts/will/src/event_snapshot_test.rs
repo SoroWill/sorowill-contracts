@@ -522,11 +522,14 @@ fn test_batch_and_advanced_events_snapshot() {
     // will_archived event
     let will_id = 44444u64;
     env.as_contract(&contract_id, || {
-        events::will_archived(&env, will_id, &owner);
+        events::will_archived(&env, will_id, &owner, 1_234, symbol_short!("released"));
     });
 
     let event_data = find_event_by_topic(&env, symbol_short!("archived"), Some(will_id))
         .expect("will_archived event not found");
+    let data: (Address, u64, soroban_sdk::Symbol) = event_data.try_into_val(&env).unwrap();
+    assert_eq!(data.0, owner, "archived event owner mismatch");
+    
     let data: Address = event_data.try_into_val(&env).unwrap();
     assert_eq!(data, owner, "archived event owner mismatch");
 

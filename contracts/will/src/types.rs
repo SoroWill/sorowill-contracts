@@ -151,6 +151,27 @@ pub struct TokenLockedBalance {
 }
 
 /// Aggregate protocol statistics that can be queried directly on-chain.
+///
+/// # Consistency invariant
+///
+/// These counters are maintained incrementally by every entry point that
+/// creates a will, moves funds in or out of one, or moves it into a terminal
+/// state. They are assumed to always equal what
+/// [`WillContract::audit_protocol_stats`](crate::WillContract::audit_protocol_stats)
+/// recomputes from storage:
+///
+/// - `active_will_count` == number of wills in `PendingConfirmation`,
+///   `Active` or `Triggered` status.
+/// - each `total_locked` == sum of that token's entry in `Will::balances`
+///   across those same wills.
+///
+/// # Successful operations only
+///
+/// The stats reflect only *successful* state transitions. A Soroban
+/// invocation that fails (panics or returns a contract error) rolls back
+/// every storage write it made, so a failed operation cannot be counted
+/// on-chain. Failure rates must be measured off-chain from transaction
+/// results.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolStats {
