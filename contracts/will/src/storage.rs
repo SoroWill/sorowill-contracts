@@ -448,16 +448,54 @@ pub fn set_guardian_voted(
         .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
 }
 
+/// Recomputes the live `(weight, count)` of release votes for `will` from
+/// storage, counting each guardian at most once and ignoring expired votes.
+///
+/// Tallying from the per-guardian records (rather than incrementing a running
+/// counter on every call) is what deduplicates votes (#458): a guardian who
+/// re-votes after their previous vote expired replaces that record instead of
+/// being counted a second time.
+pub fn tally_guardian_votes(env: &Env, will: &Will, now: u64, expiry_days: u64) -> (u32, u32) {
+    let mut weight: u32 = 0;
+    let mut count: u32 = 0;
+    for guardian in will.guardians.iter() {
+        if has_guardian_voted(env, will.id, &guardian.address, now, expiry_days) {
+            weight += guardian.weight;
+            count += 1;
+        }
+    }
+    (weight, count)
+}
+
+/// Cancel-vote counterpart of [`tally_guardian_votes`].
+pub fn tally_guardian_cancel_votes(
+    env: &Env,
+    will: &Will,
+    now: u64,
+    expiry_days: u64,
+) -> (u32, u32) {
+    let mut weight: u32 = 0;
+    let mut count: u32 = 0;
+    for guardian in will.guardians.iter() {
+        if has_guardian_cancel_voted(env, will.id, &guardian.address, now, expiry_days) {
+            weight += guardian.weight;
+            count += 1;
+        }
+    }
+    (weight, count)
+}
+
 /// Clears all guardian votes cast against `will`, starting a fresh voting cycle.
 ///
 /// Called whenever a will returns to `Active` (e.g. via `emergency_checkin`)
 /// so that guardians can vote again in a subsequent incapacitation event.
 ///
-/// `will.guardian_votes` is incremented in lockstep with every
-/// [`set_guardian_voted`] and zeroed alongside every reset, so a zero count
-/// means no `GuardianVote` entry exists for the current guardian list and the
-/// removals — up to [`crate::MAX_GUARDIANS`] of them — can be skipped. This is
-/// the common case: most wills never see a guardian vote at all.
+/// `will.guardian_votes` holds the live tally from [`tally_guardian_votes`],
+/// so a zero count means no *unexpired* `GuardianVote` entry exists and the
+/// removals — up to [`crate::MAX_GUARDIANS`] of them — can be skipped. Any
+/// expired record left behind is inert: it never counts toward a tally and is
+/// overwritten if that guardian votes again. This is the common case: most
+/// wills never see a guardian vote at all.
 pub fn reset_guardian_votes(env: &Env, will: &Will) {
     if will.guardian_votes == 0 {
         return;

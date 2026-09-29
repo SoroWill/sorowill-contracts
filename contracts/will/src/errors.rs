@@ -95,4 +95,8 @@ pub enum WillError {
     TooManyWills = 37,
     /// A guardian has not accepted their role and cannot vote.
     GuardianNotConsented = 38,
+    /// `distribute` computed per-beneficiary shares that do not add up to
+    /// the will's balance for some token. Aborts the release rather than
+    /// silently leaving (or over-paying) funds in the contract (#456).
+    DistributionMismatch = 39,
 }

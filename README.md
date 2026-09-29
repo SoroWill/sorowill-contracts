@@ -20,7 +20,7 @@ SoroWill is a trustless, on-chain inheritance protocol for Stellar Soroban. It l
 
 1. **Create a will.** The owner calls `create_will`, locking a token balance and specifying beneficiaries (with percentage shares), a check-in period (e.g. 90 days), and a grace period (e.g. 7 days).
 2. **Check in.** The owner calls `check_in` periodically, before the deadline, to reset the countdown and prove they are still active.
-3. **Trigger.** If the owner misses a check-in deadline, anyone can call `trigger_will`, which starts the grace period.
+3. **Trigger.** If the owner misses a check-in deadline, anyone can call `trigger_will`, which starts the grace period. The grace period is measured from the missed deadline itself, not from when `trigger_will` is called, so release becomes available at `last_checkin + checkin_period + grace_period` regardless of keeper delays.
 4. **Prove you're alive.** During the grace period, the owner can call `emergency_checkin` to cancel the trigger and reset the countdown.
 5. **Release.** If the grace period expires without an emergency check-in, anyone can call `release_inheritance`, which distributes the locked balance to every beneficiary proportionally, in one transaction.
 6. **Cancel anytime.** While the will is active, the owner can call `cancel_will` to withdraw the full balance.
@@ -131,7 +131,16 @@ use will::{MAX_BENEFICIARIES, MAX_GUARDIANS, GUARDIAN_THRESHOLD};
 | `get_time_until_deadline` | Seconds until the will's next relevant deadline (check-in or grace period); negative if past due, `None` if not applicable to the current status | `will_id` | `Option<i64>` |
 | `get_wills_by_owner` | Lists every will owned by an address | `owner` | `Vec<Will>` |
 | `get_wills_by_beneficiary` | Lists every will an address is named in | `beneficiary` | `Vec<Will>` |
+| `get_wills_by_owner_and_status` | Lists a page of an owner's wills in a given status (filter applied before paging) | `owner`, `status`, `cursor`, `limit` | `Vec<Will>` |
+| `get_wills_by_owner_and_status_page` | Same as above, plus `total_count` of all matches and an explicit `next_cursor` (`None` on the last page) | `owner`, `status`, `cursor`, `limit` | `WillPage` |
 | `guardian_trigger` | Casts a guardian vote; 2 of 3 forces an early release | `will_id`, `guardian` | — |
+
+### Release safety
+
+- **One payout per will.** A will is distributed at most once: `release_inheritance`, `guardian_trigger` and the internal `distribute` all refuse a will that is no longer `Active`/`Triggered`. `reveal_and_claim` deducts the hashed beneficiary's share from the will's token balance, so a later release cannot pay it again.
+- **Guardian votes are deduplicated.** Vote weight and count are recomputed from per-guardian records on every vote, so each guardian counts at most once and expired votes drop out; re-voting after expiry refreshes the vote instead of adding to it. The same applies to `guardian_cancel_trigger`.
+- **Keeper bounty comes out of the will.** The bounty is deducted from the first token's balance before the beneficiary split rather than paid on top of it.
+- **Balances are conserved.** For every token, bounty plus beneficiary shares must equal the balance exactly, or the release aborts with `DistributionMismatch`. Percentage rounding dust goes to the last percentage beneficiary; for fixed-amount-only wills any leftover (e.g. from `top_up`) goes to the last beneficiary.
 
 `checkin_period_days` and `grace_period_days` passed to `create_will` must each be at least `1` day (and at most `MAX_PERIOD_DAYS`); a value of `0` panics with `WillError::InvalidPeriod`.
 
@@ -211,6 +220,8 @@ disambiguate.
 | 35 | `InvalidPreimage` | `reveal_and_claim` was called with a pre-image that does not match any stored `HashedBeneficiary` commitment on the will. |
 | 36 | `AlreadyClaimed` | `reveal_and_claim` was called for a hashed beneficiary slot that has already been claimed. |
 | 37 | `TooManyWills` | An owner or beneficiary index list is already at `MAX_WILLS_PER_INDEX` and cannot accept another will id. |
+| 38 | `GuardianNotConsented` | A guardian has not accepted their role and cannot vote. |
+| 39 | `DistributionMismatch` | The computed payouts for a token did not sum to exactly the will's balance of that token; the release is aborted instead of losing or over-drawing funds. |
 
 ## Contract spec artifact
 
