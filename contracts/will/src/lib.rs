@@ -174,6 +174,12 @@ mod issue_427_test;
 #[cfg(test)]
 mod issues_502_505_test;
 
+/// Tests for issues #507, #508, #509, #510 and #511, verifying duplicate claim
+/// prevention, owner auth in emergency checkin, distribution atomicity,
+/// history pagination, and weighted guardian quorum.
+#[cfg(test)]
+mod issues_507_511_test;
+
 /// Regression test for issue #184: `merge_wills` refuses mismatched primary tokens.
 #[cfg(test)]
 mod issue_184_test;
