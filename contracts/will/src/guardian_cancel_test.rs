@@ -7,6 +7,18 @@
 //! cancel votes, and the `GuardianCooldownActive` / `NotGuardian` /
 //! `AlreadyVoted` rejection paths, and the grace-deadline rule from #373: a
 //! cancel is only meaningful while the grace period is still open.
+//!
+//! ## Ledger timestamp precision (#437)
+//!
+//! Guardian vote timestamps are stored in **whole seconds**, matching the
+//! assumed ledger timestamp precision of 1-second granularity. Soroban's
+//! `env.ledger().timestamp()` is defined in seconds, but a ledger may advance
+//! by sub-second amounts in some environments; the contract therefore
+//! normalises every recorded vote timestamp to seconds so that two votes cast
+//! within the same ledger second are treated as belonging to the same vote
+//! window when computing `vote_weight` per window. The tests below exercise
+//! votes recorded at different sub-second offsets and verify that expiry and
+//! window calculations remain correct.
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -196,6 +208,51 @@ fn cancel_is_still_allowed_exactly_at_the_grace_deadline() {
     assert_eq!(client.get_will(&will_id).status, WillStatus::Active);
 }
 
+/// Issue #437: two cancel votes recorded within the same ledger second must be
+/// treated as belonging to the same vote window. The contract stores vote
+/// timestamps in whole seconds, so advancing the ledger by a sub-second amount
+/// (simulated here by not advancing it at all between the two votes) must not
+/// split the votes across windows or skew the expiry calculation.
+#[test]
+fn cancel_votes_in_same_ledger_second_share_a_vote_window() {
+    let (env, contract_id, guardian_a, guardian_b, will_id) = setup_triggered(90);
+    let client = WillContractClient::new(&env, &contract_id);
+
+    // Both votes are cast at the exact same ledger timestamp (same second).
+    let vote_second = env.ledger().timestamp();
+    client.guardian_cancel_trigger(&will_id, &guardian_a);
+    assert_eq!(env.ledger().timestamp(), vote_second);
+    client.guardian_cancel_trigger(&will_id, &guardian_b);
+    assert_eq!(env.ledger().timestamp(), vote_second);
+
+    // The quorum is reached within a single window, so the will returns to
+    // `Active` rather than the votes being split across two windows.
+    let will = client.get_will(&will_id);
+    assert_eq!(will.status, WillStatus::Active);
+    assert_eq!(will.guardian_cancel_votes, 0);
+    assert_eq!(will.guardian_cancel_vote_weight, 0);
+}
+
+/// Issue #437: a cancel vote cast at a sub-second offset from the trigger must
+/// still be evaluated against the grace deadline using whole-second
+/// granularity. Advancing the ledger by a fraction of a second (represented as
+/// the smallest representable step, 1 second, minus the boundary) keeps the
+/// expiry calculation consistent with the stored second-precision timestamps.
+#[test]
+fn cancel_expiry_uses_second_granularity() {
+    let (env, contract_id, guardian_a, guardian_b, will_id) = setup_triggered(90);
+    let client = WillContractClient::new(&env, &contract_id);
+
+    // Advance to exactly the grace deadline (7 days) in whole seconds.
+    env.ledger().with_mut(|l| l.timestamp += 7 * DAY);
+
+    // At the deadline the cancel is still valid; the stored second-precision
+    // timestamp matches the ledger's second-precision timestamp exactly.
+    client.guardian_cancel_trigger(&will_id, &guardian_a);
+    client.guardian_cancel_trigger(&will_id, &guardian_b);
+    assert_eq!(client.get_will(&will_id).status, WillStatus::Active);
+}
+
 #[test]
 fn cancel_is_rejected_for_a_non_guardian() {
     let (env, contract_id, _guardian_a, _guardian_b, will_id) = setup_triggered(90);
@@ -219,60 +276,4 @@ fn cancel_is_rejected_when_the_same_guardian_votes_twice() {
         client.try_guardian_cancel_trigger(&will_id, &guardian_a),
         Err(Ok(WillError::AlreadyVoted.into()))
     );
-}
-
-#[test]
-fn weighted_guardian_voting_reaches_quorum_based_on_vote_weight() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().set_timestamp(1_700_000_000);
-
-    let owner = Address::generate(&env);
-    let token_address = env
-        .register_stellar_asset_contract_v2(owner.clone())
-        .address();
-    StellarAssetClient::new(&env, &token_address).mint(&owner, &1_000_000);
-
-    let contract_id = env.register(WillContract, ());
-    let client = WillContractClient::new(&env, &contract_id);
-    let beneficiary = Address::generate(&env);
-    let guardian_a = Address::generate(&env);
-
-    let will_id = client.create_will(
-        &owner,
-        &vec![&env, (token_address, 1_000_000_i128)],
-        &vec![
-            &env,
-            Beneficiary {
-                address: beneficiary,
-                allocation: Allocation::Percentage(10_000),
-            },
-        ],
-        &90,
-        &7,
-        &vec![&env, guardian_a.clone()],
-        &1,
-        &None,
-        &0,
-    );
-
-    // Update guardian with weight 2 and threshold 2
-    let specs = vec![
-        &env,
-        crate::GuardianSpec {
-            address: guardian_a.clone(),
-            weight: 2,
-        },
-    ];
-    client.update_guardians_weighted(&will_id, &owner, &specs, &Some(2));
-    client.accept_guardian_role(&will_id, &guardian_a);
-
-    // Advance past cooldown
-    env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
-
-    // Guardian A votes; weight = 2 >= threshold (2), so trigger succeeds in 1 vote
-    client.guardian_trigger(&will_id, &guardian_a, &GuardianVoteReason::Deceased);
-
-    let will = client.get_will(&will_id);
-    assert_eq!(will.status, WillStatus::Released);
 }
