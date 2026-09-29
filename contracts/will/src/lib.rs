@@ -109,7 +109,8 @@ mod merge_rounding_test;
 mod merge_fixed_amount_test;
 
 use soroban_sdk::{
-    contract, contractimpl, panic_with_error, symbol_short, token, Address, Bytes, Env, Map, Vec,
+    contract, contractimpl, panic_with_error, symbol_short, token, xdr::ToXdr, Address, Bytes, Env,
+    Map, Vec,
 };
 
 pub use errors::WillError;
@@ -460,6 +461,10 @@ impl WillContract {
     /// - [`WillError::NotOwner`] if `owner` does not own the will.
     /// - [`WillError::WillNotConfirmed`] if the will is not `PendingConfirmation`.
     /// - [`WillError::ConfirmationWindowExpired`] if the confirmation deadline has passed.
+    /// - [`WillError::TooManyBeneficiaries`], [`WillError::InvalidPercentages`],
+    ///   [`WillError::DuplicateBeneficiary`] or [`WillError::FixedAmountExceedsBalance`]
+    ///   if the stored beneficiary list no longer passes the same validation
+    ///   `create_will` applied (issue #448).
     pub fn confirm_will(env: Env, will_id: u64, owner: Address) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -474,6 +479,17 @@ impl WillContract {
                 panic_with_error!(&env, WillError::ConfirmationWindowExpired);
             }
         }
+
+        // Re-validate the beneficiary list against the will's *current*
+        // balances before activating it (#448). The list was validated at
+        // `create_will` time, but it may have changed during the confirmation
+        // delay. Confirming an invalid list would produce an Active will that
+        // can never be released cleanly.
+        if will.beneficiaries.is_empty() || will.beneficiaries.len() > MAX_BENEFICIARIES {
+            panic_with_error!(&env, WillError::TooManyBeneficiaries);
+        }
+        assert_valid_allocations(&env, &will.beneficiaries, total_balance(&will.balances));
+        assert_valid_percentages(&env, &will.beneficiaries, &will.hashed_beneficiaries);
 
         will.status = WillStatus::Active;
         will.last_checkin = now;
@@ -1159,6 +1175,7 @@ impl WillContract {
             assert_valid_guardians(&env, &owner, &new_guardians);
             let now = env.ledger().timestamp();
             storage::reset_guardian_votes(&env, &will);
+            storage::reset_guardian_cancel_votes(&env, &will);
             let mut guardian_structs: Vec<Guardian> = Vec::new(&env);
             for addr in new_guardians.iter() {
                 guardian_structs.push_back(Guardian {
@@ -1171,6 +1188,8 @@ impl WillContract {
             will.guardian_votes = 0;
             will.guardian_list_updated_at = now;
             will.guardian_vote_weight = 0;
+            will.guardian_cancel_votes = 0;
+            will.guardian_cancel_vote_weight = 0;
             updated_fields.push_back(symbol_short!("guard"));
         }
 
@@ -1513,8 +1532,13 @@ impl WillContract {
         }
 
         storage::set_guardian_voted(&env, will_id, &guardian, now, reason);
-        will.guardian_vote_weight += weight;
-        will.guardian_votes += 1;
+        // Recount from the current guardian list instead of incrementing a
+        // running total (#453), so votes from removed, rejected or expired
+        // guardians can never count toward the threshold.
+        let (votes, vote_weight) =
+            tally_guardian_votes(&env, &will, now, storage::has_guardian_voted);
+        will.guardian_votes = votes;
+        will.guardian_vote_weight = vote_weight;
         storage::save_will(&env, &will);
 
         events::guardian_voted(&env, will_id, &guardian, weight, will.guardian_vote_weight);
@@ -1589,8 +1613,11 @@ impl WillContract {
         }
 
         storage::set_guardian_cancel_voted(&env, will_id, &guardian, now);
-        will.guardian_cancel_vote_weight += weight;
-        will.guardian_cancel_votes += 1;
+        // Recount from the current guardian list (#453); see `guardian_trigger`.
+        let (votes, vote_weight) =
+            tally_guardian_votes(&env, &will, now, storage::has_guardian_cancel_voted);
+        will.guardian_cancel_votes = votes;
+        will.guardian_cancel_vote_weight = vote_weight;
         storage::save_will(&env, &will);
 
         events::guardian_cancel_voted(&env, will_id, &guardian, weight, will.guardian_cancel_vote_weight);
@@ -2297,12 +2324,14 @@ impl WillContract {
     /// # Parameters
     /// - `will_id`: the will to add the hashed beneficiary to.
     /// - `owner`: must be the primary owner.
-    /// - `commitment`: SHA-256 hash of the pre-image `address_bytes || salt_bytes`.
+    /// - `commitment`: 32-byte SHA-256 hash of the pre-image
+    ///   `beneficiary.to_xdr() || salt` (see [`Self::reveal_and_claim`]).
     /// - `percentage`: share of the will's balance for this beneficiary.
     ///
     /// # Panics
     /// - [`WillError::NotOwner`] / [`WillError::WillNotActive`]
     /// - [`WillError::InvalidPercentages`] if total percentages would exceed 100.
+    /// - [`WillError::InvalidPreimage`] if `commitment` is not a 32-byte digest.
     pub fn add_hashed_beneficiary(
         env: Env,
         will_id: u64,
@@ -2313,6 +2342,12 @@ impl WillContract {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
+
+        // A commitment that is not a SHA-256 digest can never match a hashed
+        // pre-image, so the slot would be unclaimable (#452).
+        if commitment.len() != 32 {
+            panic_with_error!(&env, WillError::InvalidPreimage);
+        }
 
         will.hashed_beneficiaries.push_back(HashedBeneficiary {
             commitment,
@@ -2329,9 +2364,17 @@ impl WillContract {
     /// Verifies a pre-image against a stored commitment hash and, if correct,
     /// immediately transfers that beneficiary's share to the revealed address.
     ///
-    /// The pre-image must be 64 bytes: the first 32 bytes are the raw bytes of
-    /// the beneficiary `Address` and the remaining 32 bytes are a random salt
-    /// chosen by the beneficiary at registration time.
+    /// The pre-image is `claimant.to_xdr() || salt`: the XDR encoding of the
+    /// beneficiary `Address`, followed by a non-empty random salt (32 bytes
+    /// recommended) chosen at registration time. The contract checks two
+    /// things (#452):
+    ///
+    /// 1. The pre-image begins with the XDR encoding of `claimant`, so the
+    ///    revealed address is the one being paid. Someone who observes the
+    ///    pre-image (for example a front-runner watching a pending
+    ///    transaction) cannot replay it to redirect the share to their own
+    ///    address.
+    /// 2. The SHA-256 of the full pre-image equals a stored commitment.
     ///
     /// This entrypoint works once the will is `Triggered` AND the grace period
     /// has elapsed (the same condition as `release_inheritance`). This keeps
@@ -2345,7 +2388,8 @@ impl WillContract {
     /// # Panics
     /// - [`WillError::WillNotTriggered`] if the will is not `Triggered`.
     /// - [`WillError::GracePeriodNotExpired`] if the grace period has not elapsed.
-    /// - [`WillError::InvalidPreimage`] if no matching commitment is found.
+    /// - [`WillError::InvalidPreimage`] if the pre-image does not commit to
+    ///   `claimant`, or if no matching commitment is found.
     /// - [`WillError::AlreadyClaimed`] if that slot was already claimed.
     pub fn reveal_and_claim(env: Env, will_id: u64, claimant: Address, preimage: Bytes) {
         claimant.require_auth();
@@ -2361,6 +2405,16 @@ impl WillContract {
         let grace_deadline = trigger_time + will.grace_period_days * SECONDS_PER_DAY;
         if env.ledger().timestamp() < grace_deadline {
             panic_with_error!(&env, WillError::GracePeriodNotExpired);
+        }
+
+        // Bind the pre-image to the claimant (#452): its address prefix must be
+        // the claimant's own XDR encoding, followed by a non-empty salt.
+        // Without this check anyone who learns a valid pre-image could claim
+        // the share to an arbitrary address.
+        let claimant_bytes = claimant.clone().to_xdr(&env);
+        let prefix_len = claimant_bytes.len();
+        if preimage.len() <= prefix_len || preimage.slice(0..prefix_len) != claimant_bytes {
+            panic_with_error!(&env, WillError::InvalidPreimage);
         }
 
         // Hash the supplied pre-image with SHA-256.
@@ -2638,6 +2692,37 @@ fn assert_valid_guardians(env: &Env, owner: &Address, guardians: &Vec<Address>) 
             }
         }
     }
+}
+
+/// Counts the live votes on `will` and returns `(vote_count, vote_weight)`.
+/// A vote is live only if it was cast by a guardian on the *current* list who
+/// has accepted the role and whose vote has not expired.
+///
+/// `has_voted` selects the namespace: [`storage::has_guardian_voted`] for
+/// release votes or [`storage::has_guardian_cancel_voted`] for cancel votes.
+///
+/// Recomputing the tally on every vote, rather than keeping a running total,
+/// enforces the upper bound from issue #453. A guardian who has been removed,
+/// has rejected the role or whose vote has expired can never count toward the
+/// threshold, and the count can never exceed the number of guardians on the
+/// will.
+fn tally_guardian_votes(
+    env: &Env,
+    will: &Will,
+    now: u64,
+    has_voted: fn(&Env, u64, &Address, u64, u64) -> bool,
+) -> (u32, u32) {
+    let mut votes: u32 = 0;
+    let mut weight: u32 = 0;
+    for g in will.guardians.iter() {
+        if g.consent == GuardianConsent::Accepted
+            && has_voted(env, will.id, &g.address, now, will.grace_period_days)
+        {
+            votes += 1;
+            weight = weight.saturating_add(g.weight);
+        }
+    }
+    (votes, weight)
 }
 
 /// Asserts both periods are at least one day and at most [`MAX_PERIOD_DAYS`].

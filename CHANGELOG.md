@@ -10,6 +10,28 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ## [Unreleased]
 
+### Fixed
+
+- `confirm_will` now re-validates the beneficiary list before moving a will
+  from `PendingConfirmation` to `Active`. It rechecks the count, duplicates,
+  basis-point totals and fixed amounts against the current balances, so a
+  list that became invalid during the confirmation delay cannot be activated
+  (#448).
+- `guardian_trigger` and `guardian_cancel_trigger` now recount live votes from
+  the current guardian list on every vote instead of adding to a running
+  total. Votes from removed, rejected or expired guardians no longer count
+  toward the threshold, and the tally can never exceed the number of guardians
+  (#453). `update_will_settings` now also clears cancel votes when it replaces
+  the guardian list, as `update_guardians` already did.
+- `reveal_and_claim` now requires the pre-image to start with the claimant's
+  XDR-encoded address, followed by a non-empty salt. A leaked or front-run
+  pre-image can no longer be used to claim a hashed beneficiary's share to a
+  different address. `add_hashed_beneficiary` rejects commitments that are not
+  32-byte SHA-256 digests (#452).
+
+  **Breaking:** commitments must now be computed as
+  `sha256(beneficiary.to_xdr() || salt)`.
+
 ## [0.1.0] - Initial shipped behavior
 
 Seeded entry summarizing the contract's behavior as of this changelog's
