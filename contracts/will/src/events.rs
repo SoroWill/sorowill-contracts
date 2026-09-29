@@ -220,9 +220,17 @@ pub fn batch_created(env: &Env, owner: &Address, will_ids: &soroban_sdk::Vec<u64
 }
 
 /// Published when a Released or Cancelled will is archived.
-pub fn will_archived(env: &Env, will_id: u64, owner: &Address) {
-    env.events()
-        .publish((symbol_short!("archived"), will_id), owner.clone());
+///
+/// Topics: `("archived", will_id)`.
+/// Data: `(owner, timestamp, reason)` where `timestamp` is the ledger time of
+/// archival and `reason` is the terminal status the will was archived from:
+/// `"released"` or `"cancelled"`. After this event the will no longer appears
+/// in `get_will`, `get_wills_by_owner` or `get_wills_by_beneficiary`.
+pub fn will_archived(env: &Env, will_id: u64, owner: &Address, timestamp: u64, reason: Symbol) {
+    env.events().publish(
+        (symbol_short!("archived"), will_id),
+        (owner.clone(), timestamp, reason),
+    );
 }
 
 /// Published when the owner updates the check-in or grace periods.

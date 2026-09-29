@@ -10,6 +10,30 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ## [Unreleased]
 
+### Added
+
+- `audit_protocol_stats` (read-only) compares the stored protocol stats with
+  values recomputed from will storage. `repair_protocol_stats` overwrites the
+  stored stats with the recomputed values (#441).
+- [`docs/EVENTS.md`](./docs/EVENTS.md) event specification.
+
+### Changed
+
+- The `archived` event data is now `(owner, timestamp, reason)`; it was
+  previously just `owner`.
+- `reveal_and_claim` requires the pre-image to start with the XDR encoding of
+  `claimant`, and it marks the slot claimed before transferring (#440).
+- `release_inheritance`, `reveal_and_claim` and `emergency_checkin` reject a
+  `Triggered` will that has no `trigger_time`, instead of treating the
+  trigger time as `0`. Grace-deadline arithmetic is now checked (#442).
+
+### Fixed
+
+- Protocol stats drift: `clone_will`, `batch_create_wills` and `split_will`
+  now update the counters. Release and cancellation subtract every token's
+  balance, not just the primary token. `reveal_and_claim` updates both
+  `balances` and the locked totals (#441).
+
 ## [0.1.0] - Initial shipped behavior
 
 Seeded entry summarizing the contract's behavior as of this changelog's
