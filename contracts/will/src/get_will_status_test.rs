@@ -47,7 +47,7 @@ fn test_get_will_status_pending_confirmation() {
         &30,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &3600,
     );
@@ -77,7 +77,7 @@ fn test_get_will_status_active() {
         &30,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );
@@ -110,7 +110,7 @@ fn test_get_will_status_triggered() {
         &30,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );
@@ -148,7 +148,7 @@ fn test_get_will_status_released() {
         &30,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );
@@ -186,7 +186,7 @@ fn test_get_will_status_cancelled() {
         &30,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );

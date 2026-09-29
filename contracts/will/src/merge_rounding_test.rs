@@ -100,7 +100,7 @@ fn merge_beneficiaries_preserves_small_share() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -111,7 +111,7 @@ fn merge_beneficiaries_preserves_small_share() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -199,7 +199,7 @@ fn merge_multiple_small_shares_preserved() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -210,7 +210,7 @@ fn merge_multiple_small_shares_preserved() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

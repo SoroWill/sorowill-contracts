@@ -48,7 +48,7 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, u64) {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

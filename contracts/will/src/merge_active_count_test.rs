@@ -55,7 +55,7 @@ fn merge_wills_decrements_active_count() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -66,7 +66,7 @@ fn merge_wills_decrements_active_count() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -108,7 +108,7 @@ fn merge_wills_multiple_decrements() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -119,7 +119,7 @@ fn merge_wills_multiple_decrements() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -130,7 +130,7 @@ fn merge_wills_multiple_decrements() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -180,7 +180,7 @@ fn merge_wills_rejects_different_owners() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -191,7 +191,7 @@ fn merge_wills_rejects_different_owners() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

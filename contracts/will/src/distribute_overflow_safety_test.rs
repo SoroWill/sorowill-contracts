@@ -90,7 +90,7 @@ fn distribute_large_balance_no_overflow() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -157,7 +157,7 @@ fn distribute_small_percentage_large_balance() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -201,7 +201,7 @@ fn distribute_with_keeper_bounty_reduces_beneficiary_shares() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &Some(50),
         &0,
     );

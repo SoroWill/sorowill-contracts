@@ -47,7 +47,7 @@ fn confirm_will_anchors_the_checkin_deadline_to_confirmation_time_not_creation_t
         &checkin_period_days,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &(60 * DAY),
     );

@@ -80,7 +80,7 @@ fn hashed_beneficiary_percentage_basis_points_payout() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

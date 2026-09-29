@@ -64,7 +64,7 @@ fn pagination_respects_limit_parameter() {
             &90,
             &7,
             &vec![&env],
-            &2,
+            &0,
             &None,
             &0,
         );
@@ -109,7 +109,7 @@ fn pagination_handles_all_results() {
             &90,
             &7,
             &vec![&env],
-            &2,
+            &0,
             &None,
             &0,
         );
@@ -141,7 +141,7 @@ fn pagination_with_invalid_cursor_starts_from_beginning() {
             &90,
             &7,
             &vec![&env],
-            &2,
+            &0,
             &None,
             &0,
         );
