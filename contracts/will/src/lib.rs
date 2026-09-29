@@ -157,6 +157,11 @@ mod issue_426_test;
 #[cfg(test)]
 mod issue_427_test;
 
+/// Tests for issues #502, #503, #504 and #505, whose reported invariants are
+/// each enforced by the current code; these pin the behaviour.
+#[cfg(test)]
+mod issues_502_505_test;
+
 /// Regression test for issue #184: `merge_wills` refuses mismatched primary tokens.
 #[cfg(test)]
 mod issue_184_test;
@@ -1101,6 +1106,22 @@ impl WillContract {
             &env.current_contract_address(),
             symbol_short!("release"),
         );
+
+        // Release the protocol's locked-value total for *every* token the will
+        // held, not just the primary-token mirror. `distribute` pays the
+        // balances out to beneficiaries, so without this the totals stay
+        // inflated at their pre-release value forever — the same class of bug
+        // #353 fixed for `cancel_will`, which was the only other terminal path
+        // that moved value out of a will.
+        //
+        // `cancel_will` does the mirror of this: it decrements before mutating
+        // the will, keeping the changes-then-interactions ordering, because
+        // `distribute` performs the token transfers below.
+        for (token_addr, balance) in will.balances.iter() {
+            if balance > 0 {
+                storage::adjust_locked_value(&env, &token_addr, -balance);
+            }
+        }
 
         distribute(&env, &mut will, &caller);
     }
