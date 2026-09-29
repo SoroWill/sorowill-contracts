@@ -53,7 +53,7 @@ fn setup_with_released_will<'a>() -> (Env, WillContractClient<'a>, Bytes, Addres
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -192,7 +192,7 @@ fn the_status_check_still_takes_precedence_over_the_length_check() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

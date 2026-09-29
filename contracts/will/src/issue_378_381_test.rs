@@ -100,7 +100,7 @@ fn merge_records_cancellation_transition_for_consumed_will() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -111,7 +111,7 @@ fn merge_records_cancellation_transition_for_consumed_will() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -166,7 +166,7 @@ fn merge_rejected_when_consumed_will_has_hashed_beneficiary() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -183,7 +183,7 @@ fn merge_rejected_when_consumed_will_has_hashed_beneficiary() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -225,7 +225,7 @@ fn merge_rejected_when_surviving_will_has_hashed_beneficiary() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -236,7 +236,7 @@ fn merge_rejected_when_surviving_will_has_hashed_beneficiary() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -446,7 +446,7 @@ fn keeper_bounty_is_paid_from_the_token_it_was_computed_from() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &Some(MAX_BOUNTY_BPS),
         &0,
     );
@@ -522,7 +522,7 @@ fn no_bounty_is_paid_when_every_token_rounds_to_zero() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &Some(MAX_BOUNTY_BPS),
         &0,
     );
@@ -566,7 +566,7 @@ fn single_token_bounty_is_unchanged() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &Some(MAX_BOUNTY_BPS),
         &0,
     );

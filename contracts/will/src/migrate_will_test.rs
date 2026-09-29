@@ -70,7 +70,7 @@ fn setup() -> (Env, Address, Address, u64) {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );

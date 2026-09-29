@@ -50,7 +50,7 @@ fn split_will_reduces_source_balance_and_renormalizes_child_percentages() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -127,7 +127,7 @@ fn split_will_rejects_insufficient_balance() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -165,7 +165,7 @@ fn split_will_rejects_invalid_split_when_source_would_have_no_beneficiaries() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

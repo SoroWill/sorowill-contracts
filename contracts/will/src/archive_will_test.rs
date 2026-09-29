@@ -56,7 +56,7 @@ fn archive_will_removes_released_will_from_owner_and_beneficiary_indexes() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -108,7 +108,7 @@ fn archive_will_removes_cancelled_will_from_active_indexes() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -144,7 +144,7 @@ fn archive_triggered_will_removes_id_from_triggered_index() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -198,7 +198,7 @@ fn archive_will_rejects_active_will() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -337,7 +337,7 @@ fn archive_will_removes_history_when_there_are_no_guardians() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

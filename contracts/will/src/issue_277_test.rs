@@ -47,7 +47,7 @@ fn pending_confirmation_will_cannot_be_triggered_before_confirmation() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &(60 * DAY),
     );

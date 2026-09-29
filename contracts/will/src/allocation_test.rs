@@ -113,7 +113,7 @@ fn pure_percentage_regression() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -155,7 +155,7 @@ fn pure_fixed_amount() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -210,7 +210,7 @@ fn mixed_fixed_and_percentage() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -252,7 +252,7 @@ fn fixed_amount_exceeding_balance_is_rejected() {
             &90,
             &7,
             &vec![&env],
-            &2,
+            &0,
             &None,
             &0
         ),
@@ -291,7 +291,7 @@ fn top_up_grows_the_percentage_remainder_not_the_fixed_share() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -336,7 +336,7 @@ fn will_partialeq_allows_single_assert() {
         &30,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -391,7 +391,7 @@ fn three_way_percentage_split_with_remainder() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

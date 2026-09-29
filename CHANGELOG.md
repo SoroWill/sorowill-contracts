@@ -12,27 +12,19 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ### Added
 
-- `audit_protocol_stats` (read-only) compares the stored protocol stats with
-  values recomputed from will storage. `repair_protocol_stats` overwrites the
-  stored stats with the recomputed values (#441).
-- [`docs/EVENTS.md`](./docs/EVENTS.md) event specification.
+- `get_owner_stats(owner)` entry point returning `OwnerStats` (total wills,
+  non-terminal wills, locked value per token) so clients don't have to walk
+  every `get_wills_by_owner` page to compute totals (#447).
+- Storage schema versioning: `migration.rs` with a legacy-aware
+  `decode_will` used by every will load, stepwise `upgrade` used by
+  `migrate_will`, and a new `UnsupportedSchemaVersion` error (code 39) (#446).
+- Diagnostic log messages stating the supplied count and `MAX_BENEFICIARIES`
+  when a beneficiary list is rejected; README FAQ on the limit (#444).
 
 ### Changed
 
-- The `archived` event data is now `(owner, timestamp, reason)`; it was
-  previously just `owner`.
-- `reveal_and_claim` requires the pre-image to start with the XDR encoding of
-  `claimant`, and it marks the slot claimed before transferring (#440).
-- `release_inheritance`, `reveal_and_claim` and `emergency_checkin` reject a
-  `Triggered` will that has no `trigger_time`, instead of treating the
-  trigger time as `0`. Grace-deadline arithmetic is now checked (#442).
-
-### Fixed
-
-- Protocol stats drift: `clone_will`, `batch_create_wills` and `split_will`
-  now update the counters. Release and cancellation subtract every token's
-  balance, not just the primary token. `reveal_and_claim` updates both
-  `balances` and the locked totals (#441).
+- `merge_wills` now explicitly rejects wills with different owners with
+  `NotSameOwner` (code 24) before checking that the caller owns them (#445).
 - `WillError::MergeWithHashedBeneficiaries` (code 47): `merge_wills` is now
   rejected while either will still carries a hashed beneficiary that has not
   revealed and claimed. `merge_beneficiaries` only merges *visible*

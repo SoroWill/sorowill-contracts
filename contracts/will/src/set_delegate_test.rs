@@ -64,7 +64,7 @@ fn delegate_can_check_in() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -108,7 +108,7 @@ fn clearing_delegate_removes_permission() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -156,7 +156,7 @@ fn non_owner_non_delegate_cannot_check_in() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );

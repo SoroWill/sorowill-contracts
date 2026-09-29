@@ -55,7 +55,7 @@ fn release_pays_the_updated_beneficiary_list_not_the_original_one() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -142,7 +142,7 @@ fn release_pays_the_latest_of_several_beneficiary_updates() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -219,7 +219,7 @@ fn update_beneficiaries_rejected_after_trigger() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
