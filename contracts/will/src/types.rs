@@ -83,13 +83,16 @@ pub struct Guardian {
 /// A privacy-preserving beneficiary entry (issue #46).
 ///
 /// Instead of a raw address the owner stores a SHA-256 commitment hash of the
-/// pre-image `<address_bytes> || <salt_bytes>`. At claim time the beneficiary
-/// calls `reveal_and_claim` with the pre-image; the contract verifies the hash
-/// matches and pays out to the revealed address.
+/// pre-image `<address.to_xdr()> || <salt_bytes>`. At claim time the
+/// beneficiary calls `reveal_and_claim` with the pre-image. The contract checks
+/// that the pre-image's address prefix is the caller's own address, checks that
+/// its hash matches the stored commitment, and pays out to that address
+/// (issue #452).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HashedBeneficiary {
-    /// SHA-256 hash of the pre-image (address bytes concatenated with salt).
+    /// 32-byte SHA-256 hash of the pre-image (XDR-encoded address concatenated
+    /// with salt).
     pub commitment: Bytes,
     /// Percentage of the will's balance this beneficiary receives.
     pub percentage: u32,
@@ -294,13 +297,17 @@ pub struct Will {
     /// Optional guardians (up to 3) who may force an early release
     /// via a weight-based quorum using `guardian_trigger`.
     pub guardians: Vec<Guardian>,
+    /// Accumulated weight of live guardian votes cast in the current cycle.
+    /// Recomputed from the current guardian list on every vote (issue #453),
+    /// so votes from removed, rejected or expired guardians are never counted.
     /// Accumulated weight of guardian votes cast in the current cycle.
     /// Quorum is reached when this reaches (or exceeds) `guardian_threshold`;
     /// see [`Will::guardian_threshold`] for the comparison and
     /// [`Will::guardian_votes`] for the corresponding head count.
     pub guardian_vote_weight: u32,
-    /// Number of distinct guardians who have voted to trigger the current
-    /// guardian-release cycle.
+    /// Number of distinct guardians on the current list with a live vote to
+    /// trigger the current guardian-release cycle. Never exceeds
+    /// `guardians.len()`. Release triggers when this reaches `guardian_threshold`.
     pub guardian_votes: u32,
     /// Accumulated weight of guardian votes cast toward cancelling the current
     /// trigger. Reaches quorum at `guardian_threshold`, returning the will to

@@ -832,6 +832,10 @@ impl WillContract {
     /// - [`WillError::NotOwner`] if `owner` does not own the will.
     /// - [`WillError::WillNotConfirmed`] if the will is not `PendingConfirmation`.
     /// - [`WillError::ConfirmationWindowExpired`] if the confirmation deadline has passed.
+    /// - [`WillError::TooManyBeneficiaries`], [`WillError::InvalidPercentages`],
+    ///   [`WillError::DuplicateBeneficiary`] or [`WillError::FixedAmountExceedsBalance`]
+    ///   if the stored beneficiary list no longer passes the same validation
+    ///   `create_will` applied (issue #448).
     pub fn confirm_will(env: Env, will_id: u64, owner: Address) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -846,6 +850,17 @@ impl WillContract {
                 panic_with_error!(&env, WillError::ConfirmationWindowExpired);
             }
         }
+
+        // Re-validate the beneficiary list against the will's *current*
+        // balances before activating it (#448). The list was validated at
+        // `create_will` time, but it may have changed during the confirmation
+        // delay. Confirming an invalid list would produce an Active will that
+        // can never be released cleanly.
+        if will.beneficiaries.is_empty() || will.beneficiaries.len() > MAX_BENEFICIARIES {
+            panic_with_error!(&env, WillError::TooManyBeneficiaries);
+        }
+        assert_valid_allocations(&env, &will.beneficiaries, total_balance(&will.balances));
+        assert_valid_percentages(&env, &will.beneficiaries, &will.hashed_beneficiaries);
 
         will.status = WillStatus::Active;
         will.last_checkin = now;
@@ -2415,6 +2430,13 @@ impl WillContract {
         }
 
         storage::set_guardian_voted(&env, will_id, &guardian, now, reason);
+        // Recount from the current guardian list instead of incrementing a
+        // running total (#453), so votes from removed, rejected or expired
+        // guardians can never count toward the threshold.
+        let (votes, vote_weight) =
+            tally_guardian_votes(&env, &will, now, storage::has_guardian_voted);
+        will.guardian_votes = votes;
+        will.guardian_vote_weight = vote_weight;
         // Recount from the vote records that are still live rather than adding
         // to the persisted counters: a record that has already aged past the
         // expiry window no longer counts, so voting again after expiry replaces
@@ -2532,6 +2554,11 @@ impl WillContract {
         }
 
         storage::set_guardian_cancel_voted(&env, will_id, &guardian, now);
+        // Recount from the current guardian list (#453); see `guardian_trigger`.
+        let (votes, vote_weight) =
+            tally_guardian_votes(&env, &will, now, storage::has_guardian_cancel_voted);
+        will.guardian_cancel_votes = votes;
+        will.guardian_cancel_vote_weight = vote_weight;
         // Same recount-from-live-records rule as `guardian_trigger`: an expired
         // cancel vote is replaced, not accumulated, so one guardian cannot reach
         // the cancel threshold alone by voting once per grace period (#372).
@@ -3853,6 +3880,14 @@ impl WillContract {
     /// # Parameters
     /// - `will_id`: the will to add the hashed beneficiary to.
     /// - `owner`: must be the primary owner.
+    /// - `commitment`: 32-byte SHA-256 hash of the pre-image
+    ///   `beneficiary.to_xdr() || salt` (see [`Self::reveal_and_claim`]).
+    /// - `percentage`: share of the will's balance for this beneficiary.
+    ///
+    /// # Panics
+    /// - [`WillError::NotOwner`] / [`WillError::WillNotActive`]
+    /// - [`WillError::InvalidPercentages`] if total percentages would exceed 100.
+    /// - [`WillError::InvalidPreimage`] if `commitment` is not a 32-byte digest.
     /// - `commitment`: SHA-256 hash of the pre-image `address_bytes || salt_bytes`.
     ///   Must be exactly 32 bytes — see the validation rules below.
     /// - `percentage`: share of the will's balance for this beneficiary, in
@@ -3894,6 +3929,11 @@ impl WillContract {
         let mut will = load_owned(&env, will_id, &owner);
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
 
+        // A commitment that is not a SHA-256 digest can never match a hashed
+        // pre-image, so the slot would be unclaimable (#452).
+        if commitment.len() != 32 {
+            panic_with_error!(&env, WillError::InvalidPreimage);
+        }
         // Validate the new slot before mutating the will, so a rejected call
         // leaves no partial state behind (#371).
         assert_valid_hashed_beneficiary(&env, &will.hashed_beneficiaries, &commitment, percentage);
@@ -4595,6 +4635,37 @@ fn assert_valid_guardians(env: &Env, owner: &Address, guardians: &Vec<Address>) 
             }
         }
     }
+}
+
+/// Counts the live votes on `will` and returns `(vote_count, vote_weight)`.
+/// A vote is live only if it was cast by a guardian on the *current* list who
+/// has accepted the role and whose vote has not expired.
+///
+/// `has_voted` selects the namespace: [`storage::has_guardian_voted`] for
+/// release votes or [`storage::has_guardian_cancel_voted`] for cancel votes.
+///
+/// Recomputing the tally on every vote, rather than keeping a running total,
+/// enforces the upper bound from issue #453. A guardian who has been removed,
+/// has rejected the role or whose vote has expired can never count toward the
+/// threshold, and the count can never exceed the number of guardians on the
+/// will.
+fn tally_guardian_votes(
+    env: &Env,
+    will: &Will,
+    now: u64,
+    has_voted: fn(&Env, u64, &Address, u64, u64) -> bool,
+) -> (u32, u32) {
+    let mut votes: u32 = 0;
+    let mut weight: u32 = 0;
+    for g in will.guardians.iter() {
+        if g.consent == GuardianConsent::Accepted
+            && has_voted(env, will.id, &g.address, now, will.grace_period_days)
+        {
+            votes += 1;
+            weight = weight.saturating_add(g.weight);
+        }
+    }
+    (votes, weight)
 }
 
 /// Asserts both periods are at least one day and at most [`MAX_PERIOD_DAYS`].

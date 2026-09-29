@@ -300,6 +300,7 @@ disambiguate.
 | 32 | `TooManyIds` | `get_wills` was called with more ids than `MAX_GET_WILLS_IDS`. |
 | 33 | `InsufficientBalance` | `split_will` was asked to move more of a token than the will currently holds of it. |
 | 34 | `InvalidSplit` | `split_will` was called with an empty beneficiary-to-split list, or a split that would leave the source or new will with an invalid state. |
+| 35 | `InvalidPreimage` | `reveal_and_claim` was called with a pre-image that does not start with the claimant's XDR-encoded address or does not match any stored `HashedBeneficiary` commitment on the will, or `add_hashed_beneficiary` was given a commitment that is not 32 bytes. |
 | 35 | `InvalidPreimage` | `reveal_and_claim` was called with a 64-byte pre-image whose SHA-256 does not match any stored `HashedBeneficiary` commitment on the will. |
 | 36 | `AlreadyClaimed` | `reveal_and_claim` was called for a hashed beneficiary slot that has already been claimed. |
 | 37 | `TooManyWills` | An owner or beneficiary index list is already at `MAX_WILLS_PER_INDEX` and cannot accept another will id. |
