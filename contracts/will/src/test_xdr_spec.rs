@@ -115,7 +115,8 @@ fn write_fixture(new_hex: &str) {
 
     // Ensure there is at least the header block.
     if lines.is_empty() {
-        lines.push("# create_will XDR spec fixture — see test_xdr_spec.rs for update instructions.");
+        lines
+            .push("# create_will XDR spec fixture — see test_xdr_spec.rs for update instructions.");
         lines.push("#");
     }
 

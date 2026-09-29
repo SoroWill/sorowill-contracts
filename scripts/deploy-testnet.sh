@@ -4,7 +4,7 @@
 # Testnet, then record the result in deployments/testnet.json.
 #
 # Prerequisites:
-#   - stellar-cli >= 21.0.0 (`cargo install --locked stellar-cli --features opt`)
+#   - stellar-cli >= 22.0.0 (`cargo install --locked stellar-cli`)
 #   - rustup target wasm32v1-none (`rustup target add wasm32v1-none`)
 #   - A funded testnet identity already configured in stellar-cli, e.g.:
 #       stellar keys generate deployer --network testnet --fund
@@ -38,7 +38,7 @@ OUTPUT_FILE="deployments/testnet.json"
 
 command -v stellar >/dev/null 2>&1 || {
   echo "error: stellar-cli not found on PATH. Install it with:" >&2
-  echo "  cargo install --locked stellar-cli --features opt" >&2
+  echo "  cargo install --locked stellar-cli" >&2
   exit 1
 }
 

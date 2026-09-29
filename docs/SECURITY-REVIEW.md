@@ -1,9 +1,17 @@
 # Security Review Report — SoroWill Contract
 
 **Date:** 2026-07-27
+**Contract version:** 1.0.0 (`CONTRACT_VERSION = 1_000_000`, git ref: `main` as of 2026-07-27)
 **Scope:** `contracts/will/src/` — full contract source
 **Reviewer:** Automated review pass
 **Methodology:** Manual code review covering reentrancy, authorization bypass, integer overflow/underflow, and general Soroban security best practices.
+
+> **Staleness note:** This review was performed against contract version **1.0.0**. After any
+> change that alters observable contract behaviour (new entry points, changed authorization
+> paths, modified payout logic, or bumped `CONTRACT_VERSION`), a follow-up review should be
+> scheduled. To request a re-review, open an issue tagged `security-review` describing the
+> changes since this document's last update date, or contact the maintainers via
+> [`SECURITY.md`](../SECURITY.md).
 
 ---
 

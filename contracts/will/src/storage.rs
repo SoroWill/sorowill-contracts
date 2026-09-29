@@ -7,11 +7,13 @@
 //! `(will_id, guardian)` pair with a timestamp so they can expire over time,
 //! and cleared independently when a guardian-release cycle resets.
 
-use soroban_sdk::{contracttype, panic_with_error, Address, Env, Vec};
+use soroban_sdk::{contracttype, panic_with_error, Address, Env, Val, Vec};
 
 use crate::errors::WillError;
+use crate::migration;
 use crate::types::{
-    GuardianVoteReason, ProtocolStats, TokenLockedBalance, Will, WillStatus, WillStatusTransition,
+    Beneficiary, GuardianVoteReason, ProtocolStats, TokenLockedBalance, Will, WillStatus,
+    WillStatusTransition,
 };
 
 /// Number of ledgers in one calendar day, assuming a **5-second average ledger
@@ -64,6 +66,20 @@ const BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
 /// Seconds in a day, used to convert day-denominated expiry windows.
 const SECONDS_PER_DAY: u64 = 86_400;
 
+/// Current on-chain schema version stamped into every `Will`.
+///
+/// This is the **single source of truth** for the schema version. It lives
+/// here, next to the `DataKey` enum and the save/load helpers that write
+/// `Will::schema_version`, and is re-exported at the crate root as
+/// `crate::CURRENT_SCHEMA_VERSION` so entry points and tests have one
+/// import path.
+///
+/// Bump this constant only together with an actual v(n) -> v(n + 1)
+/// transformation in `WillContract::migrate_will`; a bump on its own would
+/// make `migrate_will` no-op on every will and the version stamp would stop
+/// meaning anything (#367).
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
 #[contracttype]
 #[derive(Clone)]
 pub(crate) enum DataKey {
@@ -94,7 +110,7 @@ pub(crate) enum DataKey {
 /// The data stored for each guardian vote: the Unix timestamp when the vote
 /// was cast and the reason code the guardian provided.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GuardianVoteRecord {
     pub timestamp: u64,
     pub reason: GuardianVoteReason,
@@ -157,24 +173,32 @@ pub fn decrement_active_will_count(env: &Env) {
     save_protocol_stats(env, &stats);
 }
 
-/// Adds or subtracts a token amount from the protocol's locked-balance totals.
+/// Adds or subtracts a token amount from the protocol's locked-balance
+/// totals.
+///
+/// An entry whose `total_locked` returns to exactly zero is dropped rather
+/// than kept as a permanent zero-balance row -- otherwise
+/// `total_locked_by_token` grows by one entry per distinct token ever used,
+/// forever, even for tokens with no current usage (#264).
 pub fn adjust_locked_value(env: &Env, token: &Address, delta: i128) {
     let mut stats = get_protocol_stats(env);
     let mut found = false;
     let mut updated = Vec::new(env);
     for entry in stats.total_locked_by_token.iter() {
         if entry.token == *token {
-            let next_total = entry.total_locked + delta;
-            updated.push_back(TokenLockedBalance {
-                token: entry.token.clone(),
-                total_locked: next_total,
-            });
             found = true;
+            let next_total = entry.total_locked + delta;
+            if next_total != 0 {
+                updated.push_back(TokenLockedBalance {
+                    token: entry.token.clone(),
+                    total_locked: next_total,
+                });
+            }
         } else {
             updated.push_back(entry.clone());
         }
     }
-    if !found {
+    if !found && delta != 0 {
         updated.push_back(TokenLockedBalance {
             token: token.clone(),
             total_locked: delta,
@@ -182,6 +206,88 @@ pub fn adjust_locked_value(env: &Env, token: &Address, delta: i128) {
     }
     stats.total_locked_by_token = updated;
     save_protocol_stats(env, &stats);
+}
+
+/// Applies `sign * amount` to the protocol's locked totals for every entry in
+/// a will's `balances` map. Use `1` when balances enter the contract and `-1`
+/// when they leave it (release, cancellation), so multi-token wills keep the
+/// per-token totals in sync with [`recompute_protocol_stats`].
+pub fn adjust_locked_for_balances(env: &Env, balances: &Map<Address, i128>, sign: i128) {
+    for (token, amount) in balances.iter() {
+        if amount != 0 {
+            adjust_locked_value(env, &token, sign * amount);
+        }
+    }
+}
+
+/// Returns `true` when a will in `status` still counts towards
+/// `ProtocolStats::active_will_count` and `total_locked_by_token`.
+pub fn is_live_status(status: WillStatus) -> bool {
+    matches!(
+        status,
+        WillStatus::PendingConfirmation | WillStatus::Active | WillStatus::Triggered
+    )
+}
+
+/// Recomputes protocol statistics from scratch by walking every will id ever
+/// allocated (`1..=NextWillId`) and summing live wills.
+///
+/// Archived wills live under `DataKey::ArchivedWill` and are terminal, so
+/// they are skipped along with any id whose entry no longer exists. Each id
+/// costs one persistent read, so this is only intended for audits/repairs and
+/// will exceed the per-transaction budget once the protocol holds enough
+/// wills; callers should fall back to off-chain reconciliation at that point.
+pub fn recompute_protocol_stats(env: &Env) -> ProtocolStats {
+    let last_id: u64 = env
+        .storage()
+        .instance()
+        .get(&DataKey::NextWillId)
+        .unwrap_or(0);
+
+    let mut active_will_count: u64 = 0;
+    let mut totals: Map<Address, i128> = Map::new(env);
+    let mut id = 1u64;
+    while id <= last_id {
+        if let Some(will) = env
+            .storage()
+            .persistent()
+            .get::<_, Will>(&DataKey::Will(id))
+        {
+            if is_live_status(will.status) {
+                active_will_count += 1;
+                for (token, amount) in will.balances.iter() {
+                    let prev = totals.get(token.clone()).unwrap_or(0);
+                    totals.set(token, prev + amount);
+                }
+            }
+        }
+        id += 1;
+    }
+
+    // Preserve the token order of the stored stats so the result can be
+    // compared field-for-field; tokens that are no longer locked anywhere are
+    // reported with a zero total rather than dropped.
+    let stored = get_protocol_stats(env);
+    let mut total_locked_by_token = Vec::new(env);
+    for entry in stored.total_locked_by_token.iter() {
+        let total = totals.get(entry.token.clone()).unwrap_or(0);
+        totals.remove(entry.token.clone());
+        total_locked_by_token.push_back(TokenLockedBalance {
+            token: entry.token,
+            total_locked: total,
+        });
+    }
+    for (token, total) in totals.iter() {
+        total_locked_by_token.push_back(TokenLockedBalance {
+            token,
+            total_locked: total,
+        });
+    }
+
+    ProtocolStats {
+        active_will_count,
+        total_locked_by_token,
+    }
 }
 
 /// Persists a will's state and refreshes its storage TTL.
@@ -197,6 +303,26 @@ pub fn adjust_locked_value(env: &Env, token: &Address, delta: i128) {
 /// it just stops being renewed.
 pub fn save_will(env: &Env, will: &Will) {
     let key = DataKey::Will(will.id);
+    if let Some(previous) = env.storage().persistent().get::<_, Will>(&key) {
+        for guardian in previous.guardians.iter() {
+            let address = guardian.address.clone();
+            let mut still_guardian = false;
+            for current in will.guardians.iter() {
+                if current.address == address {
+                    still_guardian = true;
+                    break;
+                }
+            }
+            if !still_guardian {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::GuardianVote(will.id, address.clone()));
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::GuardianCancelVote(will.id, address));
+            }
+        }
+    }
     env.storage().persistent().set(&key, will);
     if !matches!(will.status, WillStatus::Released | WillStatus::Cancelled) {
         env.storage()
@@ -235,12 +361,21 @@ pub fn save_will(env: &Env, will: &Will) {
 /// not implementable with the current SDK version, so this documentation is
 /// the contract's contract with its consumers until the storage API grows an
 /// archived-entry probe.
+///
+/// # Schema versioning (issue #446)
+///
+/// The entry is read as a raw `Val` and decoded through
+/// [`migration::decode_will`], so wills written with an older `Will` layout
+/// still load after a field is added. A will that matches no known layout
+/// yields [`WillError::UnsupportedSchemaVersion`].
 pub fn load_will(env: &Env, will_id: u64) -> Result<Will, WillError> {
     let key = DataKey::Will(will_id);
-    env.storage()
+    let raw: Val = env
+        .storage()
         .persistent()
         .get(&key)
-        .ok_or(WillError::WillNotFound)
+        .ok_or(WillError::WillNotFound)?;
+    migration::decode_will(env, &raw)
 }
 
 /// Adds `will_id` to the index list stored at `key`, if not already present.
@@ -270,6 +405,35 @@ fn index_push(env: &Env, key: DataKey, will_id: u64) {
         env.storage()
             .persistent()
             .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+    }
+}
+
+/// Checks, without writing anything, that indexing a brand-new will for
+/// `owner` and each of `beneficiaries` would not exceed
+/// [`MAX_WILLS_PER_INDEX`] for any of them.
+///
+/// A newly allocated will id can never already be present in an existing
+/// index, so this only needs to check each index's current length against
+/// the cap -- unlike [`index_push`], it never needs the will id itself.
+///
+/// Called by `create_will` before any token transfer, so a call that was
+/// always going to fail this cap does so on the cheap in-contract check
+/// rather than after the transfer already succeeded (#260).
+pub fn assert_index_capacity(env: &Env, owner: &Address, beneficiaries: &Vec<Beneficiary>) {
+    assert_single_index_capacity(env, &DataKey::OwnerWills(owner.clone()));
+    for beneficiary in beneficiaries.iter() {
+        assert_single_index_capacity(env, &DataKey::BeneficiaryWills(beneficiary.address.clone()));
+    }
+}
+
+fn assert_single_index_capacity(env: &Env, key: &DataKey) {
+    let ids: Vec<u64> = env
+        .storage()
+        .persistent()
+        .get(key)
+        .unwrap_or_else(|| Vec::new(env));
+    if ids.len() >= MAX_WILLS_PER_INDEX {
+        panic_with_error!(env, WillError::TooManyWills);
     }
 }
 
@@ -363,6 +527,35 @@ pub fn get_beneficiary_wills(env: &Env, beneficiary: &Address) -> Vec<u64> {
 }
 
 /// Adds `will_id` to the global index of Triggered wills, if not already present.
+///
+/// ## Why this index is bounded
+///
+/// Unlike the per-address `OwnerWills` / `BeneficiaryWills` indexes, this one
+/// is shared by the whole protocol, so a hard [`MAX_WILLS_PER_INDEX`] cap
+/// would be actively harmful here: any single address triggering a will could
+/// push the *global* index to the cap and make `trigger_will` fail for
+/// everyone (#368). The size is instead kept down by construction:
+///
+/// 1. **Entries only exist while a will is `Triggered`.** Every path that
+///    moves a will out of `Triggered` — `emergency_checkin`,
+///    `guardian_cancel_trigger`, `release_inheritance`, `guardian_trigger`,
+///    `cancel_will`, and `archive_will` — calls [`unindex_triggered_will`]
+///    first, so the index tracks the live trigger set rather than a
+///    cumulative history.
+/// 2. **Wills are removed from it on every other terminal transition too**
+///    (see `storage::archive_will`), so a will that is settled and archived
+///    leaves nothing behind.
+/// 3. **A will is indexed at most once per trigger cycle**, and a cycle ends
+///    with the will leaving `Triggered`, so the index cannot accumulate
+///    duplicates or repeats.
+///
+/// In the steady state the index therefore holds one id per will that is
+/// concurrently inside its grace period, which is bounded by how many wills
+/// are live at once rather than by total history.
+///
+/// Reads are still bounded per call: [`get_triggered_wills_page`] pages the
+/// vector with [`paginate_ids`] so a keeper bot never has to deserialise the
+/// whole index. That is why no cap is applied on the write path.
 pub fn index_triggered_will(env: &Env, will_id: u64) {
     let key = DataKey::TriggeredWills;
     let mut ids: Vec<u64> = env
@@ -385,6 +578,13 @@ pub fn index_triggered_will(env: &Env, will_id: u64) {
 /// `emergency_checkin` or `release_inheritance`). Returns without writing
 /// when the id is not in the list, so the common case costs a read instead
 /// of a read plus a rewrite.
+///
+/// Refreshes the TTL after a successful write, matching
+/// [`index_triggered_will`] and the other removal helpers (`#69`). Without
+/// it, a period in which *only* Triggered wills leave the index never renews
+/// the `TriggeredWills` entry, so an index that is exclusively pruned — the
+/// steady state of a long-running protocol — would slowly walk its TTL down
+/// to zero and take the remaining still-Triggered ids with it.
 pub fn unindex_triggered_will(env: &Env, will_id: u64) {
     let key = DataKey::TriggeredWills;
     let Some(mut ids) = env.storage().persistent().get::<_, Vec<u64>>(&key) else {
@@ -395,9 +595,15 @@ pub fn unindex_triggered_will(env: &Env, will_id: u64) {
     };
     ids.remove_unchecked(index);
     env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
 }
 
 /// Returns the full list of will ids currently in `Triggered` status.
+///
+/// Internal-only helper: it deserialises the entire index. The public
+/// entry point is [`get_triggered_wills_page`], which bounds the read.
 pub fn get_triggered_wills(env: &Env) -> Vec<u64> {
     let key = DataKey::TriggeredWills;
     env.storage()
@@ -406,16 +612,62 @@ pub fn get_triggered_wills(env: &Env) -> Vec<u64> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
+/// Returns one page of the `Triggered` index, for `get_triggered_wills`.
+///
+/// Delegates to [`paginate_ids`], so `cursor` is an exclusive will id (pass
+/// `None` or `0` for the first page) and `limit` is capped at
+/// [`MAX_PAGE_SIZE`]. Callers page until a returned page is shorter than the
+/// limit, or empty, to know they have seen the whole index.
+///
+/// This relies on the same **ORDERING INVARIANT** as every other paginated
+/// index: the vector must stay monotonically ascending, and
+/// [`unindex_triggered_will`] must keep using order-preserving removal (it
+/// does — `remove_unchecked`, not swap-with-last), so removing a triggered id
+/// in the middle never causes a later id to be skipped or repeated across
+/// pages. Ids are appended in allocation order and never rewritten, so the
+/// vector is ascending by construction.
+pub fn get_triggered_wills_page(env: &Env, cursor: Option<u64>, limit: u32) -> Vec<u64> {
+    let ids = get_triggered_wills(env);
+    paginate_ids(env, &ids, cursor, limit)
+}
+
 /// Returns the full vote record for `guardian` in the current trigger cycle
 /// for `will_id`, or `None` if they have not voted.
-pub fn get_guardian_vote(env: &Env, will_id: u64, guardian: &Address) -> Option<GuardianVoteRecord> {
+pub fn get_guardian_vote(
+    env: &Env,
+    will_id: u64,
+    guardian: &Address,
+) -> Option<GuardianVoteRecord> {
     let key = DataKey::GuardianVote(will_id, guardian.clone());
     env.storage().persistent().get(&key)
 }
 
+/// Returns whether a vote recorded at `vote_timestamp` is still inside its
+/// `expiry_days` window at `now`, i.e. whether it has not expired yet.
+///
+/// This is the single expiry rule shared by every guardian-vote reader:
+/// [`has_guardian_voted`], [`has_guardian_cancel_voted`] and
+/// `WillContract::get_guardian_vote_status`. Keeping one implementation means
+/// a fix (or a mistake) in the expiry arithmetic can no longer land in one
+/// call site and miss another (#359).
+///
+/// The elapsed-time subtraction is **saturating**. If `now` is earlier than
+/// the recorded timestamp — clock skew, a rewound test ledger, or repaired /
+/// corrupted state — the elapsed time is treated as zero and the record is
+/// live, rather than underflowing and panicking the transaction.
+pub fn vote_is_live(now: u64, vote_timestamp: u64, expiry_days: u64) -> bool {
+    now.saturating_sub(vote_timestamp) <= expiry_days.saturating_mul(SECONDS_PER_DAY)
+}
+
 /// Returns whether `guardian` has a non-expired vote in the current trigger
 /// cycle for `will_id`. A vote is considered expired if `now - vote_timestamp`
-/// exceeds `expiry_days * SECONDS_PER_DAY`.
+/// exceeds `expiry_days * SECONDS_PER_DAY` (see [`vote_is_live`]).
+///
+/// A record timestamped *after* `now` is reported as **not voted** here, even
+/// though [`vote_is_live`] treats such a record as live: these helpers feed
+/// the quorum counters, and a quorum must never be reachable from a vote that
+/// has not been cast yet. The read-only `get_guardian_vote_status` query
+/// reports the stored record instead (#359).
 pub fn has_guardian_voted(
     env: &Env,
     will_id: u64,
@@ -424,8 +676,7 @@ pub fn has_guardian_voted(
     expiry_days: u64,
 ) -> bool {
     if let Some(record) = get_guardian_vote(env, will_id, guardian) {
-        let expiry_secs = expiry_days * SECONDS_PER_DAY;
-        now - record.timestamp <= expiry_secs
+        now >= record.timestamp && vote_is_live(now, record.timestamp, expiry_days)
     } else {
         false
     }
@@ -483,6 +734,21 @@ pub fn tally_guardian_cancel_votes(
         }
     }
     (weight, count)
+/// Removes the trigger vote recorded for `guardian` against `will_id`, if any.
+///
+/// Used by `reject_guardian_role` so a guardian who withdraws consent after
+/// voting stops contributing weight to the current cycle (#374).
+pub fn clear_guardian_vote(env: &Env, will_id: u64, guardian: &Address) {
+    let key = DataKey::GuardianVote(will_id, guardian.clone());
+    env.storage().persistent().remove(&key);
+}
+
+/// Removes the cancel-trigger vote recorded for `guardian`, if any.
+///
+/// Counterpart to [`clear_guardian_vote`] for the cancel cycle (#374).
+pub fn clear_guardian_cancel_vote(env: &Env, will_id: u64, guardian: &Address) {
+    let key = DataKey::GuardianCancelVote(will_id, guardian.clone());
+    env.storage().persistent().remove(&key);
 }
 
 /// Clears all guardian votes cast against `will`, starting a fresh voting cycle.
@@ -508,6 +774,10 @@ pub fn reset_guardian_votes(env: &Env, will: &Will) {
 
 /// Returns whether `guardian` has a non-expired cancel vote in the current
 /// cycle for `will_id`.
+///
+/// Expiry is decided by [`vote_is_live`], the same rule `has_guardian_voted`
+/// uses, and a record timestamped after `now` is likewise reported as not
+/// voted so it cannot contribute weight to a cancel quorum (#359).
 pub fn has_guardian_cancel_voted(
     env: &Env,
     will_id: u64,
@@ -516,21 +786,19 @@ pub fn has_guardian_cancel_voted(
     expiry_days: u64,
 ) -> bool {
     let key = DataKey::GuardianCancelVote(will_id, guardian.clone());
-    if let Some(record) = env.storage().persistent().get::<_, GuardianVoteRecord>(&key) {
-        let expiry_secs = expiry_days * SECONDS_PER_DAY;
-        now - record.timestamp <= expiry_secs
+    if let Some(record) = env
+        .storage()
+        .persistent()
+        .get::<_, GuardianVoteRecord>(&key)
+    {
+        now >= record.timestamp && vote_is_live(now, record.timestamp, expiry_days)
     } else {
         false
     }
 }
 
 /// Records that `guardian` has cast a cancel-trigger vote for `will_id`.
-pub fn set_guardian_cancel_voted(
-    env: &Env,
-    will_id: u64,
-    guardian: &Address,
-    timestamp: u64,
-) {
+pub fn set_guardian_cancel_voted(env: &Env, will_id: u64, guardian: &Address, timestamp: u64) {
     let key = DataKey::GuardianCancelVote(will_id, guardian.clone());
     let record = GuardianVoteRecord {
         timestamp,
@@ -540,6 +808,82 @@ pub fn set_guardian_cancel_voted(
     env.storage()
         .persistent()
         .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+}
+
+/// Recomputes the release-vote tallies for `will` from the vote records that
+/// are still live at `now`, deleting the expired ones on the way through.
+///
+/// [`has_guardian_voted`] treats a record older than `expiry_days` as absent,
+/// but it leaves the record (and the will's persisted
+/// `guardian_vote_weight` / `guardian_votes` counters) untouched. A guardian
+/// could therefore vote once per expiry window and have every one of those
+/// votes added on top of the previous one, reaching `guardian_threshold` alone
+/// (#372). Recomputing from the live records keeps the counters and the
+/// expiry rule in agreement: an expired vote contributes nothing.
+///
+/// Only the current guardian list is inspected — at most [`crate::MAX_GUARDIANS`]
+/// keys, the same bound [`reset_guardian_votes`] walks — so this is cheap
+/// enough to run on every vote.
+///
+/// Returns the live `(weight, votes)` tallies.
+pub fn recount_guardian_votes(env: &Env, will: &Will, now: u64, expiry_days: u64) -> (u32, u32) {
+    let mut weight: u32 = 0;
+    let mut votes: u32 = 0;
+    for guardian in will.guardians.iter() {
+        let key = DataKey::GuardianVote(will.id, guardian.address.clone());
+        if env
+            .storage()
+            .persistent()
+            .get::<_, GuardianVoteRecord>(&key)
+            .is_none()
+        {
+            continue;
+        }
+        if has_guardian_voted(env, will.id, &guardian.address, now, expiry_days) {
+            weight = weight.saturating_add(guardian.weight);
+            votes = votes.saturating_add(1);
+        } else {
+            // Expired: drop the row so it cannot be recounted on a later pass.
+            env.storage().persistent().remove(&key);
+        }
+    }
+    (weight, votes)
+}
+
+/// Recomputes the cancel-vote tallies for `will` from the cancel-vote records
+/// that are still live at `now`, deleting the expired ones on the way through.
+///
+/// The cancel-vote counterpart of [`recount_guardian_votes`], with the same
+/// rationale: a cancel quorum must not be reachable by one guardian voting
+/// repeatedly across successive expiry windows (#372).
+///
+/// Returns the live `(weight, votes)` tallies.
+pub fn recount_guardian_cancel_votes(
+    env: &Env,
+    will: &Will,
+    now: u64,
+    expiry_days: u64,
+) -> (u32, u32) {
+    let mut weight: u32 = 0;
+    let mut votes: u32 = 0;
+    for guardian in will.guardians.iter() {
+        let key = DataKey::GuardianCancelVote(will.id, guardian.address.clone());
+        if env
+            .storage()
+            .persistent()
+            .get::<_, GuardianVoteRecord>(&key)
+            .is_none()
+        {
+            continue;
+        }
+        if has_guardian_cancel_voted(env, will.id, &guardian.address, now, expiry_days) {
+            weight = weight.saturating_add(guardian.weight);
+            votes = votes.saturating_add(1);
+        } else {
+            env.storage().persistent().remove(&key);
+        }
+    }
+    (weight, votes)
 }
 
 /// Clears all guardian cancel-trigger votes for `will`, starting a fresh cycle.
@@ -611,13 +955,45 @@ pub fn paginate_ids(env: &Env, ids: &Vec<u64>, cursor: Option<u64>, limit: u32) 
 pub const MAX_WILLS_PER_INDEX: u32 = 1_000;
 
 /// Lowered cap used in unit tests so the limit can be exercised without
-/// creating thousands of wills.
+/// creating thousands of wills. Must stay >= `BATCH_MAX` (10) so a batch
+/// filling a single owner's index to the batch-size limit in one call
+/// doesn't spuriously trip this cap first.
 #[cfg(test)]
-pub const MAX_WILLS_PER_INDEX: u32 = 5;
+pub const MAX_WILLS_PER_INDEX: u32 = 10;
+
+/// Maximum number of status transitions retained per will in its
+/// `WillHistory` entry.
+///
+/// Every recorded transition is appended to a single persistent vector, so a
+/// will that cycles Active → Triggered → Active through repeated emergency
+/// check-ins would otherwise grow that entry without bound: the write path
+/// eventually risks the per-entry ledger size limit, and the read path
+/// (`get_will_history`) deserialises and returns the whole trail in one call
+/// with no way for a caller to page through it (#392).
+///
+/// A cap is preferred over a paged storage layout here because a will's
+/// lifecycle is bounded in practice — the transitions are `create`, the
+/// `check_in` / `emergency_checkin` / `trigger` / `release` / `cancel` family,
+/// and a handful of guardian and settings updates — while the number of
+/// *repeats* is what grows. Keeping the newest [`MAX_HISTORY_ENTRIES`]
+/// transitions preserves every entry a reader actually needs (the current
+/// state and how it got there) and bounds the entry at a few kilobytes,
+/// comfortably inside Soroban's max entry size.
+///
+/// When the cap is reached the **oldest** entry is dropped, so the retained
+/// trail is always the most recent [`MAX_HISTORY_ENTRIES`] transitions. This is
+/// a deliberate trade of audit completeness for bounded storage: consumers who
+/// need the full history should follow the off-chain event log, which is
+/// append-only and never trimmed.
+pub const MAX_HISTORY_ENTRIES: u32 = 50;
 
 /// Maximum number of wills returned per page.
 pub const MAX_PAGE_SIZE: u32 = 50;
+
 /// Appends a status transition entry to `will_id`'s on-chain audit trail.
+///
+/// Trims the oldest entries once the trail reaches [`MAX_HISTORY_ENTRIES`] so
+/// the persistent entry stays bounded (see that constant for the rationale).
 pub fn append_history(env: &Env, will_id: u64, transition: &WillStatusTransition) {
     let key = DataKey::WillHistory(will_id);
     let mut history: Vec<WillStatusTransition> = env
@@ -626,13 +1002,23 @@ pub fn append_history(env: &Env, will_id: u64, transition: &WillStatusTransition
         .get(&key)
         .unwrap_or_else(|| Vec::new(env));
     history.push_back(transition.clone());
+    // Drop from the front until the trail fits the cap. A `while` loop rather
+    // than a single indexed removal keeps this correct if a future change
+    // appends more than one entry per call.
+    while history.len() > MAX_HISTORY_ENTRIES {
+        history.remove(0);
+    }
     env.storage().persistent().set(&key, &history);
     env.storage()
         .persistent()
         .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
 }
 
-/// Returns the full audit trail for `will_id`.
+/// Returns the retained audit trail for `will_id`.
+///
+/// The trail holds at most [`MAX_HISTORY_ENTRIES`] transitions — the most
+/// recent ones. Callers that want a bounded slice can page through it with
+/// [`paginate_history`] instead of taking the whole vector.
 pub fn get_history(env: &Env, will_id: u64) -> Vec<WillStatusTransition> {
     let key = DataKey::WillHistory(will_id);
     env.storage()
@@ -641,9 +1027,74 @@ pub fn get_history(env: &Env, will_id: u64) -> Vec<WillStatusTransition> {
         .unwrap_or_else(|| Vec::new(env))
 }
 
+/// Returns a bounded page of `will_id`'s audit trail, oldest-first.
+///
+/// `cursor` is an optional zero-based index into the trail; results start at
+/// that offset. `limit` is capped at [`MAX_PAGE_SIZE`], matching the other
+/// paginated reads in this contract.
+///
+/// The cursor is positional rather than keyed like [`paginate_ids`]'s will-id
+/// cursor because history entries carry no sortable key of their own — the
+/// only ordering they have is their position in the trail, and the trail is
+/// append-then-trim-from-the-front. A caller paging from the start therefore
+/// holds a stable view for the duration of the walk as long as no transition
+/// is appended past it; once the cap trims the front, earlier offsets shift and
+/// the walk should restart. That is acceptable because the tail is what
+/// matters and `cursor: None` always returns the newest-and-oldest-remaining
+/// page from the start of the retained window.
+pub fn paginate_history(
+    env: &Env,
+    will_id: u64,
+    cursor: Option<u32>,
+    limit: u32,
+) -> Vec<WillStatusTransition> {
+    let history = get_history(env, will_id);
+    let page_size = limit.min(MAX_PAGE_SIZE);
+    let start = cursor.unwrap_or(0);
+    let mut result = Vec::new(env);
+    let mut index = 0u32;
+    for entry in history.iter() {
+        if index >= start && result.len() < page_size {
+            result.push_back(entry);
+        }
+        index += 1;
+        if index >= start.saturating_add(page_size) {
+            break;
+        }
+    }
+    result
+}
+
 /// Archives a will by moving it to the archived storage and removing it from
 /// active storage and indexes. The archived will's TTL is not extended, so it
 /// will eventually be garbage-collected by Soroban's state archival system.
+///
+/// # History and guardian votes do not survive archival
+///
+/// Archival drops the will's `WillHistory` entry and every `GuardianVote` /
+/// `GuardianCancelVote` entry belonging to its guardians, rather than leaving
+/// them to outlive the will (#393). This is a deliberate decision, not an
+/// oversight:
+///
+/// - **The entries would be unreachable anyway.** `load_will` only ever reads
+///   the `Will` key, so a retained `WillHistory` entry describes a will no
+///   query can resolve — `get_will_history` is the sole reader, and the
+///   archived will it describes is not loadable. Keeping it costs rent for an
+///   orphan.
+/// - **They keep occupying ledger state until they expire.** A history entry
+///   and up to `MAX_GUARDIANS` vote entries per cycle survive for the ~60 days
+///   their last TTL bump bought them. An attacker cannot profit from that, but
+///   a permissionless caller triggering archival on many settled wills would
+///   strand the entries of all of them at once.
+/// - **The off-chain record is the durable one.** Every state-mutating entry
+///   point publishes an event, and the archived `Will` itself retains the final
+///   status, balances, and parties until Soroban's state archival collects it.
+///   On-chain history is a convenience for the live lifecycle, not the
+///   permanent audit record.
+///
+/// Consumers that read history after archival — the `archive_will` docs point
+/// at the audit trail as a post-release recovery path — must use the off-chain
+/// event log instead. That guidance is updated there to match.
 pub fn archive_will(env: &Env, will: &Will) {
     // Move will to archived storage (no TTL extension)
     let archival_key = DataKey::ArchivedWill(will.id);
@@ -653,21 +1104,44 @@ pub fn archive_will(env: &Env, will: &Will) {
     let active_key = DataKey::Will(will.id);
     env.storage().persistent().remove(&active_key);
 
-    // Remove from owner index
-    let owner_key = DataKey::OwnerWills(will.owner.clone());
-    if let Some(ids) = env.storage().persistent().get::<_, Vec<u64>>(&owner_key) {
-        let mut updated: Vec<u64> = Vec::new(env);
-        for id in ids.iter() {
-            if id != will.id {
-                updated.push_back(id);
-            }
-        }
-        env.storage().persistent().set(&owner_key, &updated);
+    // Remove from owner index, reusing the shared helper so the TTL is bumped
+    // consistently with every other removal path (fixes #332).
+    remove_owner_index(env, &will.owner, will.id);
+
+    // If the will was in Triggered status, remove it from the global
+    // TriggeredWills index so keepers/indexers never see a dangling id
+    // pointing at an entry that no longer resolves via load_will (fixes #331).
+    if matches!(will.status, WillStatus::Triggered) {
+        unindex_triggered_will(env, will.id);
     }
 
     // Remove from beneficiary indexes
     for beneficiary in will.beneficiaries.iter() {
         remove_beneficiary_index(env, &beneficiary.address, will.id);
     }
-}
 
+    // Drop the per-will auxiliary entries, which `save_will` and
+    // `reset_guardian_votes` only clean up while the will is still live. Left
+    // behind, they would point at a will that `load_will` can no longer
+    // resolve while occupying ledger state for the rest of their TTL (#393).
+    //
+    // Every guardian on the will is swept, not just the ones the will's vote
+    // counters say voted: `reset_guardian_votes` skips the removals entirely
+    // when the count is zero, and a will that reached a terminal state through
+    // `distribute` or `merge_wills` has had its counters zeroed while vote
+    // entries from the cycle that triggered it may still be present. Up to
+    // `MAX_GUARDIANS` x 2 removals, and `remove` on an absent key is a no-op.
+    for guardian in will.guardians.iter() {
+        let address = guardian.address;
+        env.storage()
+            .persistent()
+            .remove(&DataKey::GuardianVote(will.id, address.clone()));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::GuardianCancelVote(will.id, address));
+    }
+
+    env.storage()
+        .persistent()
+        .remove(&DataKey::WillHistory(will.id));
+}

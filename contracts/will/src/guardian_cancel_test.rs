@@ -5,7 +5,8 @@
 //! Covers the happy path (a guardian quorum returning a `Triggered` will to
 //! `Active`), the independent-namespace guarantee between release votes and
 //! cancel votes, and the `GuardianCooldownActive` / `NotGuardian` /
-//! `AlreadyVoted` rejection paths.
+//! `AlreadyVoted` rejection paths, and the grace-deadline rule from #373: a
+//! cancel is only meaningful while the grace period is still open.
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -22,7 +23,8 @@ const DAY: u64 = 86_400;
 
 /// Registers the contract and creates a funded will with two guardians and a
 /// threshold of 2. Returns the env, the contract address, both guardians and
-/// the new will id.
+/// the new will id. Both guardians have their role accepted so they can vote
+/// immediately once the cooldown elapses.
 fn setup(checkin_period_days: u64) -> (Env, Address, Address, Address, u64) {
     let env = Env::default();
     env.mock_all_auths();
@@ -58,6 +60,10 @@ fn setup(checkin_period_days: u64) -> (Env, Address, Address, Address, u64) {
         &None,
         &0,
     );
+
+    // Both guardians must accept their role before they can vote.
+    client.accept_guardian_role(&will_id, &guardian_a);
+    client.accept_guardian_role(&will_id, &guardian_b);
 
     (env, contract_id, guardian_a, guardian_b, will_id)
 }
@@ -95,7 +101,7 @@ fn cancel_quorum_returns_triggered_will_to_active() {
     assert_eq!(after_quorum.guardian_cancel_votes, 0);
     assert_eq!(after_quorum.guardian_cancel_vote_weight, 0);
     assert_eq!(
-        client.get_triggered_wills(),
+        client.get_triggered_wills(&None, &50),
         Vec::<u64>::new(&env),
         "a cancelled trigger must be removed from the triggered index"
     );
@@ -138,6 +144,58 @@ fn cancel_is_rejected_during_the_guardian_list_cooldown() {
     );
 }
 
+/// Issue #373: a cancel quorum reached *after* the grace deadline must be
+/// rejected. `emergency_checkin` already refuses to run once the grace period
+/// is over, but `guardian_cancel_trigger` used to check only the will's status
+/// and the quorum, letting guardians rewind an expired trigger (whose funds were
+/// already releasable) back to `Active` and repeat the trick every cycle.
+#[test]
+fn cancel_is_rejected_after_the_grace_deadline() {
+    // Grace period is 7 days (see `setup`), and the cooldown has long elapsed
+    // by the time the will is triggered 91 days after creation.
+    let (env, contract_id, guardian_a, guardian_b, will_id) = setup_triggered(90);
+    let client = WillContractClient::new(&env, &contract_id);
+
+    // One second past the deadline: the release is now possible, so the
+    // trigger must be final.
+    env.ledger().with_mut(|l| l.timestamp += 7 * DAY + 1);
+
+    assert_eq!(
+        client.try_guardian_cancel_trigger(&will_id, &guardian_a),
+        Err(Ok(WillError::GracePeriodExpired.into())),
+    );
+    assert_eq!(
+        client.try_guardian_cancel_trigger(&will_id, &guardian_b),
+        Err(Ok(WillError::GracePeriodExpired.into())),
+        "a full quorum must not be able to cancel past the deadline either"
+    );
+
+    // Neither the will nor its vote counters were touched by the rejected votes.
+    let will = client.get_will(&will_id);
+    assert_eq!(will.status, WillStatus::Triggered);
+    assert_eq!(will.guardian_cancel_votes, 0);
+    assert_eq!(will.guardian_cancel_vote_weight, 0);
+
+    // And the funds are in fact releasable -- the whole point of the fix.
+    client.release_inheritance(&will_id, &None);
+    assert_eq!(client.get_will(&will_id).status, WillStatus::Released);
+}
+
+/// Issue #373: the boundary itself is still inside the grace period. This
+/// mirrors `emergency_checkin`, which rejects only when `now >` the deadline.
+#[test]
+fn cancel_is_still_allowed_exactly_at_the_grace_deadline() {
+    let (env, contract_id, guardian_a, guardian_b, will_id) = setup_triggered(90);
+    let client = WillContractClient::new(&env, &contract_id);
+
+    env.ledger().with_mut(|l| l.timestamp += 7 * DAY);
+
+    client.guardian_cancel_trigger(&will_id, &guardian_a);
+    client.guardian_cancel_trigger(&will_id, &guardian_b);
+
+    assert_eq!(client.get_will(&will_id).status, WillStatus::Active);
+}
+
 #[test]
 fn cancel_is_rejected_for_a_non_guardian() {
     let (env, contract_id, _guardian_a, _guardian_b, will_id) = setup_triggered(90);
@@ -161,4 +219,60 @@ fn cancel_is_rejected_when_the_same_guardian_votes_twice() {
         client.try_guardian_cancel_trigger(&will_id, &guardian_a),
         Err(Ok(WillError::AlreadyVoted.into()))
     );
+}
+
+#[test]
+fn weighted_guardian_voting_reaches_quorum_based_on_vote_weight() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    let owner = Address::generate(&env);
+    let token_address = env
+        .register_stellar_asset_contract_v2(owner.clone())
+        .address();
+    StellarAssetClient::new(&env, &token_address).mint(&owner, &1_000_000);
+
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+    let beneficiary = Address::generate(&env);
+    let guardian_a = Address::generate(&env);
+
+    let will_id = client.create_will(
+        &owner,
+        &vec![&env, (token_address, 1_000_000_i128)],
+        &vec![
+            &env,
+            Beneficiary {
+                address: beneficiary,
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
+        &90,
+        &7,
+        &vec![&env, guardian_a.clone()],
+        &1,
+        &None,
+        &0,
+    );
+
+    // Update guardian with weight 2 and threshold 2
+    let specs = vec![
+        &env,
+        crate::GuardianSpec {
+            address: guardian_a.clone(),
+            weight: 2,
+        },
+    ];
+    client.update_guardians_weighted(&will_id, &owner, &specs, &Some(2));
+    client.accept_guardian_role(&will_id, &guardian_a);
+
+    // Advance past cooldown
+    env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
+
+    // Guardian A votes; weight = 2 >= threshold (2), so trigger succeeds in 1 vote
+    client.guardian_trigger(&will_id, &guardian_a, &GuardianVoteReason::Deceased);
+
+    let will = client.get_will(&will_id);
+    assert_eq!(will.status, WillStatus::Released);
 }

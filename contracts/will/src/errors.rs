@@ -19,12 +19,11 @@ pub enum WillError {
     WillNotTriggered = 4,
     /// `release_inheritance` was called before the grace period elapsed.
     GracePeriodNotExpired = 5,
-    /// `emergency_checkin` was called after the grace period already elapsed.
+    /// `emergency_checkin` (or `guardian_cancel_trigger`) was called after the
+    /// grace period already elapsed.
     GracePeriodExpired = 6,
     /// Beneficiary percentages did not sum to exactly 10,000.
     InvalidPercentages = 7,
-    /// A beneficiary percentage is not in the valid range (1..=100).
-    InvalidPercentage = 22,
     /// The guardian has already voted to trigger this will.
     AlreadyVoted = 8,
     /// The caller is not a designated guardian of this will.
@@ -33,7 +32,25 @@ pub enum WillError {
     CheckinNotDue = 10,
     /// An amount of zero (or less) was supplied where a positive amount is required.
     ZeroAmount = 11,
-    /// Too many beneficiaries (or guardians) were supplied.
+    /// Too many beneficiaries (or guardians/tokens) were supplied, or the list
+    /// was empty. A will may name at most `MAX_BENEFICIARIES` (10)
+    /// beneficiaries; see the README FAQ for why the cap exists.
+    /// A list-length cap was exceeded. Raised by:
+    /// - a `beneficiaries` list that is empty or longer than
+    ///   `MAX_BENEFICIARIES` — `create_will`, `update_beneficiaries`,
+    ///   `update_will_settings` and each `batch_create_wills` spec;
+    /// - a `renounce_beneficiary` call that would leave the will with no
+    ///   beneficiaries at all: the last remaining beneficiary cannot renounce,
+    ///   because a will with an empty list would have nobody for
+    ///   `release_inheritance` to pay (#361);
+    /// - a `guardians` list longer than `MAX_GUARDIANS` — from
+    ///   `assert_valid_guardians`, reached by every entry point that installs
+    ///   or replaces a guardian list;
+    /// - a `batch_create_wills` spec list that is empty or longer than
+    ///   `BATCH_MAX`.
+    ///
+    /// Token-list bounds are deliberately *not* reported here: an empty or
+    /// over-long `tokens` list raises [`WillError::InvalidTokenCount`] (#390).
     TooManyBeneficiaries = 12,
     /// The requested action requires the will to be `Released` or `Cancelled`.
     WillNotSettled = 13,
@@ -62,11 +79,41 @@ pub enum WillError {
     BeneficiaryNotFound = 18,
     /// Keeper bounty basis points exceed the maximum allowed (100 bps/1%).
     KeeperBountyExceedsMax = 19,
-    /// Guardian threshold is out of range (must be 1..=guardians.len()).
+    /// `guardian_threshold` lies outside the range the will's guardian list can
+    /// actually reach.
+    ///
+    /// Quorum in `guardian_trigger` / `guardian_cancel_trigger` is compared
+    /// against the **accumulated vote weight** of the consenting guardians, not
+    /// against a head count, so the reachable maximum depends on how the list
+    /// was installed:
+    /// - unweighted lists — `create_will`, `update_guardians` and
+    ///   `update_will_settings` give every guardian weight 1, so the valid
+    ///   range is `1..=guardians.len()`;
+    /// - weighted lists — `update_guardians_weighted` validates against
+    ///   `1..=sum(guardian weights)`.
+    ///
+    /// A threshold of 0, or one above the reachable maximum, is rejected there.
+    /// The same error is also raised when *shrinking* a non-empty guardian list
+    /// would leave the will's already-stored `guardian_threshold`
+    /// permanently unreachable, and when `update_guardians_weighted` is called
+    /// without a threshold on a list whose total weight is below the stored
+    /// one. An empty guardian list disables the mechanism, so no threshold is
+    /// checked in that case.
     InvalidGuardianThreshold = 20,
-    /// The sum of every `Allocation::FixedAmount` beneficiary on a will
-    /// exceeds the will's balance, or (for a will with no percentage-based
-    /// beneficiaries at all) does not exactly account for the whole balance.
+    /// The sum of every `Allocation::FixedAmount` entry on a will exceeds the
+    /// will's **primary-token** balance (`Will::token`, the first entry of the
+    /// `tokens` list). Secondary tokens are not drawn on to satisfy a fixed
+    /// amount, so they never contribute to this check (#384).
+    ///
+    /// `assert_valid_allocations` rejects only that over-commitment. A will
+    /// whose `FixedAmount` entries do *not* exactly account for the whole
+    /// primary-token balance is deliberately allowed: the unallocated headroom
+    /// is what a later `add_hashed_beneficiary` call reserves for a
+    /// not-yet-disclosed beneficiary (#181/#186), and if none is ever added the
+    /// leftover is refunded to the owner at release time
+    /// (`events::leftover_refunded`, #383) rather than stranded in the
+    /// contract. Every `Percentage` share, by contrast, must still sum to
+    /// exactly 10,000 basis points, or `InvalidPercentages` is raised.
     FixedAmountExceedsBalance = 21,
     /// A supplied token address does not respond to a read-only `decimals()`
     /// probe, indicating it is not a valid SEP-41 token.
@@ -79,7 +126,8 @@ pub enum WillError {
     ConfirmationWindowExpired = 31,
     /// `get_wills` was called with more ids than `MAX_GET_WILLS_IDS`.
     TooManyIds = 32,
-    /// `split_will` was asked to split more than the will's current balance.
+    /// `split_will` was asked to move more of a token than the will
+    /// currently holds of it.
     InsufficientBalance = 33,
     /// `split_will` was called with an empty beneficiary-to-split list, or a
     /// split that would leave the source or new will with an invalid state.
@@ -99,4 +147,62 @@ pub enum WillError {
     /// the will's balance for some token. Aborts the release rather than
     /// silently leaving (or over-paying) funds in the contract (#456).
     DistributionMismatch = 39,
+    /// A stored will could not be decoded as the current `Will` layout or any
+    /// known legacy layout (see `migration.rs`).
+    UnsupportedSchemaVersion = 39,
+    /// Cannot merge: the two wills' primary tokens differ, so summing their
+    /// legacy `balance` fields would be nonsensical.
+    PrimaryTokenMismatch = 39,
+    /// The same token address was supplied more than once in a `tokens`
+    /// list. `create_will` documents each token address as unique, and a
+    /// duplicated entry would make the legacy `balance` mirror disagree with
+    /// the accumulated `balances` map (#350).
+    DuplicateToken = 40,
+    /// A `batch_check_in` call supplied more will ids than
+    /// `batch_check_in_limit::MAX_BATCH_CHECK_IN` (50).
+    BatchTooLarge = 41,
+    /// The `tokens` list supplied to `create_will`, `clone_will`, `split_will`
+    /// or `batch_create_wills` was empty, or held more than `MAX_TOKENS`
+    /// entries (#390). Also raised by `top_up` when the token being topped up
+    /// is not already in the will's `balances` map and that map already holds
+    /// `MAX_TOKENS` distinct tokens, since each new entry is another storage
+    /// read on every release or refund (#358); topping up a token the will
+    /// already holds stays allowed at the cap.
+    InvalidTokenCount = 42,
+    /// `reveal_and_claim` was called with a pre-image that is not exactly
+    /// `SHA256_DIGEST_LEN` bytes. A shorter or longer pre-image could never
+    /// hash to a stored 32-byte commitment, so it is rejected before the
+    /// digest is computed (#370).
+    InvalidPreimageLength = 43,
+    /// A hashed-beneficiary commitment was not exactly `SHA256_DIGEST_LEN`
+    /// bytes and therefore could never be matched by a pre-image (#371).
+    InvalidCommitmentLength = 44,
+    /// The same commitment hash is already registered on this will, making
+    /// the second slot unreachable by `reveal_and_claim` (#371).
+    DuplicateCommitment = 45,
+    /// `reveal_and_claim` was called with a pre-image whose first 32 bytes are
+    /// not a valid Soroban address, or that decode to an address other than
+    /// `claimant`. The pre-image is public (it sits in the transaction
+    /// arguments, in simulation results, and in the mempool), so without this
+    /// binding any third party who observes it could replay it with their own
+    /// address as `claimant` and take the reserved share before the real
+    /// beneficiary does (#369).
+    PreimageAddressMismatch = 46,
+    /// `merge_wills` was called while either will still carried hashed
+    /// beneficiaries that had not revealed. `merge_beneficiaries` only merges
+    /// *visible* beneficiaries, so the consumed will's commitments and their
+    /// committed percentages would be dropped while its balance moved to the
+    /// survivor — silently stranding those beneficiaries' claim (#380).
+    MergeWithHashedBeneficiaries = 47,
+    /// A `batch_check_in` `will_ids` list named the same will more than once,
+    /// so one will would otherwise be processed — and emit a redundant
+    /// `check_in` event — up to `MAX_BATCH_CHECK_IN` times in a single call,
+    /// making the reported count meaningless (#355).
+    DuplicateWillId = 48,
+    /// `accept_guardian_role` was called by a guardian who had already
+    /// `Rejected` the role. `Rejected` is terminal for a guardian entry: they
+    /// can only be asked again if the owner re-appoints them through
+    /// `update_guardians` / `update_guardians_weighted`, which resets the list
+    /// to `Pending` (#374).
+    InvalidConsentTransition = 49,
 }
