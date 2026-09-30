@@ -14,7 +14,7 @@ use crate::CONTRACT_VERSION;
 
 /// Must match the literal passed to `contractmeta!(key = "Version", val =
 /// ...)` in `lib.rs`. Update both together when bumping `CONTRACT_VERSION`.
-const CONTRACTMETA_VERSION: &str = "1.2.0";
+const CONTRACTMETA_VERSION: &str = "1.3.0";
 
 #[test]
 fn contractmeta_version_matches_contract_version_constant() {

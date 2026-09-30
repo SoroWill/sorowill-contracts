@@ -65,18 +65,19 @@ test-only changes.
 
 ### Keeping source and deployment in sync
 
-A build-time check (`scripts/check-contract-version.sh`) verifies that
-`CONTRACT_VERSION` matches the crate `version` in `contracts/will/Cargo.toml`
-and, when a git tag is present, the tag itself. Run it locally before opening
-a PR:
+A build-time check (`.github/scripts/check-contract-version.sh`) verifies
+that `CONTRACT_VERSION` matches the crate `version` in
+`contracts/will/Cargo.toml` and, when a git tag is present, the tag itself.
+Run it locally before opening a PR:
 
 ```sh
-./scripts/check-contract-version.sh
+./.github/scripts/check-contract-version.sh
 ```
 
-CI runs the same check on every PR (see
-[.github/workflows/version-check.yml](./.github/workflows/version-check.yml)),
-so a PR that changes contract behavior without bumping `CONTRACT_VERSION`
+CI runs the same check on every PR (see the "Verify CONTRACT_VERSION matches
+git version tag" step in
+[.github/workflows/test.yml](./.github/workflows/test.yml)), so a PR that
+changes contract behavior without bumping `CONTRACT_VERSION`
 fails before it can be merged. This prevents the source constant from drifting
 away from the deployed contract version when deployment steps are skipped.
 
@@ -133,7 +134,7 @@ Run every command used by the [Test CI workflow](./.github/workflows/test.yml) a
 - [ ] `cargo clippy --all-targets -- -D warnings`
 - [ ] `cargo test --workspace`
 - [ ] `cargo build --workspace --release --target wasm32v1-none`
-- [ ] `./scripts/check-contract-version.sh`
+- [ ] `./.github/scripts/check-contract-version.sh`
 - [ ] Confirm the Test workflow is green on the PR.
 
 ## Local setup
