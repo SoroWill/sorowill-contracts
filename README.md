@@ -388,3 +388,11 @@ Security reports and responsible disclosure guidelines are documented in [`SECUR
 ## Contributing via Drips Wave
 
 This repo participates in the **Stellar Wave Program** on [Drips](https://drips.network/wave). Maintainer-tagged issues carry Point values, and contributors who resolve them during an active Wave earn a proportional share of that Wave's reward pool. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution workflow, and <https://drips.network/wave> for how Wave itself works.
+
+## Handsoff notes
+
+<!-- handsoff-issue-436 -->
+- #436: Will owner validation is weak: no check that the caller is the will owner before allowing cancellations or updates, relying instead on SDK-side logic
+
+<!-- handsoff-issue-438 -->
+- #438: allocate_funds returns a Map of beneficiary to share, but the Map insertion order is arbitrary, so distribute must not depend on processing beneficiaries in a specific orde
