@@ -203,14 +203,17 @@ pub struct OwnerStats {
 
 
 
-/// A beneficiary's claimable share in a pull-based distribution.
+/// Reserved: a beneficiary's claimable share in a pull-based distribution.
 ///
-/// Stored in persistent storage keyed by `(will_id, beneficiary_address)`.
-/// When the will enters `Released` status with `pull_distribution = true`,
-/// `distribute` computes each beneficiary's share and stores a `ClaimableShare`
-/// with `total` set to the share amount and `claimed` set to `0`. When the
-/// beneficiary calls `claim_share`, `claimed` is set to `total` and the tokens
-/// are transferred out of the contract.
+/// **Not used by the contract today.** There is no pull mode, no
+/// `pull_distribution` field on [`Will`] and no `claim_share` entry point, so
+/// nothing ever constructs or reads this type; distribution is push-only (see
+/// the crate-level docs). It is kept only because the type is part of the
+/// published contract spec (see `spec/will-v0.1.0.json`), so removing it would
+/// be a breaking spec change. It is retained as a placeholder for the
+/// pull-based claim feature requested in issue #11; anything reading this type
+/// as a description of current behaviour is reading stale documentation
+/// (#364).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClaimableShare {
