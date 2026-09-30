@@ -1080,7 +1080,12 @@ pub fn paginate_history(
 ///
 /// Archival drops the will's `WillHistory` entry and every `GuardianVote` /
 /// `GuardianCancelVote` entry belonging to its guardians, rather than leaving
-/// them to outlive the will (#393). This is a deliberate decision, not an
+/// them to outlive the will (#393). It also removes the will's id from the
+/// `TriggeredWills` index when the will was `Triggered` at archival time
+/// (`unindex_triggered_will`, below). Together these mean archiving a will
+/// leaves no pending guardian vote or triggered-state entry that could
+/// become live again if the archival were ever reversed (#462) — there is
+/// nothing left to reactivate. This is a deliberate decision, not an
 /// oversight:
 ///
 /// - **The entries would be unreachable anyway.** `load_will` only ever reads
