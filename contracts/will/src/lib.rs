@@ -360,6 +360,8 @@ pub use errors::WillError;
 pub use storage::GuardianVoteRecord;
 pub use storage::CURRENT_SCHEMA_VERSION;
 pub use types::{
+    Allocation, Beneficiary, Guardian, GuardianVoteReason, HashedBeneficiary, ProtocolStats, Will,
+    WillPage, WillStatus, WillStatusTransition,
     Allocation, Beneficiary, Guardian, GuardianVoteReason, HashedBeneficiary, ProtocolStats,
     ProtocolStatsAudit, Will, WillStatus, WillStatusTransition,
     Allocation, Beneficiary, Guardian, GuardianConsent, GuardianSpec, GuardianVoteReason,
@@ -997,6 +999,14 @@ impl WillContract {
     /// Starts the grace period for `will_id` once the check-in deadline has
     /// passed. Callable by anyone.
     ///
+    /// The grace period is anchored to the missed check-in deadline
+    /// (`last_checkin + checkin_period_days`), which is stored in
+    /// `trigger_time` — not to the ledger time at which this function happens
+    /// to be called (#457). Release therefore becomes available at exactly
+    /// `last_checkin + checkin_period_days + grace_period_days`, however late
+    /// the trigger is submitted. If the trigger arrives after that point the
+    /// will is immediately releasable.
+    ///
     /// # Panics
     /// - [`WillError::WillNotActive`] if the will is not `Active`.
     /// - [`WillError::CheckinNotDue`] if the check-in deadline has not passed yet.
@@ -1023,9 +1033,13 @@ impl WillContract {
             panic_with_error!(&env, WillError::CheckinNotDue);
         }
 
+        // Anchor the grace period to the missed check-in deadline, not to
+        // whenever a keeper happened to call `trigger_will` (#457). This makes
+        // the release time a pure function of the owner's last check-in, so a
+        // delayed trigger can neither postpone nor accelerate the release.
         will.status = WillStatus::Triggered;
-        will.trigger_time = Some(now);
-        let grace_period_ends = now + will.grace_period_days * SECONDS_PER_DAY;
+        will.trigger_time = Some(deadline);
+        let grace_period_ends = grace_deadline(&will);
         storage::save_will(&env, &will);
 
         storage::index_triggered_will(&env, will_id);
@@ -1068,7 +1082,7 @@ impl WillContract {
 
         let grace_deadline = grace_period_end(&env, &will);
         let now = env.ledger().timestamp();
-        if now > grace_deadline {
+        if now > grace_deadline(&will) {
             panic_with_error!(&env, WillError::GracePeriodExpired);
         }
 
@@ -1157,6 +1171,8 @@ impl WillContract {
             WillError::WillNotTriggered,
         );
 
+        let now = env.ledger().timestamp();
+        if now < grace_deadline(&will) {
         // Timing invariant (#442): funds may only leave via this path once
         // the grace period has fully elapsed, i.e. `now >= grace_period_end`.
         let grace_deadline = grace_period_end(&env, &will);
@@ -2049,7 +2065,8 @@ impl WillContract {
     /// - `Active`: seconds until the check-in deadline
     ///   (`last_checkin + checkin_period_days`).
     /// - `Triggered`: seconds until the grace period expires
-    ///   (`trigger_time + grace_period_days`).
+    ///   (`trigger_time + grace_period_days`, where `trigger_time` is the
+    ///   missed check-in deadline — see [`Self::trigger_will`]).
     /// - `PendingConfirmation`, `Released`, `Cancelled`, `Settled`: no deadline
     ///   applies; returns `None`.
     ///
@@ -2086,6 +2103,7 @@ impl WillContract {
                 Some(deadline - now)
             }
             WillStatus::Triggered => {
+                Some(grace_deadline(&will) as i64 - now)
                 // `trigger_will` is the only path that sets `WillStatus::Triggered`,
                 // and it always sets `trigger_time` to `Some(now)` in the same
                 // write. `trigger_time` should therefore never be `None` here;
@@ -2304,7 +2322,12 @@ impl WillContract {
     /// Returns a page of wills owned by `owner` with the given `status`.
     ///
     /// Supports bounded pagination to avoid hitting Soroban resource limits
-    /// for addresses with many wills.
+    /// for addresses with many wills. The status filter is applied *before*
+    /// the page is cut, so a page is only shorter than `limit` when there are
+    /// no further matching wills (#455).
+    ///
+    /// Prefer [`Self::get_wills_by_owner_and_status_page`], which also returns
+    /// the total number of matches and an explicit `next_cursor`.
     ///
     /// # Parameters
     /// - `owner`: the address to query wills for.
@@ -2323,6 +2346,44 @@ impl WillContract {
         cursor: Option<u64>,
         limit: u32,
     ) -> Vec<Will> {
+        wills_by_owner_and_status_page(&env, &owner, status, cursor, limit).wills
+    }
+
+    /// Returns a page of wills owned by `owner` with the given `status`,
+    /// together with the total number of matching wills and the cursor for
+    /// the next page (#455).
+    ///
+    /// Callers can page through every match with a single query per page and
+    /// know up front how many results exist:
+    ///
+    /// ```ignore
+    /// let mut cursor = None;
+    /// loop {
+    ///     let page = client.get_wills_by_owner_and_status_page(&owner, &status, &cursor, &20);
+    ///     // page.total_count is the same on every page.
+    ///     handle(page.wills);
+    ///     match page.next_cursor {
+    ///         Some(c) => cursor = Some(c),
+    ///         None => break,
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// # Parameters
+    /// - `owner`: the address to query wills for.
+    /// - `status`: the will status to filter by.
+    /// - `cursor`: optional will id to paginate after (exclusive). Pass `None`
+    ///   or `0` for the first page.
+    /// - `limit`: maximum number of wills to return. Capped at
+    ///   [`storage::MAX_PAGE_SIZE`].
+    pub fn get_wills_by_owner_and_status_page(
+        env: Env,
+        owner: Address,
+        status: WillStatus,
+        cursor: Option<u64>,
+        limit: u32,
+    ) -> WillPage {
+        wills_by_owner_and_status_page(&env, &owner, status, cursor, limit)
         let ids = storage::get_owner_wills(&env, &owner);
         let page_size = limit.min(storage::MAX_PAGE_SIZE);
         let mut wills = Vec::new(&env);
@@ -2531,7 +2592,15 @@ impl WillContract {
             panic_with_error!(&env, WillError::AlreadyVoted);
         }
 
+        // Record (or refresh an expired) vote, then recompute the tally from
+        // the per-guardian records so each guardian counts at most once and
+        // expired votes drop out (#458). A running `+= 1` would let a guardian
+        // whose earlier vote expired be counted twice.
         storage::set_guardian_voted(&env, will_id, &guardian, now, reason);
+        let (tally_weight, tally_count) =
+            storage::tally_guardian_votes(&env, &will, now, expiry_days);
+        will.guardian_vote_weight = tally_weight;
+        will.guardian_votes = tally_count;
         // Recount from the current guardian list instead of incrementing a
         // running total (#453), so votes from removed, rejected or expired
         // guardians can never count toward the threshold.
@@ -2656,6 +2725,10 @@ impl WillContract {
         }
 
         storage::set_guardian_cancel_voted(&env, will_id, &guardian, now);
+        let (tally_weight, tally_count) =
+            storage::tally_guardian_cancel_votes(&env, &will, now, expiry_days);
+        will.guardian_cancel_vote_weight = tally_weight;
+        will.guardian_cancel_votes = tally_count;
         // Recount from the current guardian list (#453); see `guardian_trigger`.
         let (votes, vote_weight) =
             tally_guardian_votes(&env, &will, now, storage::has_guardian_cancel_voted);
@@ -4163,6 +4236,7 @@ impl WillContract {
             WillError::WillNotReleased,
         );
 
+        if env.ledger().timestamp() < grace_deadline(&will) {
         let grace_deadline = grace_period_end(&env, &will);
         if env.ledger().timestamp() < grace_deadline {
             panic_with_error!(&env, WillError::GracePeriodNotExpired);
@@ -4267,6 +4341,13 @@ impl WillContract {
             updated_balances.set(token_addr, total - share);
         }
 
+        will.balance -= share;
+        // Keep the per-token balances map in sync: `distribute` pays out of
+        // `balances`, so without this a later `release_inheritance` would pay
+        // the already-claimed share a second time (#458).
+        let token_balance = will.balances.get(will.token.clone()).unwrap_or(0);
+        will.balances
+            .set(will.token.clone(), (token_balance - share).max(0));
         // --- EFFECTS: mutate and persist all state before any external call ---
         will.balances = updated_balances;
         // `will.balance` mirrors `will.balances[will.token]` for backward
@@ -4739,6 +4820,70 @@ fn assert_valid_guardians(env: &Env, owner: &Address, guardians: &Vec<Address>) 
     }
 }
 
+/// Filters `owner`'s wills by `status` and cuts one page from the matches.
+///
+/// Every indexed will is inspected so `total_count` is exact; the owner index
+/// is capped at `storage::MAX_WILLS_PER_INDEX`, which bounds the cost.
+fn wills_by_owner_and_status_page(
+    env: &Env,
+    owner: &Address,
+    status: WillStatus,
+    cursor: Option<u64>,
+    limit: u32,
+) -> WillPage {
+    let page_size = limit.min(storage::MAX_PAGE_SIZE);
+    let cursor_val = cursor.unwrap_or(0);
+    let ids = storage::get_owner_wills(env, owner);
+
+    let mut wills = Vec::new(env);
+    let mut total_count: u32 = 0;
+    let mut has_more = false;
+    for id in ids.iter() {
+        let will = match storage::load_will(env, id) {
+            Ok(w) => w,
+            Err(e) => panic_with_error!(env, e),
+        };
+        if will.status != status {
+            continue;
+        }
+        total_count += 1;
+        if id <= cursor_val {
+            continue;
+        }
+        if wills.len() < page_size {
+            wills.push_back(will);
+        } else {
+            has_more = true;
+        }
+    }
+
+    let next_cursor = if has_more {
+        wills.last().map(|w| w.id)
+    } else {
+        None
+    };
+
+    WillPage {
+        wills,
+        total_count,
+        next_cursor,
+    }
+}
+
+/// Returns the Unix timestamp at which `will`'s grace period ends.
+///
+/// The grace period starts at the missed check-in deadline
+/// (`last_checkin + checkin_period_days`), which `trigger_will` records in
+/// `trigger_time` (#457). Every grace-period check — `emergency_checkin`,
+/// `release_inheritance`, `reveal_and_claim`, `get_time_until_deadline` —
+/// goes through this helper so they can never disagree. The fallback for a
+/// missing `trigger_time` uses the same anchor rather than `0`, which would
+/// otherwise make the grace period appear long expired.
+fn grace_deadline(will: &Will) -> u64 {
+    let start = will
+        .trigger_time
+        .unwrap_or(will.last_checkin + will.checkin_period_days * SECONDS_PER_DAY);
+    start + will.grace_period_days * SECONDS_PER_DAY
 /// Counts the live votes on `will` and returns `(vote_count, vote_weight)`.
 /// A vote is live only if it was cast by a guardian on the *current* list who
 /// has accepted the role and whose vote has not expired.
@@ -4783,6 +4928,49 @@ fn assert_valid_periods(env: &Env, checkin_period_days: u64, grace_period_days: 
     }
 }
 
+/// Distributes all token balances across `will.beneficiaries` proportionally
+/// to their basis-point shares, transfers the shares out of the contract,
+/// clears the balances map, marks the will `Released`, and publishes the
+/// `InheritanceReleased` event.
+///
+/// # Rounding Behavior
+///
+/// Each token's distribution is calculated as: `share = balance * (basis_points / 10_000)`.
+/// Integer division truncates toward zero, which may result in zero shares for
+/// beneficiaries with very small calculated amounts. For example, distributing 9 units
+/// equally among 10 beneficiaries (900 basis points each) gives each person 0.9 units,
+/// which truncates to 0.
+///
+/// To ensure no dust is left behind, any rounding remainder is paid to the final
+/// beneficiary in the list. This guarantees the full balance of every token is
+/// always distributed across beneficiaries.
+///
+/// **Note:** Callers should ensure that the will's balance is sufficient to give
+/// each beneficiary at least 1 unit of their share. Extremely small balances relative
+/// to beneficiary counts can result in most recipients getting zero after rounding.
+/// Consider validating a minimum will amount at creation time (see issue #37).
+/// Splits `will.balance` across `will.beneficiaries` proportionally to their
+/// percentages, transfers the shares out of the contract, marks the will
+/// `Released`, and publishes the `InheritanceReleased` event with a full
+/// For each token in `will.balances`, splits the balance across
+/// `will.beneficiaries` proportionally to their basis-point shares, transfers
+/// the shares out of the contract, clears the balances map, marks the will
+/// `Released`, and publishes the `InheritanceReleased` event. Any rounding
+/// remainder from integer division is paid to the final beneficiary so the
+/// full balance of every token is always distributed with no dust left behind.
+///
+/// Any keeper bounty is deducted from the first token's balance before the
+/// beneficiary split, and for every token the planned payouts (bounty plus
+/// shares) must sum to exactly that token's balance, otherwise the release
+/// aborts with [`WillError::DistributionMismatch`] (#456). A will whose
+/// beneficiaries are all `FixedAmount` pays any leftover to the final
+/// beneficiary. `distribute` refuses to run for a will that is no longer
+/// `Active` or `Triggered`, so a will can never be paid out twice (#458).
+///
+/// Follows checks-effects-interactions ordering: all per-beneficiary share
+/// amounts are computed from the pre-mutation balances, then all state is
+/// committed (status, balances, indexes), and only then are the external
+/// token transfers executed.
 /// Calculates `floor(total * basis_points / 10_000)` without ever forming
 /// the potentially overflowing `total * basis_points` intermediate. The
 /// workspace release profile enables overflow checks, but this decomposition
@@ -4851,11 +5039,21 @@ pub(crate) fn proportional_share(total: i128, basis_points: u32) -> i128 {
 /// balances, then all state is committed (status, balances, indexes), and
 /// only then are the external token transfers executed.
 fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
+    // Defense in depth against double release (#458): every public caller
+    // already asserts `Active`/`Triggered`, but a will that has left those
+    // states must never be paid out again, whichever path reaches here.
+    if will.status != WillStatus::Active && will.status != WillStatus::Triggered {
+        panic_with_error!(env, WillError::WillNotTriggered);
+    }
+
     let contract_address = env.current_contract_address();
     let count = will.beneficiaries.len();
     let token_count = will.balances.len();
 
     // --- COMPUTE: calculate every share from the current (pre-mutation) balances ---
+    // Calculate keeper bounty if applicable (not paid to owner, only to other keepers)
+    let mut bounty_amount: i128 = 0;
+    let mut bounty_computed = false;
     // A keeper bounty is due only to a caller other than the owner.
     let should_pay_bounty = keeper
         .as_ref()
@@ -4925,6 +5123,15 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
             continue;
         }
 
+        // Calculate bounty from first token's balance if applicable. The
+        // bounty is carved out of this token's balance *before* beneficiary
+        // shares are computed; paying it on top of a full distribution would
+        // spend funds belonging to other wills held by this contract (#458).
+        let mut token_bounty: i128 = 0;
+        if should_pay_bounty && !bounty_computed {
+            bounty_computed = true;
+            bounty_amount = proportional_share(total, will.keeper_bounty_bps);
+            token_bounty = bounty_amount;
         // Deduct the keeper bounty only from the token it was computed from.
         // Comparing the address (rather than relying on iteration position)
         // keeps the deduction and the payout tied to the same token (#378).
@@ -4943,6 +5150,15 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
 
         let mut shares: Vec<(Address, i128)> = Vec::new(env);
 
+        // Fixed-amount beneficiaries are paid first, capped at what is
+        // actually available so a misconfigured/under-funded token never
+        // aborts the whole distribution.
+        let mut remaining = total - token_bounty;
+        for beneficiary in will.beneficiaries.iter() {
+            if let Allocation::FixedAmount(amt) = beneficiary.allocation {
+                let share = amt.min(remaining).max(0);
+                remaining -= share;
+                shares.push_back((beneficiary.address.clone(), share));
         // Fixed amounts are denominated in the will's primary token only
         // (#384): a `FixedAmount(100)` on a two-token will is 100 units of
         // `will.token` in total, not 100 units of every token the will holds.
@@ -4982,6 +5198,31 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
             }
         }
 
+        // A will with only `FixedAmount` beneficiaries has no percentage
+        // beneficiary to absorb the leftover (e.g. after a `top_up`). Give it
+        // to the final beneficiary instead of leaving it stranded in the
+        // contract once the balances map is cleared (#456).
+        if percentage_count == 0 && remaining > 0 && !shares.is_empty() {
+            let last = shares.len() - 1;
+            let (addr, share) = shares.get(last).unwrap();
+            shares.set(last, (addr, share + remaining));
+        }
+
+        // Conservation check (#456): the planned payouts for this token must
+        // account for exactly its balance. Anything else means funds would be
+        // silently lost in, or over-drawn from, the contract.
+        let mut planned: i128 = token_bounty;
+        for (_, share) in shares.iter() {
+            if share < 0 {
+                panic_with_error!(env, WillError::DistributionMismatch);
+            }
+            planned = match planned.checked_add(share) {
+                Some(v) => v,
+                None => panic_with_error!(env, WillError::DistributionMismatch),
+            };
+        }
+        if planned != total {
+            panic_with_error!(env, WillError::DistributionMismatch);
         // With no percentage beneficiaries there is nobody left to absorb what
         // the fixed amounts did not claim. Refunding it to the owner keeps the
         // tokens from being stranded in the contract with no accounting and no

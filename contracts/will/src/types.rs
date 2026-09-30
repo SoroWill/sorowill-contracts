@@ -286,7 +286,10 @@ pub struct Will {
     pub grace_period_days: u64,
     /// Unix timestamp (seconds) of the owner's last check-in.
     pub last_checkin: u64,
-    /// Unix timestamp (seconds) at which the will was triggered, if any.
+    /// Unix timestamp (seconds) at which the grace period started, if the
+    /// will is triggered. This is the missed check-in deadline
+    /// (`last_checkin + checkin_period_days`), not the time `trigger_will`
+    /// was called, so the release time does not drift with keeper delays.
     pub trigger_time: Option<u64>,
     /// Unix timestamp (seconds) by which the owner must call `confirm_will`
     /// to move from `PendingConfirmation` to `Active` (issue #43).
@@ -350,6 +353,22 @@ pub struct Will {
     /// Optional delegate address that may call `check_in` on the owner's
     /// behalf. `None` means only the owner can check in.
     pub delegate: Option<Address>,
+}
+
+/// A page of wills returned by a filtered, paginated query (#455).
+///
+/// Carries the total number of matching wills so callers know how many
+/// results exist in all, and an explicit `next_cursor` so they never have to
+/// infer "more pages?" from the page length.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WillPage {
+    /// The wills on this page, in ascending id order.
+    pub wills: Vec<Will>,
+    /// Total number of wills matching the filter across all pages.
+    pub total_count: u32,
+    /// Cursor to pass to fetch the next page, or `None` if this is the last page.
+    pub next_cursor: Option<u64>,
 }
 
 /// Reasons a guardian can provide when casting a trigger vote.

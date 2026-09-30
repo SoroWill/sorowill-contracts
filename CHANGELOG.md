@@ -10,6 +10,27 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ## [Unreleased]
 
+### Added
+- `get_wills_by_owner_and_status_page`, returning a `WillPage` with the page's
+  wills, the `total_count` of all matches and an explicit `next_cursor` (#455).
+- `WillError::DistributionMismatch` (39): release aborts if planned payouts for
+  a token do not sum to exactly its balance (#456).
+
+### Fixed
+- Guardian release/cancel votes are tallied from per-guardian records, so a
+  guardian re-voting after expiry is no longer counted twice (#458).
+- The keeper bounty is deducted from the will's balance instead of being paid
+  on top of a full distribution out of other wills' funds (#458).
+- `reveal_and_claim` now reduces the will's token balance map, so a later
+  `release_inheritance` cannot pay the claimed share a second time (#458).
+- `distribute` refuses wills that are not `Active`/`Triggered` (#458).
+- Grace period is anchored to the missed check-in deadline instead of the time
+  `trigger_will` was called; all grace checks share one `grace_deadline`
+  helper (#457).
+- Fixed-amount-only wills pay any leftover balance to the final beneficiary
+  instead of stranding it in the contract (#456).
+- `get_wills_by_owner_and_status` filters by status before cutting the page, so
+  short pages no longer hide matching wills (#455).
 ### Fixed
 
 - `confirm_will` now re-validates the beneficiary list before moving a will
