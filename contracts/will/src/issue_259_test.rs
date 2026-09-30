@@ -45,7 +45,7 @@ fn pagination_skips_past_a_cursor_id_removed_from_the_index() {
             &90,
             &7,
             &vec![&env],
-            &1,
+            &0,
             &None,
             &0,
         );

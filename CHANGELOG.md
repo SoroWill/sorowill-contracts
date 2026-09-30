@@ -10,45 +10,42 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ## [Unreleased]
 
+### Fixed
+
+- `confirm_will` now re-validates the beneficiary list before moving a will
+  from `PendingConfirmation` to `Active`. It rechecks the count, duplicates,
+  basis-point totals and fixed amounts against the current balances, so a
+  list that became invalid during the confirmation delay cannot be activated
+  (#448).
+- `guardian_trigger` and `guardian_cancel_trigger` now recount live votes from
+  the current guardian list on every vote instead of adding to a running
+  total. Votes from removed, rejected or expired guardians no longer count
+  toward the threshold, and the tally can never exceed the number of guardians
+  (#453). `update_will_settings` now also clears cancel votes when it replaces
+  the guardian list, as `update_guardians` already did.
+- `reveal_and_claim` now requires the pre-image to start with the claimant's
+  XDR-encoded address, followed by a non-empty salt. A leaked or front-run
+  pre-image can no longer be used to claim a hashed beneficiary's share to a
+  different address. `add_hashed_beneficiary` rejects commitments that are not
+  32-byte SHA-256 digests (#452).
+
+  **Breaking:** commitments must now be computed as
+  `sha256(beneficiary.to_xdr() || salt)`.
 ### Added
 
-- `WillError::NoFailedPayout` (code 50): raised by the new
-  `retry_failed_payout(will_id, token, recipient)` entry point when no failed
-  payout is recorded for that exact tuple. `README.md` is updated for the new
-  code.
-- New entry point `retry_failed_payout(will_id, token, recipient)`: delivers a
-  beneficiary share, owner refund, or keeper bounty that failed during a
-  previous `distribute` call (#459). Permissionless, and deliberately never
-  loads or validates the parent will — the recorded amount is self-sufficient
-  — so it keeps working even after the will has been archived. Extended
-  `docs/FUZZING.md`'s target list accordingly.
-- `distribute` now uses `try_transfer` for every payout (beneficiary shares,
-  owner refunds, keeper bounty) instead of the panicking `transfer` (#459). A
-  SEP-41 token can refuse a specific transfer for reasons outside this
-  contract's control (a frozen or unauthorized recipient, a paused token, a
-  missing trustline). Previously, since `distribute` commits its own state
-  before any transfer fires and runs once for every beneficiary and token,
-  *one* permanently-unreachable recipient blocked *every* beneficiary's
-  inheritance indefinitely, not just their own — the same failing transfer
-  would be reached again on every retry. A failed transfer's amount is now
-  recorded and left for anyone to retry via `retry_failed_payout`, while every
-  other transfer in the same call still succeeds normally. New events
-  `payout_failed` and `payout_retried`.
-- Restored `contracts/will/src/issue_370_test.rs` and
-  `contracts/will/src/issue_371_test.rs` to the crate's module tree — neither
-  had a `mod` declaration in `lib.rs`, so despite testing real, currently
-  correct behavior (`InvalidPreimageLength` and `InvalidCommitmentLength`,
-  #370/#371), they were never compiled or run by `cargo test`.
-  `issue_370_test.rs` additionally needed its fixtures updated: its pre-images
-  were not derived from the claimant address the way #369's later
-  address-binding check requires, so several of its cases were actually
-  exercising `PreimageAddressMismatch` rather than the length/commitment
-  checks they were written to cover.
-- `contracts/will/src/issue_461_test.rs`: regression coverage for a hashed
-  beneficiary claiming its share of every locked token on a multi-token will,
-  not just the primary one (#461) — `reveal_and_claim` already did this
-  correctly, but no test exercised more than one token before this.
+- `get_owner_stats(owner)` entry point returning `OwnerStats` (total wills,
+  non-terminal wills, locked value per token) so clients don't have to walk
+  every `get_wills_by_owner` page to compute totals (#447).
+- Storage schema versioning: `migration.rs` with a legacy-aware
+  `decode_will` used by every will load, stepwise `upgrade` used by
+  `migrate_will`, and a new `UnsupportedSchemaVersion` error (code 39) (#446).
+- Diagnostic log messages stating the supplied count and `MAX_BENEFICIARIES`
+  when a beneficiary list is rejected; README FAQ on the limit (#444).
 
+### Changed
+
+- `merge_wills` now explicitly rejects wills with different owners with
+  `NotSameOwner` (code 24) before checking that the caller owns them (#445).
 - `WillError::MergeWithHashedBeneficiaries` (code 47): `merge_wills` is now
   rejected while either will still carries a hashed beneficiary that has not
   revealed and claimed. `merge_beneficiaries` only merges *visible*
@@ -124,6 +121,35 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ### Fixed
 
+- `top_up` now enforces the same `MAX_TOKENS` distinct-token cap `create_will`
+  applies, raising `InvalidTokenCount` when the token is not already in the
+  will's `balances` map and the map already holds `MAX_TOKENS` entries.
+  `distribute` and `cancel_will` iterate every entry of that map, so an owner
+  could previously grow it one token at a time until a release or refund no
+  longer fit in a Soroban transaction, leaving the will's funds unreachable.
+  Topping up a token the will already holds is unchanged and still works at the
+  cap (#358).
+- `get_guardian_vote_status` no longer panics when the current ledger time is
+  earlier than a stored vote timestamp. It computed `now - record.timestamp`
+  with a raw `u64` subtraction, so a skewed clock (or a test that rewinds the
+  ledger) underflowed and trapped the read-only query. The expiry rule is now
+  one shared `storage::vote_is_live` helper used by this query and by
+  `has_guardian_voted` / `has_guardian_cancel_voted`, so the three call sites
+  cannot diverge again; a record timestamped after `now` is reported as-is by
+  the query and as "not voted" by the quorum counters (#359).
+- `get_wills_by_owner_and_status` now returns an empty page for `limit == 0`,
+  matching `get_wills_by_owner` and `get_wills_by_beneficiary`. It pushed a
+  matching will *before* comparing the page length against the page size, so a
+  caller paginating with a computed limit that reached zero received one will
+  while the id-based queries returned none (#360).
+- `renounce_beneficiary` now rejects the last remaining beneficiary with
+  `TooManyBeneficiaries` instead of leaving the will with an empty beneficiary
+  list. `create_will` and `update_beneficiaries` both require between 1 and
+  `MAX_BENEFICIARIES` entries, and `assert_valid_allocations` cannot catch the
+  emptied list because a `Vec` with no entries passes every check it makes, so
+  a sole beneficiary could renounce and leave an `Active` or `Triggered` will
+  with nobody for `release_inheritance` to pay. The rationale recorded for
+  `InvalidPercentages` in the function's rustdoc has been corrected (#361).
 - `update_guardians_weighted` now accumulates guardian weights with
   `checked_add` and enforces a new public `MAX_GUARDIAN_WEIGHT` (1_000_000) cap
   per guardian. A weight list whose `u32` total overflows used to abort the call

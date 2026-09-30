@@ -154,7 +154,7 @@ fn update_periods_changes_checkin_and_grace_periods() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );

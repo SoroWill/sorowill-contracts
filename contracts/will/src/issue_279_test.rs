@@ -44,7 +44,7 @@ fn cancel_will_is_rejected_for_a_triggered_will() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );

@@ -64,7 +64,7 @@ fn successful_confirmation_transitions_to_active() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &(30 * DAY),
     );
@@ -105,7 +105,7 @@ fn non_owner_cannot_confirm() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &(30 * DAY),
     );
@@ -140,7 +140,7 @@ fn cannot_confirm_active_will() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -180,7 +180,7 @@ fn confirmation_window_expiration() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &confirmation_window,
     );

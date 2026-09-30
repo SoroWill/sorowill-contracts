@@ -68,6 +68,31 @@ If you conduct security research in good faith and follow these guidelines, we w
 
 ---
 
+## Known Risks & Mitigations
+
+### Replay of `reveal_and_claim` (#440)
+
+A hashed beneficiary claims by revealing a pre-image of the commitment stored
+on the will. That pre-image is public once the claim transaction is submitted,
+so without extra checks an observer could replay it or front-run it. The
+contract mitigates this as follows:
+
+- **One claim per slot.** Each hashed slot has a `claimed` flag, which is set
+  and persisted in the same invocation that pays out, before the token
+  transfer. Any later call for that slot fails with `AlreadyClaimed`.
+- **Pre-image bound to the recipient.** The pre-image must be
+  `claimant.to_xdr() || salt`. The contract checks the prefix against the
+  `claimant` argument, and `claimant` must authorize the call. Someone who
+  copies the pre-image cannot redirect the payout to their own address.
+- **Signed invocations cannot be replayed.** Soroban authorization entries
+  carry a nonce and an expiration ledger.
+
+Integrators must build commitments as
+`sha256(beneficiary_address.to_xdr() || salt)` with a random salt of at least
+16 bytes. A commitment built any other way can never be claimed.
+
+---
+
 ## Rewards & Stellar Wave Program
 
 Resolutions for verified security vulnerabilities reported under this policy are eligible for recognition and reward distribution through the **Stellar Wave Program** on Drips. Point allocations are determined based on severity classification (Critical, High, Medium, Low).

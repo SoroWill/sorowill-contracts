@@ -59,7 +59,7 @@ fn top_up_with_new_token_is_reflected_in_get_will_and_released() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );

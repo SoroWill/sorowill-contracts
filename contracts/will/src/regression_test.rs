@@ -78,7 +78,7 @@ fn issue_191_clone_will_increments_active_count() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -164,7 +164,7 @@ fn issue_194_get_wills_by_owner_and_status_with_pagination() {
             &90,
             &7,
             &vec![&env],
-            &2,
+            &0,
             &None,
             &0,
         );
@@ -231,7 +231,7 @@ fn issue_193_paginate_with_remove_readd_beneficiary() {
         &90,
         &7,
         &vec![&env],
-        &2,
+        &0,
         &None,
         &0,
     );
@@ -247,7 +247,7 @@ fn issue_193_paginate_with_remove_readd_beneficiary() {
             &90,
             &7,
             &vec![&env],
-            &2,
+            &0,
             &None,
             &0,
         );

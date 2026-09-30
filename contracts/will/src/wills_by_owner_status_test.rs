@@ -42,7 +42,7 @@ fn filters_wills_by_owner_and_status() {
             &90,
             &7,
             &vec![&env],
-            &2,
+            &0,
             &None,
             &0,
         )

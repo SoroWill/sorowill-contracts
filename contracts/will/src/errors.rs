@@ -32,10 +32,17 @@ pub enum WillError {
     CheckinNotDue = 10,
     /// An amount of zero (or less) was supplied where a positive amount is required.
     ZeroAmount = 11,
+    /// Too many beneficiaries (or guardians/tokens) were supplied, or the list
+    /// was empty. A will may name at most `MAX_BENEFICIARIES` (10)
+    /// beneficiaries; see the README FAQ for why the cap exists.
     /// A list-length cap was exceeded. Raised by:
     /// - a `beneficiaries` list that is empty or longer than
     ///   `MAX_BENEFICIARIES` — `create_will`, `update_beneficiaries`,
     ///   `update_will_settings` and each `batch_create_wills` spec;
+    /// - a `renounce_beneficiary` call that would leave the will with no
+    ///   beneficiaries at all: the last remaining beneficiary cannot renounce,
+    ///   because a will with an empty list would have nobody for
+    ///   `release_inheritance` to pay (#361);
     /// - a `guardians` list longer than `MAX_GUARDIANS` — from
     ///   `assert_valid_guardians`, reached by every entry point that installs
     ///   or replaces a guardian list;
@@ -136,6 +143,9 @@ pub enum WillError {
     TooManyWills = 37,
     /// A guardian has not accepted their role and cannot vote.
     GuardianNotConsented = 38,
+    /// A stored will could not be decoded as the current `Will` layout or any
+    /// known legacy layout (see `migration.rs`).
+    UnsupportedSchemaVersion = 39,
     /// Cannot merge: the two wills' primary tokens differ, so summing their
     /// legacy `balance` fields would be nonsensical.
     PrimaryTokenMismatch = 39,
@@ -149,7 +159,11 @@ pub enum WillError {
     BatchTooLarge = 41,
     /// The `tokens` list supplied to `create_will`, `clone_will`, `split_will`
     /// or `batch_create_wills` was empty, or held more than `MAX_TOKENS`
-    /// entries (#390).
+    /// entries (#390). Also raised by `top_up` when the token being topped up
+    /// is not already in the will's `balances` map and that map already holds
+    /// `MAX_TOKENS` distinct tokens, since each new entry is another storage
+    /// read on every release or refund (#358); topping up a token the will
+    /// already holds stays allowed at the cap.
     InvalidTokenCount = 42,
     /// `reveal_and_claim` was called with a pre-image that is not exactly
     /// `SHA256_DIGEST_LEN` bytes. A shorter or longer pre-image could never

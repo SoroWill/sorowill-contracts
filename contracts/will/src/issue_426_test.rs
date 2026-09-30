@@ -82,7 +82,7 @@ fn fixed_first_then_percentage_distributes_correctly() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );
@@ -131,7 +131,7 @@ fn percentage_first_then_fixed_distributes_consistently() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );
@@ -187,7 +187,7 @@ fn multiple_fixed_after_percentage_distributes_correctly() {
         &90,
         &7,
         &vec![&env],
-        &1,
+        &0,
         &None,
         &0,
     );

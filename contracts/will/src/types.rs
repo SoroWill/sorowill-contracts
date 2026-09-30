@@ -83,13 +83,16 @@ pub struct Guardian {
 /// A privacy-preserving beneficiary entry (issue #46).
 ///
 /// Instead of a raw address the owner stores a SHA-256 commitment hash of the
-/// pre-image `<address_bytes> || <salt_bytes>`. At claim time the beneficiary
-/// calls `reveal_and_claim` with the pre-image; the contract verifies the hash
-/// matches and pays out to the revealed address.
+/// pre-image `<address.to_xdr()> || <salt_bytes>`. At claim time the
+/// beneficiary calls `reveal_and_claim` with the pre-image. The contract checks
+/// that the pre-image's address prefix is the caller's own address, checks that
+/// its hash matches the stored commitment, and pays out to that address
+/// (issue #452).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HashedBeneficiary {
-    /// SHA-256 hash of the pre-image (address bytes concatenated with salt).
+    /// 32-byte SHA-256 hash of the pre-image (XDR-encoded address concatenated
+    /// with salt).
     pub commitment: Bytes,
     /// Percentage of the will's balance this beneficiary receives.
     pub percentage: u32,
@@ -151,6 +154,27 @@ pub struct TokenLockedBalance {
 }
 
 /// Aggregate protocol statistics that can be queried directly on-chain.
+///
+/// # Consistency invariant
+///
+/// These counters are maintained incrementally by every entry point that
+/// creates a will, moves funds in or out of one, or moves it into a terminal
+/// state. They are assumed to always equal what
+/// [`WillContract::audit_protocol_stats`](crate::WillContract::audit_protocol_stats)
+/// recomputes from storage:
+///
+/// - `active_will_count` == number of wills in `PendingConfirmation`,
+///   `Active` or `Triggered` status.
+/// - each `total_locked` == sum of that token's entry in `Will::balances`
+///   across those same wills.
+///
+/// # Successful operations only
+///
+/// The stats reflect only *successful* state transitions. A Soroban
+/// invocation that fails (panics or returns a contract error) rolls back
+/// every storage write it made, so a failed operation cannot be counted
+/// on-chain. Failure rates must be measured off-chain from transaction
+/// results.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProtocolStats {
@@ -159,6 +183,25 @@ pub struct ProtocolStats {
     /// Locked balances by token for all currently active wills.
     pub total_locked_by_token: Vec<TokenLockedBalance>,
 }
+
+/// Aggregate statistics for the wills owned by a single address (issue #447).
+///
+/// Returned by `get_owner_stats` so clients can show ownership totals
+/// alongside a paginated `get_wills_by_owner` listing without walking every
+/// page themselves.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnerStats {
+    /// Total number of wills indexed under this owner, in any status.
+    pub total_wills: u32,
+    /// Number of those wills that are still non-terminal
+    /// (`PendingConfirmation`, `Active` or `Triggered`).
+    pub active_wills: u32,
+    /// Locked balances by token, summed across the owner's non-terminal wills.
+    pub total_locked_by_token: Vec<TokenLockedBalance>,
+}
+
+
 
 /// A beneficiary's claimable share in a pull-based distribution.
 ///
@@ -254,13 +297,17 @@ pub struct Will {
     /// Optional guardians (up to 3) who may force an early release
     /// via a weight-based quorum using `guardian_trigger`.
     pub guardians: Vec<Guardian>,
+    /// Accumulated weight of live guardian votes cast in the current cycle.
+    /// Recomputed from the current guardian list on every vote (issue #453),
+    /// so votes from removed, rejected or expired guardians are never counted.
     /// Accumulated weight of guardian votes cast in the current cycle.
     /// Quorum is reached when this reaches (or exceeds) `guardian_threshold`;
     /// see [`Will::guardian_threshold`] for the comparison and
     /// [`Will::guardian_votes`] for the corresponding head count.
     pub guardian_vote_weight: u32,
-    /// Number of distinct guardians who have voted to trigger the current
-    /// guardian-release cycle.
+    /// Number of distinct guardians on the current list with a live vote to
+    /// trigger the current guardian-release cycle. Never exceeds
+    /// `guardians.len()`. Release triggers when this reaches `guardian_threshold`.
     pub guardian_votes: u32,
     /// Accumulated weight of guardian votes cast toward cancelling the current
     /// trigger. Reaches quorum at `guardian_threshold`, returning the will to
@@ -293,6 +340,8 @@ pub struct Will {
     pub guardian_list_updated_at: u64,
     /// Schema version for this will. Used to track which contract version
     /// wrote this state and enable forward/backward compatible migrations.
+    /// See `migration.rs` and the "Storage schema versioning" section of
+    /// CONTRIBUTING.md for how new versions are introduced.
     pub schema_version: u32,
     /// Optional keeper bounty in basis points (e.g., 10 = 0.1%).
     /// When set, a portion of the inheritance is paid to callers who trigger
