@@ -35,15 +35,14 @@
 //! the new vote *replaces* the expired one rather than adding to it, so one
 //! guardian can never reach the quorum threshold alone (#372).
 //!
-//! Two distribution modes are supported:
-//! - **Push mode** (default): `distribute` transfers tokens directly to each
-//!   beneficiary in a single call.
-//! - **Pull mode**: `distribute` stores each beneficiary's share as a
-//!   claimable amount. Beneficiaries call [`WillContract::claim_share`]
-//!   independently to withdraw their share.
+//! Distribution is **push-only**: `distribute` transfers tokens directly to
+//! each beneficiary in a single call. There is no pull mode and no
+//! `claim_share` entry point. ([`WillContract::reveal_and_claim`] is unrelated
+//! to this — it only pays out a hashed, not-yet-revealed beneficiary's
+//! reserved share.)
 //!
-//! Grace periods may optionally be split into multiple tiers, each releasing
-//! a configurable percentage of the balance at a different time offset.
+//! A grace period is a single configurable window: the will is released once,
+//! in full, once that window has fully elapsed.
 
 mod batch_check_in_limit;
 mod errors;
@@ -309,6 +308,10 @@ mod issue_282_test;
 #[cfg(test)]
 mod issue_298_283_294_test;
 #[cfg(test)]
+mod issue_362_test;
+#[cfg(test)]
+mod issue_363_test;
+#[cfg(test)]
 mod issue_390_test;
 #[cfg(test)]
 mod issue_420_test;
@@ -552,8 +555,10 @@ impl WillContract {
     /// - `guardians`: 0 to `MAX_GUARDIANS` distinct addresses that may jointly
     ///   force an early release.
     /// - `guardian_threshold`: number of guardian votes required to trigger.
-    ///   Must be 0 when `guardians` is empty; must be between 1 and
-    ///   `guardians.len()` when the list is non-empty.
+    ///   **Ignored, and stored as `0`, when `guardians` is empty** — the
+    ///   guardian mechanism is disabled without guardians, so any value would
+    ///   describe an unreachable quorum (#363). When the list is non-empty the
+    ///   value must be between 1 and `guardians.len()`.
     /// - `keeper_bounty_bps`: optional keeper bounty in basis points.
     ///
     /// # Returns
@@ -578,6 +583,10 @@ impl WillContract {
     /// - [`WillError::DuplicateGuardian`] if the same guardian is supplied twice.
     /// - [`WillError::DuplicateToken`] if the same token address appears more
     ///   than once in `tokens`.
+    /// - [`WillError::InvalidGuardianThreshold`] if `guardians` is non-empty
+    ///   and `guardian_threshold` is not in `1..=guardians.len()`. A
+    ///   non-empty threshold with an *empty* `guardians` list is not an error:
+    ///   the argument is ignored and `0` is stored (#363).
     /// - [`WillError::InvalidPeriod`] if either period is zero or exceeds
     ///   [`MAX_PERIOD_DAYS`].
     /// - [`WillError::InvalidToken`] if any supplied token address does not respond to a
@@ -628,7 +637,7 @@ impl WillContract {
     ///     &90,  // checkin_period_days
     ///     &7,   // grace_period_days
     ///     &vec![&env],  // no guardians
-    ///     &0,           // guardian_threshold must be 0 when no guardians
+    ///     &0,           // guardian_threshold is ignored when there are no guardians
     ///     &None,        // no keeper bounty
     ///     &0,           // confirmation_delay_seconds (0 = starts Active immediately)
     /// );
@@ -678,23 +687,34 @@ impl WillContract {
         assert_valid_guardians(&env, &owner, &guardians);
         assert_valid_periods(&env, checkin_period_days, grace_period_days);
 
-        // Validate guardian threshold.
+        // Validate and normalise the guardian threshold.
         //
-        // An empty guardian list disables the guardian mechanism entirely, so a
-        // non-zero threshold would create an unreachable code path in
-        // `guardian_trigger` — votes can never be cast, and the threshold can
-        // never be reached. Reject that combination explicitly. If the list is
-        // non-empty, the threshold must fall in `1..=guardians.len()`.
-        if guardians.is_empty() {
-            if guardian_threshold != 0 {
-                panic_with_error!(&env, WillError::InvalidGuardianThreshold);
-            }
+        // An empty guardian list disables the guardian mechanism entirely, so
+        // the threshold is meaningless there: votes can never be cast, so any
+        // stored value — including a large caller-supplied one — describes a
+        // quorum that can never be reached *and* never evaluated. The argument
+        // is therefore ignored for a guardian-less will and normalised to 0.
+        //
+        // Normalising (rather than persisting the raw argument) matters
+        // beyond the guardian-less will itself: `update_guardians` and
+        // `update_will_settings` reject a new non-empty guardian list whose
+        // length is below the will's stored `guardian_threshold`, precisely so
+        // the threshold can never become unreachable. A will created with no
+        // guardians and a stray threshold of, say, 9 would therefore reject
+        // the owner's very next ordinary call to add two or three guardians,
+        // with a cause invisible from the call being made (#363).
+        //
+        // For a non-empty list the threshold is meaningful, so it must fall in
+        // `1..=guardians.len()` and is stored as supplied.
+        let guardian_threshold = if guardians.is_empty() {
+            0
         } else {
             let threshold_range = 1..=guardians.len();
             if !threshold_range.contains(&guardian_threshold) {
                 panic_with_error!(&env, WillError::InvalidGuardianThreshold);
             }
-        }
+            guardian_threshold
+        };
 
         // Convert addresses to Guardian structs with weight 1 and build balances.
         let mut guardian_structs: Vec<Guardian> = Vec::new(&env);
@@ -1128,10 +1148,12 @@ impl WillContract {
     /// timestamp, so the outcome no longer depends on which transaction the
     /// ledger happens to order first (#354).
     ///
-    /// In push mode (the default), tokens are transferred directly to each
-    /// beneficiary. In pull mode (`pull_distribution = true`), shares are
-    /// stored in claimable-shares storage and beneficiaries must call
-    /// `claim_share` to withdraw.
+    /// Tokens are transferred directly to each beneficiary ("push" mode);
+    /// there is no pull mode and no `claim_share` entry point. Whatever the
+    /// visible beneficiaries' allocations do not claim — a will made up only
+    /// of `Allocation::FixedAmount` entries, or the share a renounced
+    /// percentage beneficiary leaves behind (#362) — is refunded to the owner
+    /// rather than stranded in the contract (#383).
     ///
     /// Splits are computed from `will.beneficiaries` as it stands at the
     /// moment this call executes, not as it stood when [`trigger_will`] ran —
@@ -1419,7 +1441,33 @@ impl WillContract {
     /// Allows a beneficiary to renounce their inheritance share in advance.
     /// The renouncing beneficiary is removed from the beneficiary list, and
     /// their percentage is redistributed proportionally among the remaining
-    /// beneficiaries.
+    /// **percentage-based** beneficiaries.
+    ///
+    /// # Where the renounced share goes
+    ///
+    /// A `Percentage` share can only be redistributed to another
+    /// `Percentage` entry, so what happens to it depends on who is left:
+    ///
+    /// - **At least one `Percentage` beneficiary remains** — the renounced
+    ///   basis points are redistributed across them in proportion to their
+    ///   current shares, with the last one absorbing the rounding remainder so
+    ///   the total stays exactly 10,000 bps.
+    /// - **No `Percentage` beneficiary remains** (a will that mixed one
+    ///   `Percentage` entry with `FixedAmount` entries, where the percentage
+    ///   holder is the one renouncing) — the renunciation is still accepted,
+    ///   and the share is **returned to the owner** at release rather than
+    ///   reassigned (#362). `assert_valid_allocations` deliberately allows a
+    ///   `FixedAmount`-only list to leave headroom, and `distribute` refunds
+    ///   that headroom to the owner once no percentage beneficiary is left to
+    ///   absorb it (#383); the same path covers a share reserved for a hashed
+    ///   beneficiary added later (#181/#186). The remaining `FixedAmount`
+    ///   beneficiaries are paid exactly what they are entitled to and are never
+    ///   over-paid.
+    ///
+    /// A renounced `FixedAmount` share needs no redistribution at all:
+    /// `distribute` computes fixed payouts from the beneficiary list as it
+    /// stands at release, so removing the entry simply leaves that amount to
+    /// the remaining percentage beneficiaries.
     ///
     /// Only callable by a named beneficiary while the will is in `Active` or
     /// `Triggered` status. After renunciation, the will is saved but status
@@ -1573,12 +1621,37 @@ impl WillContract {
 
                 will.beneficiaries = updated_beneficiaries;
             } else {
+                // No percentage beneficiary is left to absorb the renounced
+                // share (e.g. the will mixed one `Percentage` entry with
+                // `FixedAmount` entries and that percentage beneficiary was
+                // the one renouncing).
+                //
+                // The shortened list is accepted as-is rather than rejected or
+                // rewritten (#362). `assert_valid_allocations` below permits a
+                // `FixedAmount`-only list that leaves headroom, so the
+                // renounced basis points are simply no longer claimed by any
+                // visible beneficiary — the corresponding balance stays in the
+                // will and is returned to the **owner** at release by
+                // `distribute`'s refund path (#383), or reserved for a hashed
+                // beneficiary added later (#181/#186) if one ever is. Nothing
+                // is stranded in the contract and no remaining beneficiary is
+                // over-paid; the owner is the only party who loses value
+                // relative to a will where the share had been redistributed.
+                //
+                // Rejecting instead would make a beneficiary's own irrevocable
+                // renunciation fail for a reason invisible in the call, and
+                // folding it into a `FixedAmount` entry would silently inflate
+                // a fixed claim that its holder agreed to in a different token
+                // amount. Returning it to the owner keeps the will's accounting
+                // honest and matches what a `FixedAmount`-only will already
+                // does with unclaimed headroom.
                 will.beneficiaries = new_beneficiaries;
             }
         } else {
-            // Either the renounced share was a fixed amount (nothing to
-            // redistribute), or no percentage beneficiary is left to absorb a
-            // percentage share.
+            // The renounced share was a fixed amount, so there are no basis
+            // points to redistribute: `distribute` recomputes fixed payouts
+            // from the shortened list, and the freed balance simply goes to
+            // the remaining percentage beneficiaries.
             will.beneficiaries = new_beneficiaries;
         }
 
@@ -1616,8 +1689,10 @@ impl WillContract {
     /// - [`WillError::InvalidGuardianThreshold`] if the new guardian list is
     ///   non-empty and the will's current `guardian_threshold` exceeds the new
     ///   list length (i.e. the threshold would become permanently unreachable).
-    ///   The owner must update the threshold via `update_guardian_threshold`
-    ///   before or after shrinking the guardian list to an appropriate size.
+    ///   This entry point cannot change the threshold itself; the owner must
+    ///   call [`Self::update_guardians_weighted`], whose optional
+    ///   `guardian_threshold` argument sets it, to pick a threshold that suits
+    ///   the new list — either before or after shrinking it.
     pub fn update_guardians(env: Env, will_id: u64, owner: Address, guardians: Vec<Address>) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -3179,19 +3254,20 @@ impl WillContract {
             assert_beneficiary_count(&env, &beneficiaries);
             assert_valid_guardians(&env, &owner, &guardians);
             assert_valid_periods(&env, checkin_period_days, grace_period_days);
-            // Mirror the `create_will` invariant: an empty guardian list
-            // requires threshold == 0; a non-empty list requires
-            // threshold in 1..=guardians.len().
-            if guardians.is_empty() {
-                if guardian_threshold != 0 {
-                    panic_with_error!(&env, WillError::InvalidGuardianThreshold);
-                }
+            // Mirror the `create_will` normalisation: an empty guardian list
+            // ignores the supplied threshold and stores 0, since a threshold
+            // with no guardians describes a quorum that can never be reached
+            // and would later block `update_guardians` (#363). A non-empty list
+            // requires threshold in 1..=guardians.len().
+            let guardian_threshold = if guardians.is_empty() {
+                0
             } else {
                 let threshold_range = 1..=guardians.len();
                 if !threshold_range.contains(&guardian_threshold) {
                     panic_with_error!(&env, WillError::InvalidGuardianThreshold);
                 }
-            }
+                guardian_threshold
+            };
 
             let mut balances: Map<Address, i128> = Map::new(&env);
             for (token_addr, amount) in tokens.iter() {
