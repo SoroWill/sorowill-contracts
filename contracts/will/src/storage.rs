@@ -105,6 +105,13 @@ pub(crate) enum DataKey {
     /// Global index of all wills currently in `Triggered` status,
     /// used for efficient keeper/discovery queries.
     TriggeredWills,
+    /// An amount of `token` still owed to `recipient` from `will_id`'s
+    /// `distribute()` call, because the transfer failed at the time (#459).
+    /// Removed once `retry_failed_payout` successfully delivers it. Entirely
+    /// independent of the `Will` record's own lifecycle — a retry never
+    /// re-reads or re-validates the will, so it still succeeds even if the
+    /// will has since been archived.
+    FailedPayout(u64, Address, Address),
 }
 
 /// The data stored for each guardian vote: the Unix timestamp when the vote
@@ -1108,4 +1115,38 @@ pub fn archive_will(env: &Env, will: &Will) {
     env.storage()
         .persistent()
         .remove(&DataKey::WillHistory(will.id));
+}
+
+/// Records (or overwrites) the amount of `token` still owed to `recipient`
+/// from `will_id`, because `distribute`'s transfer to them failed (#459).
+pub fn set_failed_payout(
+    env: &Env,
+    will_id: u64,
+    token: &Address,
+    recipient: &Address,
+    amount: i128,
+) {
+    let key = DataKey::FailedPayout(will_id, token.clone(), recipient.clone());
+    env.storage().persistent().set(&key, &amount);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+}
+
+/// Reads the amount still owed for `(will_id, token, recipient)`, or `None`
+/// if nothing is recorded (never failed, or already retried successfully).
+pub fn get_failed_payout(
+    env: &Env,
+    will_id: u64,
+    token: &Address,
+    recipient: &Address,
+) -> Option<i128> {
+    let key = DataKey::FailedPayout(will_id, token.clone(), recipient.clone());
+    env.storage().persistent().get(&key)
+}
+
+/// Clears a failed-payout record once `retry_failed_payout` has delivered it.
+pub fn remove_failed_payout(env: &Env, will_id: u64, token: &Address, recipient: &Address) {
+    let key = DataKey::FailedPayout(will_id, token.clone(), recipient.clone());
+    env.storage().persistent().remove(&key);
 }

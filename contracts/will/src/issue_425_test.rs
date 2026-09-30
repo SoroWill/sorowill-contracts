@@ -35,10 +35,7 @@ use soroban_sdk::{
     vec, Address, Env,
 };
 
-use crate::{
-    Allocation, Beneficiary, GuardianVoteReason, WillContract, WillContractClient, WillError,
-    WillStatus,
-};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillError, WillStatus};
 
 const DAY: u64 = 86_400;
 
@@ -47,8 +44,7 @@ const DAY: u64 = 86_400;
 /// quorum cancel the trigger, and returns the environment + client + guardian
 /// addresses + will id.  The will is `Active` and in the "start of a fresh
 /// voting cycle" state when this function returns.
-fn setup_after_cancel_quorum<'a>(
-) -> (Env, Address, Address, Address, Address, u64) {
+fn setup_after_cancel_quorum() -> (Env, Address, Address, Address, Address, u64) {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -78,7 +74,7 @@ fn setup_after_cancel_quorum<'a>(
         &90, // 90-day check-in period
         &7,  // 7-day grace period
         &vec![&env, guardian_a.clone(), guardian_b.clone()],
-        &2,  // threshold: both guardians required
+        &2, // threshold: both guardians required
         &None,
         &0,
     );
@@ -97,9 +93,19 @@ fn setup_after_cancel_quorum<'a>(
 
     // The will is now Active again with zeroed vote counters.
     let will = client.get_will(&will_id);
-    assert_eq!(will.status, WillStatus::Active, "precondition: will is Active after cancel quorum");
-    assert_eq!(will.guardian_cancel_votes, 0, "precondition: cancel votes cleared");
-    assert_eq!(will.guardian_votes, 0, "precondition: trigger votes cleared");
+    assert_eq!(
+        will.status,
+        WillStatus::Active,
+        "precondition: will is Active after cancel quorum"
+    );
+    assert_eq!(
+        will.guardian_cancel_votes, 0,
+        "precondition: cancel votes cleared"
+    );
+    assert_eq!(
+        will.guardian_votes, 0,
+        "precondition: trigger votes cleared"
+    );
 
     (env, contract_id, guardian_a, guardian_b, owner, will_id)
 }
@@ -109,8 +115,7 @@ fn setup_after_cancel_quorum<'a>(
 /// that the guardian list was preserved, not accidentally cleared (#425).
 #[test]
 fn non_guardian_trigger_rejected_after_cancel_quorum() {
-    let (env, contract_id, _guardian_a, _guardian_b, _owner, will_id) =
-        setup_after_cancel_quorum();
+    let (env, contract_id, _guardian_a, _guardian_b, _owner, will_id) = setup_after_cancel_quorum();
     let client = WillContractClient::new(&env, &contract_id);
     let stranger = Address::generate(&env);
 
@@ -130,8 +135,7 @@ fn non_guardian_trigger_rejected_after_cancel_quorum() {
 /// guardian list and threshold were preserved, not cleared (#425).
 #[test]
 fn guardian_trigger_succeeds_after_cancel_quorum() {
-    let (env, contract_id, guardian_a, guardian_b, _owner, will_id) =
-        setup_after_cancel_quorum();
+    let (env, contract_id, guardian_a, guardian_b, _owner, will_id) = setup_after_cancel_quorum();
     let client = WillContractClient::new(&env, &contract_id);
 
     // Advance past the next check-in deadline and trigger again.
@@ -163,8 +167,7 @@ fn guardian_trigger_succeeds_after_cancel_quorum() {
 /// voting cycle, not an inconsistency.
 #[test]
 fn vote_counters_are_zero_after_cancel_quorum() {
-    let (env, contract_id, _guardian_a, _guardian_b, _owner, will_id) =
-        setup_after_cancel_quorum();
+    let (env, contract_id, _guardian_a, _guardian_b, _owner, will_id) = setup_after_cancel_quorum();
     let client = WillContractClient::new(&env, &contract_id);
 
     let will = client.get_will(&will_id);
@@ -181,8 +184,7 @@ fn vote_counters_are_zero_after_cancel_quorum() {
     );
     // The threshold is preserved.
     assert_eq!(
-        will.guardian_threshold,
-        2,
+        will.guardian_threshold, 2,
         "guardian threshold must be preserved after cancel quorum"
     );
 }
