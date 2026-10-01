@@ -184,6 +184,29 @@ pub struct ProtocolStats {
     pub total_locked_by_token: Vec<TokenLockedBalance>,
 }
 
+/// Result of comparing the incrementally-maintained [`ProtocolStats`] against
+/// a fresh recomputation from every will's stored balance (#441, #498).
+///
+/// Returned by `WillContract::audit_protocol_stats`. `consistent` is the
+/// single field most callers need; `stored`/`computed` are kept alongside it
+/// so a caller who finds `consistent == false` can pinpoint exactly which
+/// counter (and, within `total_locked_by_token`, which token) drifted,
+/// without a second call.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProtocolStatsAudit {
+    /// The stats currently persisted in instance storage, maintained
+    /// incrementally by every entry point that touches a will.
+    pub stored: ProtocolStats,
+    /// The stats freshly recomputed by scanning every will's stored balance
+    /// (see `storage::recompute_protocol_stats`) — the ground truth this
+    /// audit checks `stored` against.
+    pub computed: ProtocolStats,
+    /// True when `stored` and `computed` agree on `active_will_count` and
+    /// every token's `total_locked`.
+    pub consistent: bool,
+}
+
 /// Aggregate statistics for the wills owned by a single address (issue #447).
 ///
 /// Returned by `get_owner_stats` so clients can show ownership totals
@@ -409,6 +432,18 @@ pub struct WillStatusTransition {
     /// A short label describing what caused the transition
     /// (e.g. "create", "checkin", "trigger", "release").
     pub action: Symbol,
+    /// Monotonically increasing sequence number, unique per will and
+    /// assigned in append order by `storage::append_history` (#500).
+    ///
+    /// Unlike an entry's position in the retained trail -- which shifts
+    /// whenever `storage::MAX_HISTORY_ENTRIES` trims the oldest entry, so the
+    /// same index can silently point at a different, newer entry over time --
+    /// `seq` never changes once assigned. A caller that stores a `seq` it has
+    /// already seen can detect a gap (entries trimmed out from under it)
+    /// instead of misreading a shifted position as unchanged, which is what
+    /// made `check_in`/`emergency_checkin` history reads stale under
+    /// `paginate_history`'s positional cursor.
+    pub seq: u64,
 }
 
 #[cfg(test)]

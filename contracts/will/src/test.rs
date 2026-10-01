@@ -96,9 +96,13 @@ fn advance_time(env: &Env, seconds: u64) {
 #[test]
 fn test_get_contract_version() {
     let (_, client, _, _, _) = setup();
-    // Baseline version is 1.0.0, encoded as 1_000_000.
     assert_eq!(client.get_contract_version(), CONTRACT_VERSION);
-    assert_eq!(client.get_contract_version(), 1_000_000);
+    // This hardcoded literal must track CONTRACT_VERSION's current value --
+    // it was still 1_000_000 (baseline 1.0.0) after CONTRACT_VERSION had
+    // already moved to 1_002_000 (1.2.0), which `issue_501_test.rs` and
+    // `.github/scripts/check-contract-version.sh` now guard against drifting
+    // again (#501).
+    assert_eq!(client.get_contract_version(), 1_003_000);
 }
 
 const DAY: u64 = 86_400;

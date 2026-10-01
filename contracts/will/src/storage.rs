@@ -100,6 +100,13 @@ pub(crate) enum DataKey {
     GuardianCancelVote(u64, Address),
     /// Audit trail of status transitions for a will.
     WillHistory(u64),
+    /// Monotonically increasing counter of history entries ever appended for
+    /// a will, used to stamp [`crate::types::WillStatusTransition::seq`]
+    /// (#500). Kept apart from the `WillHistory` vector itself so it survives
+    /// `MAX_HISTORY_ENTRIES` trimming unchanged -- the counter only ever goes
+    /// up, regardless of how many old entries have been dropped from the
+    /// front of the trail.
+    WillHistorySeq(u64),
     /// Archived state of a will that has been Released or Cancelled.
     ArchivedWill(u64),
     /// Global index of all wills currently in `Triggered` status,
@@ -997,18 +1004,42 @@ pub const MAX_HISTORY_ENTRIES: u32 = 50;
 /// Maximum number of wills returned per page.
 pub const MAX_PAGE_SIZE: u32 = 50;
 
+/// Allocates and persists the next history sequence number for `will_id`
+/// (#500). Starts at `1` so `0` can unambiguously mean "no entries yet" for
+/// any caller that wants it.
+fn next_history_seq(env: &Env, will_id: u64) -> u64 {
+    let key = DataKey::WillHistorySeq(will_id);
+    let next: u64 = env.storage().persistent().get(&key).unwrap_or(0) + 1;
+    env.storage().persistent().set(&key, &next);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+    next
+}
+
 /// Appends a status transition entry to `will_id`'s on-chain audit trail.
+///
+/// Stamps the entry with the next value from `will_id`'s dedicated sequence
+/// counter (#500) -- any `seq` already set on `transition` is overwritten, so
+/// callers never need to (and cannot accidentally mis-)track sequencing
+/// themselves. This is what lets a reader distinguish "this entry was
+/// trimmed" (a gap in `seq`) from "nothing changed here", which a purely
+/// positional read of the trail cannot do once [`MAX_HISTORY_ENTRIES`]
+/// trimming has shifted every later entry's index.
 ///
 /// Trims the oldest entries once the trail reaches [`MAX_HISTORY_ENTRIES`] so
 /// the persistent entry stays bounded (see that constant for the rationale).
 pub fn append_history(env: &Env, will_id: u64, transition: &WillStatusTransition) {
+    let mut transition = transition.clone();
+    transition.seq = next_history_seq(env, will_id);
+
     let key = DataKey::WillHistory(will_id);
     let mut history: Vec<WillStatusTransition> = env
         .storage()
         .persistent()
         .get(&key)
         .unwrap_or_else(|| Vec::new(env));
-    history.push_back(transition.clone());
+    history.push_back(transition);
     // Drop from the front until the trail fits the cap. A `while` loop rather
     // than a single indexed removal keeps this correct if a future change
     // appends more than one entry per call.
@@ -1156,6 +1187,11 @@ pub fn archive_will(env: &Env, will: &Will) {
     env.storage()
         .persistent()
         .remove(&DataKey::WillHistory(will.id));
+    // The seq counter is just as unreachable as the trail it numbers once
+    // the will itself is gone, for the same reasons (#500).
+    env.storage()
+        .persistent()
+        .remove(&DataKey::WillHistorySeq(will.id));
 }
 
 /// Records (or overwrites) the amount of `token` still owed to `recipient`

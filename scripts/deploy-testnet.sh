@@ -24,6 +24,15 @@
 #
 # After it finishes, review and commit the updated deployments/testnet.json
 # — see CONTRIBUTING.md#updating-deploymentstestnetjson-after-a-redeploy.
+#
+# Version consistency (#501): CONTRACT_VERSION being correct in source is not
+# the same thing as the *deployed* contract actually running that source. A
+# stale local build, a wrong --wasm path, or deploying from the wrong git
+# worktree would all still "succeed" as far as `stellar contract deploy` is
+# concerned. So after deploying, this script calls the freshly deployed
+# contract's own `get_contract_version` over RPC and fails loudly, before
+# writing deployments/testnet.json, if it disagrees with the source
+# CONTRACT_VERSION that was supposedly just built and deployed.
 
 set -euo pipefail
 
@@ -35,12 +44,16 @@ NETWORK="${NETWORK:-testnet}"
 RPC_URL="${RPC_URL:-https://soroban-testnet.stellar.org}"
 WASM_PATH="target/wasm32v1-none/release/will.wasm"
 OUTPUT_FILE="deployments/testnet.json"
+LIB_RS="contracts/will/src/lib.rs"
 
 command -v stellar >/dev/null 2>&1 || {
   echo "error: stellar-cli not found on PATH. Install it with:" >&2
   echo "  cargo install --locked stellar-cli" >&2
   exit 1
 }
+
+echo "==> Checking CONTRACT_VERSION is consistent with Cargo.toml before building"
+"$ROOT_DIR/.github/scripts/check-contract-version.sh"
 
 echo "==> Building contract for wasm32v1-none (release)"
 cargo build --package will --release --target wasm32v1-none
@@ -65,6 +78,27 @@ fi
 DEPLOYED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
 echo "==> Deployed WillContract: $CONTRACT_ID at $DEPLOYED_AT"
+
+echo "==> Verifying deployed contract's get_contract_version matches source CONTRACT_VERSION"
+EXPECTED_VERSION_RAW="$(grep -E '^pub const CONTRACT_VERSION: u32 = ' "$LIB_RS" | sed -E 's/^pub const CONTRACT_VERSION: u32 = ([0-9_]+);.*/\1/')"
+EXPECTED_VERSION="${EXPECTED_VERSION_RAW//_/}"
+
+ONCHAIN_VERSION_RAW="$(stellar contract invoke \
+  --id "$CONTRACT_ID" \
+  --source "$DEPLOY_IDENTITY" \
+  --network "$NETWORK" \
+  --rpc-url "$RPC_URL" \
+  -- get_contract_version)"
+# stellar-cli prints scalar results as bare JSON (a plain number here); strip
+# any surrounding quotes/whitespace defensively before comparing.
+ONCHAIN_VERSION="$(echo "$ONCHAIN_VERSION_RAW" | tr -d '"[:space:]')"
+
+if [[ "$ONCHAIN_VERSION" != "$EXPECTED_VERSION" ]]; then
+  echo "error: deployed contract $CONTRACT_ID reports get_contract_version() = $ONCHAIN_VERSION, but source CONTRACT_VERSION is $EXPECTED_VERSION" >&2
+  echo "error: the deployment is inconsistent with the source tree -- do NOT record this in $OUTPUT_FILE. Check for a stale build or wrong --wasm artifact." >&2
+  exit 1
+fi
+echo "==> OK: on-chain version $ONCHAIN_VERSION matches source CONTRACT_VERSION"
 
 cat > "$OUTPUT_FILE" <<JSON
 {
