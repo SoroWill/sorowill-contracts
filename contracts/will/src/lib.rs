@@ -354,6 +354,8 @@ mod renounce_validation_test;
 mod set_delegate_test;
 #[cfg(test)]
 mod split_will_test;
+#[cfg(test)]
+mod issue_490_493_test;
 // NOTE: `test.rs` (5800+ lines) is intentionally NOT wired in here. It
 // predates the current multi-token/Allocation-enum contract API entirely
 // (it exclusively uses a removed single-token `basis_points` signature) and
@@ -453,6 +455,17 @@ const MAX_GUARDIANS: u32 = 3;
 const MAX_PERIOD_DAYS: u64 = 3_650;
 /// Maximum number of distinct tokens a single will may hold.
 const MAX_TOKENS: u32 = 10;
+
+/// Upper bound on beneficiary transfers a single `release_inheritance` (or
+/// guardian-quorum release) performs (#491).
+///
+/// `distribute` makes at most one transfer per beneficiary per token, and a
+/// will names at most [`MAX_BENEFICIARIES`] beneficiaries and holds at most
+/// `MAX_TOKENS` tokens, so one release is bounded by this many beneficiary
+/// payouts, plus at most one keeper bounty and one owner refund per token.
+/// Distribution therefore needs no pagination: the work is bounded by
+/// construction rather than by the caller.
+pub const MAX_RELEASE_PAYOUTS: u32 = MAX_BENEFICIARIES * MAX_TOKENS;
 
 /// Exact byte length of a hashed beneficiary's pre-image: a 32-byte address
 /// fingerprint followed by a 32-byte salt chosen by the beneficiary at
@@ -904,6 +917,21 @@ impl WillContract {
     ///   [`WillError::DuplicateBeneficiary`] or [`WillError::FixedAmountExceedsBalance`]
     ///   if the stored beneficiary list no longer passes the same validation
     ///   `create_will` applied (issue #448).
+    ///
+    /// # Re-validation at confirmation time (#493)
+    ///
+    /// - **Ownership** is checked against the will's *stored* owner on every
+    ///   call (`load_owned` plus `owner.require_auth()`), never against
+    ///   anything captured at creation. No entry point reassigns an existing
+    ///   will's `owner`; if one is ever added, a confirmation by the previous
+    ///   owner is rejected with [`WillError::NotOwner`].
+    /// - **Beneficiaries** are re-validated as described above. Soroban
+    ///   exposes no host function to test whether a Stellar account exists,
+    ///   so account existence cannot be verified on-chain. A beneficiary
+    ///   that cannot receive a token at release time is instead handled by
+    ///   `distribute`'s failed-payout record and
+    ///   [`Self::retry_failed_payout`] (#459), so it never aborts the release
+    ///   for everyone else.
     pub fn confirm_will(env: Env, will_id: u64, owner: Address) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -1217,7 +1245,28 @@ impl WillContract {
     /// see [`renounce_beneficiary`]'s docs for the full interaction with an
     /// in-progress grace period.
     ///
+    /// # Atomicity and re-validation (#490)
+    ///
+    /// The whole call runs as one atomic Soroban invocation: no other
+    /// transaction can trigger, check in, or otherwise change this will
+    /// between the status check below and the transfers in `distribute`, so
+    /// the will is effectively locked for the duration of the call. As defense
+    /// in depth, the will is nevertheless re-read from storage and its status
+    /// re-validated immediately before any funds move.
+    ///
+    /// # Bounded work (#491)
+    ///
+    /// A will names at most [`MAX_BENEFICIARIES`] beneficiaries and holds at
+    /// most `MAX_TOKENS` tokens, so one release performs at most
+    /// [`MAX_RELEASE_PAYOUTS`] beneficiary transfers. Both caps are enforced
+    /// whenever the lists are set and re-checked here. If a release ever did
+    /// exceed the transaction budget, the atomic invocation would roll back
+    /// entirely rather than leave beneficiaries half-paid.
+    ///
     /// # Panics
+    /// - [`WillError::TooManyBeneficiaries`] / [`WillError::InvalidTokenCount`]
+    ///   if the will names more than [`MAX_BENEFICIARIES`] beneficiaries or
+    ///   holds more than `MAX_TOKENS` tokens (#491).
     /// - [`WillError::WillNotTriggered`] if the will is not `Triggered`, or is
     ///   `Triggered` without a recorded `trigger_time`.
     /// - [`WillError::GracePeriodNotExpired`] if
@@ -1290,6 +1339,10 @@ impl WillContract {
                 storage::adjust_locked_value(&env, &token_addr, -balance);
             }
         }
+
+        // Re-validate status and size immediately before any funds move
+        // (#490, #491). See `assert_release_preconditions`.
+        assert_release_preconditions(&env, will_id, &will);
 
         distribute(&env, &mut will, &caller);
     }
@@ -4817,6 +4870,36 @@ fn assert_valid_hashed_beneficiary(
     // hashed beneficiary's share — so it silently dilutes them.
     if percentage == 0 {
         panic_with_error!(env, WillError::InvalidPercentages);
+    }
+}
+
+/// Final pre-transfer guard for `release_inheritance` (#490, #491).
+///
+/// Soroban executes a contract invocation atomically and single-threaded: no
+/// other transaction can change this will's storage between the status check
+/// at the top of `release_inheritance` and the transfers in `distribute`, so
+/// the will is effectively locked for the whole call. This re-check is defense
+/// in depth against code paths *inside* the call: it reloads the will from
+/// storage and requires both the stored and the in-memory copy to still be
+/// `Triggered`, with a recorded `trigger_time`.
+///
+/// It also re-asserts the list caps (#491). Every entry point that sets
+/// beneficiaries or tokens already enforces them, but a will written under an
+/// older layout (see `migration.rs`) is re-checked here, so `distribute`
+/// never performs more than [`MAX_RELEASE_PAYOUTS`] beneficiary transfers.
+fn assert_release_preconditions(env: &Env, will_id: u64, will: &Will) {
+    let stored = load_will(env, will_id);
+    if will.status != WillStatus::Triggered
+        || stored.status != WillStatus::Triggered
+        || stored.trigger_time.is_none()
+    {
+        panic_with_error!(env, WillError::WillNotTriggered);
+    }
+    if will.beneficiaries.len() > MAX_BENEFICIARIES {
+        panic_with_error!(env, WillError::TooManyBeneficiaries);
+    }
+    if will.balances.len() > MAX_TOKENS {
+        panic_with_error!(env, WillError::InvalidTokenCount);
     }
 }
 

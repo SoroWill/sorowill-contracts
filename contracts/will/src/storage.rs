@@ -931,15 +931,35 @@ pub fn reset_guardian_cancel_votes(env: &Env, will: &Will) {
 pub fn paginate_ids(env: &Env, ids: &Vec<u64>, cursor: Option<u64>, limit: u32) -> Vec<u64> {
     let page_size = limit.min(MAX_PAGE_SIZE);
     let mut result = Vec::new(env);
-    let mut skip = cursor.is_some();
-    let cursor_val = cursor.unwrap_or(0);
+    if page_size == 0 {
+        return result;
+    }
+
+    // Cursor semantics (#492): the cursor is a *value bound* ("ids strictly
+    // greater than this"), never a position in the vector, so a cursor from
+    // a stale query stays well-defined:
+    // - if the cursor's own will was removed since the previous page, paging
+    //   resumes right after where it used to be: nothing is skipped and
+    //   nothing is repeated;
+    // - wills added since the previous page get higher ids and appear on a
+    //   later page;
+    // - a cursor at or beyond the largest indexed id (out of bounds), or any
+    //   cursor on an empty index, yields an empty page.
+    // Every id is compared against the cursor (not just the leading run), so
+    // a page can never contain an id at or below the cursor.
+    if let Some(cursor_val) = cursor {
+        // The index is ascending, so its last entry is the largest id.
+        match ids.last() {
+            Some(last) if cursor_val < last => {}
+            _ => return result,
+        }
+    }
 
     for id in ids.iter() {
-        if skip {
+        if let Some(cursor_val) = cursor {
             if id <= cursor_val {
                 continue;
             }
-            skip = false;
         }
         if result.len() >= page_size {
             break;
