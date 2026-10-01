@@ -15,8 +15,45 @@ gets its own [contract spec artifact](./spec) once exported.
   wills, the `total_count` of all matches and an explicit `next_cursor` (#455).
 - `WillError::DistributionMismatch` (39): release aborts if planned payouts for
   a token do not sum to exactly its balance (#456).
+- `archive_will` now has dedicated integration-test coverage confirming it
+  publishes the `archived` event through the real entry point, not just a
+  direct call to the events module (#494). The event itself (owner,
+  timestamp, terminal-status reason) was already implemented.
+- **CONTRACT_VERSION bumped to 1.3.0** (`1_003_000`) for the behavioral
+  changes below.
 
 ### Fixed
+- `reveal_and_claim` (pull-mode hashed-beneficiary claims) now pays every
+  token the will holds proportionally, not just the primary token -- a
+  multi-token will is no longer partially liquidated when a hashed
+  beneficiary claims (#497).
+- `reveal_and_claim`'s commitment check now uses a constant-time byte
+  comparison (`constant_time_bytes_eq`) instead of `==`, which short-circuits
+  on the first mismatching byte (#495).
+- Fixed three instances of the same bad-merge corruption pattern (a missing
+  closing brace immediately followed by a stale duplicate of
+  already-superseded logic) found while implementing the above, all in
+  `contracts/will/src/lib.rs`: `emergency_checkin` and `release_inheritance`
+  each had a shadowed, non-callable local `grace_deadline` where the shared
+  `grace_deadline()` helper should have been used directly (a hard compile
+  error); `release_inheritance`'s was additionally nested so the *entire*
+  function body only ran when the grace period had **not** yet expired, the
+  opposite of its purpose. `distribute()` had a duplicate, pre-#378/#384
+  keeper-bounty/fixed-amount computation left dangling inside an unclosed
+  `if`, which (had it compiled) would have let a `FixedAmount` allocation be
+  deducted from every token's balance instead of the primary token only, and
+  paid the primary token's share twice. (#751)
+- `WillError::UnsupportedSchemaVersion` and `WillError::PrimaryTokenMismatch`
+  both declared discriminant `39`, colliding with `DistributionMismatch` -- a
+  hard compile error (duplicate enum discriminant). Reassigned to `51` and
+  `52`; the README error-code table is updated to match. (#751)
+- `test.rs::test_get_contract_version`'s hardcoded `1_000_000` literal was
+  already stale relative to `CONTRACT_VERSION` before this PR; updated to
+  track the current value.
+- Added regression tests confirming percentage-sum validation
+  (`assert_valid_allocations`/`assert_valid_percentages`) is already
+  order-agnostic for interleaved `Percentage`/`FixedAmount` beneficiaries;
+  the reported bug was not reproducible against current code (#496).
 - Guardian release/cancel votes are tallied from per-guardian records, so a
   guardian re-voting after expiry is no longer counted twice (#458).
 - The keeper bounty is deducted from the will's balance instead of being paid

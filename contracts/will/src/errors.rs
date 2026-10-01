@@ -149,10 +149,17 @@ pub enum WillError {
     DistributionMismatch = 39,
     /// A stored will could not be decoded as the current `Will` layout or any
     /// known legacy layout (see `migration.rs`).
-    UnsupportedSchemaVersion = 39,
+    ///
+    /// #751 — previously also `= 39`, colliding with `DistributionMismatch`:
+    /// a hard compile error (duplicate discriminant), found while fixing
+    /// unrelated issues in this same file and corrected alongside them since
+    /// nothing else in this repo could compile until it was.
+    UnsupportedSchemaVersion = 51,
     /// Cannot merge: the two wills' primary tokens differ, so summing their
     /// legacy `balance` fields would be nonsensical.
-    PrimaryTokenMismatch = 39,
+    ///
+    /// #751 — previously also `= 39`; see `UnsupportedSchemaVersion` above.
+    PrimaryTokenMismatch = 52,
     /// The same token address was supplied more than once in a `tokens`
     /// list. `create_will` documents each token address as unique, and a
     /// duplicated entry would make the legacy `balance` mirror disagree with

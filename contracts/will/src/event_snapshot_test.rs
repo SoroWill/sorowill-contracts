@@ -529,9 +529,6 @@ fn test_batch_and_advanced_events_snapshot() {
         .expect("will_archived event not found");
     let data: (Address, u64, soroban_sdk::Symbol) = event_data.try_into_val(&env).unwrap();
     assert_eq!(data.0, owner, "archived event owner mismatch");
-    
-    let data: Address = event_data.try_into_val(&env).unwrap();
-    assert_eq!(data, owner, "archived event owner mismatch");
 
     // periods_updated event
     let new_checkin_period_days = 120u64;
