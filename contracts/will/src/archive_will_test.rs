@@ -125,7 +125,9 @@ fn archive_will_removes_cancelled_will_from_active_indexes() {
 /// Regression test for issue #331: archiving a will that is currently in
 /// `Triggered` status must remove its id from the global `TriggeredWills`
 /// index so that keepers iterating `get_triggered_wills()` never see a
-/// dangling id pointing at an entry that no longer resolves.
+/// dangling id pointing at an entry that no longer resolves. Also covers
+/// #462: this is precisely the triggered-state cleanup that guarantees
+/// nothing reactivates if an archival were ever reversed.
 #[test]
 fn archive_triggered_will_removes_id_from_triggered_index() {
     let (env, client, owner, token_address) = setup();
@@ -224,6 +226,10 @@ fn key_exists(env: &Env, contract_id: &Address, key: &DataKey) -> bool {
 /// the `WillHistory` entry and every `GuardianVote` / `GuardianCancelVote` entry
 /// behind. Those keys then described a will `load_will` can no longer resolve,
 /// while occupying ledger state until their TTL lapsed.
+///
+/// Also covers #462: a stray `GuardianVote`/`GuardianCancelVote` entry is
+/// exactly the "pending guardian vote" state that issue describes as unsafe to
+/// leave behind, since it would still be live if archival were ever reversed.
 ///
 /// Asserts each key is present before archival and absent after, so the test
 /// fails both if the cleanup regresses and if the setup silently stopped
