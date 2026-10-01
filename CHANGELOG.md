@@ -43,6 +43,18 @@ gets its own [contract spec artifact](./spec) once exported.
   cannot (#501).
 
 ### Fixed
+- `renounce_beneficiary` redistribution now caps the percentage total at
+  10,000 bps; the last remaining percentage beneficiary absorbs the rounding
+  remainder as a non-negative top-up, using checked arithmetic (#486).
+- The `renounce` event now carries `trigger_time: Option<u64>` so a
+  renunciation during a grace period can be tied to its trigger cycle.
+  **Breaking for indexers:** the event data tuple has a fourth field (#487).
+- Guardian-list updates (`update_guardians`, `update_guardians_weighted`,
+  `update_will_settings`) are rejected with the new
+  `WillError::GuardianCancelInProgress` (51) while guardian-cancel votes are
+  recorded, instead of silently wiping them (#488).
+- `update_guardians_weighted` rejects zero guardian weights with
+  `InvalidGuardianThreshold` instead of silently normalising them to 1 (#489).
 - `top_up` already accumulated (`existing + amount`) rather than overwriting
   when called for a token the will already holds a balance for -- documented
   this explicitly and added regression coverage, since `will.balances` being

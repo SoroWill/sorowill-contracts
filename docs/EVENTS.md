@@ -23,7 +23,7 @@ data, in order.
 | `closed` | `close_will` | `owner: Address` |
 | `archived` | `archive_will` | `(owner: Address, timestamp: u64, reason: Symbol)` |
 | `benefup` | `update_beneficiaries` | `(owner: Address, beneficiary_count: u32, beneficiaries: Vec<Beneficiary>)` |
-| `renounce` | `renounce_beneficiary` | `(beneficiary: Address, owner: Address)` |
+| `renounce` | `renounce_beneficiary` | `(beneficiary: Address, owner: Address, beneficiaries: Vec<Beneficiary>, trigger_time: Option<u64>)` — `trigger_time` is `Some(t)` when renounced during the grace period opened at `t`, `None` while `Active`. Renunciation is irreversible once emitted (#487). |
 | `guardup` | `update_guardians` | `owner: Address` |
 | `periodu` | `update_periods` | `(owner: Address, checkin_period_days: u64, grace_period_days: u64, next_deadline: u64)` |
 | `setupd` | `update_will_settings` | `(owner: Address, updated_fields: Vec<Symbol>)` |
