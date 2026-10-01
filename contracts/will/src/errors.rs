@@ -93,6 +93,8 @@ pub enum WillError {
     ///   `1..=sum(guardian weights)`.
     ///
     /// A threshold of 0, or one above the reachable maximum, is rejected there.
+    /// `update_guardians_weighted` also raises it for any `GuardianSpec` whose
+    /// `weight` is `0`: zero weights are rejected, not normalised to `1` (#489).
     /// The same error is also raised when *shrinking* a non-empty guardian list
     /// would leave the will's already-stored `guardian_threshold`
     /// permanently unreachable, and when `update_guardians_weighted` is called
@@ -210,4 +212,10 @@ pub enum WillError {
     /// it was already retried successfully, or the arguments do not match any
     /// payout `distribute` attempted (#459).
     NoFailedPayout = 50,
+    /// `update_guardians`, `update_guardians_weighted` or the guardian branch
+    /// of `update_will_settings` was called while guardian-cancel votes were
+    /// still recorded against the current guardian list. Replacing the list
+    /// would wipe those votes and let a fresh trigger bypass a cancel that was
+    /// accumulating against it, so the update is refused (#488).
+    GuardianCancelInProgress = 51,
 }

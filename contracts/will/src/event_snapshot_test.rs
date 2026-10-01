@@ -588,15 +588,21 @@ fn test_final_events_snapshot() {
             &beneficiary,
             &owner,
             &redistributed_beneficiaries,
+            Some(12345u64),
         );
     });
 
     let event_data = find_event_by_topic(&env, symbol_short!("renounce"), Some(will_id))
         .expect("beneficiary_renounced event not found");
-    let data: (Address, Address, soroban_sdk::Vec<Beneficiary>) =
+    let data: (Address, Address, soroban_sdk::Vec<Beneficiary>, Option<u64>) =
         event_data.try_into_val(&env).unwrap();
     assert_eq!(data.0, beneficiary, "renounced event beneficiary mismatch");
     assert_eq!(data.1, owner, "renounced event owner mismatch");
+    assert_eq!(
+        data.3,
+        Some(12345u64),
+        "renounced event trigger_time mismatch"
+    );
 
     // will_settings_updated event
     let update_fields = vec![&env, symbol_short!("benefup"), symbol_short!("guardup")];

@@ -148,13 +148,13 @@ fn weight_at_max_guardian_weight_is_accepted() {
     assert_eq!(will.guardians.get(0).unwrap().weight, MAX_GUARDIAN_WEIGHT);
 }
 
-/// A weight of zero is still normalised to one, as before.
+/// A weight of zero is rejected rather than silently normalised to one (#489).
 #[test]
-fn zero_weight_is_normalised_to_one() {
+fn zero_weight_is_rejected() {
     let (env, contract_id, owner, will_id) = setup();
     let client = WillContractClient::new(&env, &contract_id);
 
-    client.update_guardians_weighted(
+    let result = client.try_update_guardians_weighted(
         &will_id,
         &owner,
         &vec![
@@ -168,7 +168,7 @@ fn zero_weight_is_normalised_to_one() {
     );
 
     assert_eq!(
-        client.get_will(&will_id).guardians.get(0).unwrap().weight,
-        1
+        result,
+        Err(Ok(crate::WillError::InvalidGuardianThreshold.into()))
     );
 }
