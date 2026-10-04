@@ -269,16 +269,27 @@ pub fn periods_updated(
 /// (address + allocation pairs, already redistributed), so an off-chain
 /// indexer can reconstruct the new split directly from this event without a
 /// follow-up `get_will` call. Bounded by `MAX_BENEFICIARIES`.
+///
+/// `trigger_time` is the will's grace-cycle context at the moment of
+/// renunciation: `Some(timestamp)` if the will was `Triggered` (identifying
+/// which grace cycle the renunciation applies to), or `None` if it was still
+/// `Active`. Without this, a renunciation emitted during a grace period could
+/// not be distinguished from one made before the will was ever triggered,
+/// making it impossible to reconstruct the effective payout split from the
+/// event alone (#487). Renunciation is irreversible once this event is
+/// emitted — the redistribution it describes has already been applied to the
+/// will's stored beneficiary list.
 pub fn beneficiary_renounced(
     env: &Env,
     will_id: u64,
     beneficiary: &Address,
     owner: &Address,
     beneficiaries: &Vec<Beneficiary>,
+    trigger_time: Option<u64>,
 ) {
     env.events().publish(
         (symbol_short!("renounce"), will_id),
-        (beneficiary.clone(), owner.clone(), beneficiaries.clone()),
+        (beneficiary.clone(), owner.clone(), beneficiaries.clone(), trigger_time),
     );
 }
 

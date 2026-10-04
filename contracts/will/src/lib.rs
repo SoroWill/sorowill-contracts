@@ -369,6 +369,8 @@ mod uncovered_entrypoints_test;
 mod update_will_settings_test;
 #[cfg(test)]
 mod wills_by_owner_status_test;
+#[cfg(test)]
+mod issue_486_489_test;
 
 use soroban_sdk::{
     contract, contractimpl, log, panic_with_error, symbol_short, token, Address, Bytes, Env, Map,
@@ -530,7 +532,8 @@ const MAX_GET_WILLS_IDS: u32 = 50;
 ///
 /// A million-fold weighting already expresses any practical preference between
 /// guardians (say 1 against 1_000_000 for a single dominant guardian), so the
-/// cap costs no real expressiveness. A weight of `0` is still normalised to `1`.
+/// cap costs no real expressiveness. A weight of `0` is rejected with
+/// [`WillError::InvalidGuardianThreshold`] rather than normalised to `1` (#489).
 pub const MAX_GUARDIAN_WEIGHT: u32 = 1_000_000;
 
 soroban_sdk::contractmeta!(
@@ -1558,13 +1561,15 @@ impl WillContract {
     /// [`release_inheritance`] actually runs. Any renunciation submitted
     /// before that call, including one made moments before release, changes
     /// every remaining beneficiary's share immediately and irreversibly:
-    /// there is no separate confirmation step, no way to correlate a given
-    /// renunciation to "the trigger cycle it applied to", and no snapshot to
-    /// roll back to. Beneficiaries and owners who need the split to be
-    /// stable once a will is `Triggered` must treat the trigger event itself
-    /// as informational only and rely on the `beneficiary_renounced` event
-    /// stream (correlated by `will_id` and timestamp against `will_triggered`)
-    /// to reconstruct what happened during a given grace period.
+    /// there is no separate confirmation step and no snapshot to roll back
+    /// to. **Renunciation is final once the `beneficiary_renounced` event is
+    /// emitted** — the contract offers no entry point that undoes it.
+    ///
+    /// To make the effective split reconstructable without cross-referencing
+    /// timestamps, the event carries the full redistributed beneficiary list
+    /// and the will's `trigger_time`: `Some(t)` identifies the grace cycle
+    /// the renunciation applies to (the one opened by the trigger at `t`),
+    /// and `None` means the will was still `Active` (#487).
     ///
     /// # Parameters
     /// - `will_id`: the will to renounce beneficiary status from
@@ -1650,9 +1655,19 @@ impl WillContract {
             }
 
             if remaining_basis_points > 0 {
-                let mut updated_beneficiaries: Vec<Beneficiary> = Vec::new(&env);
-                let mut total_redistributed: u32 = 0;
-                let mut percentage_seen: u32 = 0;
+                // #486: the redistributed shares must add up to exactly the
+                // percentage total held before the renunciation, and never to
+                // more than 10_000 bps. Every non-last percentage entry takes
+                // the floor of its proportional share, so the floors can only
+                // under-shoot; the last percentage entry then takes whatever is
+                // left of this capped target. It therefore absorbs the rounding
+                // remainder as a non-negative top-up (overage, never underage),
+                // however unevenly the renounced share divides — e.g. a prime
+                // number of basis points.
+                let target_total: u32 = remaining_basis_points
+                    .saturating_add(renounced_basis_points)
+                    .min(10_000);
+
                 let mut percentage_total: u32 = 0;
                 for b in new_beneficiaries.iter() {
                     if let Allocation::Percentage(_) = b.allocation {
@@ -1660,25 +1675,38 @@ impl WillContract {
                     }
                 }
 
+                let mut updated_beneficiaries: Vec<Beneficiary> = Vec::new(&env);
+                let mut percentage_seen: u32 = 0;
+                let mut running_total: u32 = 0;
                 for beneficiary_entry in new_beneficiaries.iter() {
                     match beneficiary_entry.allocation {
                         Allocation::Percentage(bp) => {
                             percentage_seen += 1;
-                            let share_of_renounced = if percentage_seen == percentage_total {
-                                // Last percentage beneficiary absorbs the rounding remainder.
-                                renounced_basis_points - total_redistributed
+                            let new_bp = if percentage_seen == percentage_total {
+                                // Last percentage beneficiary: the rest of the
+                                // capped target. `checked_sub` reports an
+                                // over-allocation by the earlier entries as a
+                                // typed error instead of an arithmetic trap.
+                                match target_total.checked_sub(running_total) {
+                                    Some(rest) => rest,
+                                    None => {
+                                        panic_with_error!(&env, WillError::InvalidPercentages)
+                                    }
+                                }
                             } else {
+                                // floor(renounced * bp / remaining), in u128 so
+                                // the product cannot overflow.
                                 let portion = (renounced_basis_points as u128 * bp as u128)
                                     / remaining_basis_points as u128;
-                                total_redistributed =
-                                    total_redistributed.saturating_add(portion as u32);
-                                portion as u32
+                                bp.saturating_add(portion as u32)
+                            };
+                            running_total = match running_total.checked_add(new_bp) {
+                                Some(sum) => sum,
+                                None => panic_with_error!(&env, WillError::InvalidPercentages),
                             };
                             updated_beneficiaries.push_back(Beneficiary {
                                 address: beneficiary_entry.address.clone(),
-                                allocation: Allocation::Percentage(
-                                    bp.saturating_add(share_of_renounced),
-                                ),
+                                allocation: Allocation::Percentage(new_bp),
                             });
                         }
                         fixed => {
@@ -1688,6 +1716,11 @@ impl WillContract {
                             });
                         }
                     }
+                }
+
+                // Hard cap, independent of `assert_valid_allocations` below.
+                if running_total > 10_000 {
+                    panic_with_error!(&env, WillError::InvalidPercentages);
                 }
 
                 will.beneficiaries = updated_beneficiaries;
@@ -1740,7 +1773,14 @@ impl WillContract {
         let owner = will.owner.clone();
         storage::save_will(&env, &will);
 
-        events::beneficiary_renounced(&env, will_id, &beneficiary, &owner, &will.beneficiaries);
+        events::beneficiary_renounced(
+            &env,
+            will_id,
+            &beneficiary,
+            &owner,
+            &will.beneficiaries,
+            will.trigger_time,
+        );
     }
 
     /// Replaces the guardian list for `will_id`. Only possible while the will
@@ -1764,12 +1804,15 @@ impl WillContract {
     ///   call [`Self::update_guardians_weighted`], whose optional
     ///   `guardian_threshold` argument sets it, to pick a threshold that suits
     ///   the new list — either before or after shrinking it.
+    /// - [`WillError::GuardianCancelInProgress`] if guardian-cancel votes are
+    ///   still recorded against the current guardian list (#488).
     pub fn update_guardians(env: Env, will_id: u64, owner: Address, guardians: Vec<Address>) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
 
         assert_valid_guardians(&env, &owner, &guardians);
+        assert_no_guardian_cancel_in_flight(&env, &will);
 
         // Reject any update that would leave the existing threshold unreachable.
         // An empty guardian list disables the guardian mechanism entirely, so
@@ -1821,6 +1864,11 @@ impl WillContract {
     ///   if the resulting threshold is not in `1..=total_weight`. The sum is
     ///   accumulated with [`u32::checked_add`], so an unrepresentable total is
     ///   reported as a typed error rather than an arithmetic trap (#356).
+    ///   Also raised if any guardian's `weight` is `0`: zero weights are
+    ///   rejected rather than silently normalised to `1`, so the threshold is
+    ///   always validated against the weights actually stored (#489).
+    /// - [`WillError::GuardianCancelInProgress`] if guardian-cancel votes are
+    ///   still recorded against the current guardian list (#488).
     pub fn update_guardians_weighted(
         env: Env,
         will_id: u64,
@@ -1837,6 +1885,7 @@ impl WillContract {
             addrs.push_back(g.address.clone());
         }
         assert_valid_guardians(&env, &owner, &addrs);
+        assert_no_guardian_cancel_in_flight(&env, &will);
 
         let threshold = guardian_threshold.unwrap_or(will.guardian_threshold);
         if !guardians.is_empty() {
@@ -1856,11 +1905,18 @@ impl WillContract {
             // that cap can reintroduce a trap here.
             let mut total_weight: u32 = 0;
             for g in guardians.iter() {
-                let weight = g.weight.max(1);
-                if weight > MAX_GUARDIAN_WEIGHT {
+                // A weight of zero is rejected outright rather than silently
+                // promoted: a caller passing a zero-weight guardian expecting
+                // it to be excluded from quorum would otherwise see it
+                // promoted to weight 1, skewing total_weight and the
+                // resulting threshold range in a way they did not intend (#489).
+                if g.weight == 0 {
                     panic_with_error!(&env, WillError::InvalidGuardianThreshold);
                 }
-                match total_weight.checked_add(weight) {
+                if g.weight > MAX_GUARDIAN_WEIGHT {
+                    panic_with_error!(&env, WillError::InvalidGuardianThreshold);
+                }
+                match total_weight.checked_add(g.weight) {
                     Some(sum) => total_weight = sum,
                     None => panic_with_error!(&env, WillError::InvalidGuardianThreshold),
                 }
@@ -1876,9 +1932,11 @@ impl WillContract {
         storage::reset_guardian_cancel_votes(&env, &will);
         let mut guardian_structs: Vec<Guardian> = Vec::new(&env);
         for g in guardians.iter() {
+            // g.weight is already validated non-zero above when the list is
+            // non-empty; when empty this loop never runs.
             guardian_structs.push_back(Guardian {
                 address: g.address,
-                weight: g.weight.max(1),
+                weight: g.weight,
                 consent: GuardianConsent::Pending,
             });
         }
@@ -2049,6 +2107,7 @@ impl WillContract {
         // Update guardians if provided
         let guardians_changed = if let Some(new_guardians) = guardians {
             assert_valid_guardians(&env, &owner, &new_guardians);
+            assert_no_guardian_cancel_in_flight(&env, &will);
 
             // Same threshold invariant enforced in update_guardians: a non-empty
             // new list must not leave the existing guardian_threshold unreachable.
@@ -4756,6 +4815,25 @@ fn assert_valid_allocations(env: &Env, beneficiaries: &Vec<Beneficiary>, primary
     // the contract (#383). Any secondary token's whole balance is likewise
     // refunded, since fixed amounts are denominated in the primary token
     // only (#384).
+}
+
+/// Rejects a guardian-list replacement while guardian-cancel votes are still
+/// recorded against the current list (#488).
+///
+/// Every list-replacing entry point — `update_guardians`,
+/// `update_guardians_weighted` and the guardian branch of
+/// `update_will_settings` — wipes both vote namespaces through
+/// `storage::reset_guardian_votes` / `storage::reset_guardian_cancel_votes`.
+/// Those entry points only run while the will is `Active`, and every
+/// `Triggered -> Active` transition (`emergency_checkin`, a cancel quorum)
+/// already zeroes the cancel counters, so this state is not expected to
+/// arise. If it ever does, silently erasing an accumulating cancel would let
+/// a fresh trigger bypass it, so the update is refused instead and the cancel
+/// votes are left intact.
+fn assert_no_guardian_cancel_in_flight(env: &Env, will: &Will) {
+    if will.guardian_cancel_votes > 0 || will.guardian_cancel_vote_weight > 0 {
+        panic_with_error!(env, WillError::GuardianCancelInProgress);
+    }
 }
 
 /// Byte length of a SHA-256 digest, i.e. of a `HashedBeneficiary` commitment.
