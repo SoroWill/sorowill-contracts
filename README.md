@@ -315,8 +315,8 @@ disambiguate.
 | 37 | `TooManyWills` | An owner or beneficiary index list is already at `MAX_WILLS_PER_INDEX` and cannot accept another will id. |
 | 38 | `GuardianNotConsented` | A guardian has not accepted their role and cannot vote. |
 | 39 | `DistributionMismatch` | The computed payouts for a token did not sum to exactly the will's balance of that token; the release is aborted instead of losing or over-drawing funds. |
-| 39 | `UnsupportedSchemaVersion` | A stored will matches neither the current `Will` layout nor any known legacy layout. |
-| 39 | `PrimaryTokenMismatch` | Cannot merge: the two wills' primary tokens differ. |
+| 51 | `UnsupportedSchemaVersion` | A stored will matches neither the current `Will` layout nor any known legacy layout. |
+| 52 | `PrimaryTokenMismatch` | Cannot merge: the two wills' primary tokens differ. |
 | 40 | `DuplicateToken` | The same token address was supplied more than once in a `tokens` list. |
 | 41 | `BatchTooLarge` | A `batch_check_in` call supplied more than `MAX_BATCH_CHECK_IN` (50) will ids. |
 | 42 | `InvalidTokenCount` | The token list supplied to `create_will`, `clone_will`, `split_will`, or `batch_create_wills` was empty, or contained more than `MAX_TOKENS` entries. Also raised by `top_up` when the token is not already in the will's `balances` map and that map already holds `MAX_TOKENS` distinct tokens; topping up an already-held token stays allowed at the cap. |

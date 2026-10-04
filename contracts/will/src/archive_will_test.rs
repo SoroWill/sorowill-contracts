@@ -358,3 +358,72 @@ fn archive_will_removes_history_when_there_are_no_guardians() {
 
     assert!(client.get_will_history(&will_id).is_empty());
 }
+
+/// Regression test for issue #494: `archive_will` must publish an event so
+/// external systems monitoring will lifecycle via events see the archive
+/// action, same as every other status change. The implementation already
+/// calls `events::will_archived`; this pins that through the real
+/// `archive_will` entry point (not a direct call to the events module) so a
+/// future regression that drops the call is caught.
+#[test]
+fn archive_will_emits_archived_event_with_owner_and_timestamp() {
+    let (env, client, owner, token_address) = setup();
+
+    let will_id = client.create_will(
+        &owner,
+        &vec![&env, (token_address, 1_000_000_i128)],
+        &vec![
+            &env,
+            Beneficiary {
+                address: Address::generate(&env),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+
+    advance(&env, 91);
+    client.trigger_will(&will_id);
+    advance(&env, 8);
+    client.release_inheritance(&will_id, &None);
+
+    let archived_at = env.ledger().timestamp();
+    client.archive_will(&will_id);
+
+    let events = env.events().all();
+    let mut found = false;
+    for event in events.iter() {
+        if event.1.is_empty() {
+            continue;
+        }
+        let topic0: Result<soroban_sdk::Symbol, _> = event.1.get(0).unwrap().try_into_val(&env);
+        if topic0 != Ok(soroban_sdk::symbol_short!("archived")) {
+            continue;
+        }
+        let topic1: Result<u64, _> = event.1.get(1).unwrap().try_into_val(&env);
+        if topic1 != Ok(will_id) {
+            continue;
+        }
+
+        let data: (Address, u64, soroban_sdk::Symbol) = event.2.try_into_val(&env).unwrap();
+        assert_eq!(data.0, owner, "archived event must carry the will's owner");
+        assert_eq!(
+            data.1, archived_at,
+            "archived event must carry the archival timestamp"
+        );
+        assert_eq!(
+            data.2,
+            soroban_sdk::symbol_short!("released"),
+            "archived event must report the terminal status the will was archived from"
+        );
+        found = true;
+        break;
+    }
+
+    assert!(found, "archive_will must publish an 'archived' event (#494)");
+}

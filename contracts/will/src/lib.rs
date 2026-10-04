@@ -1157,7 +1157,15 @@ impl WillContract {
             WillError::WillNotTriggered,
         );
 
-        let grace_deadline = grace_period_end(&env, &will);
+        // #751 — this used to also bind a local `grace_deadline` via
+        // `grace_period_end(&env, &will)`, which shadowed the `grace_deadline`
+        // function below and made `grace_deadline(&will)` a call on a `u64`
+        // (a compile error). `grace_deadline()` is the one shared helper every
+        // other grace-period check (release_inheritance, reveal_and_claim,
+        // get_time_until_deadline) already goes through, per its own doc
+        // comment, so this now does too; the removed call added no coverage
+        // `assert_status(.., Triggered, ..)` above doesn't already guarantee
+        // (a `Triggered` will always has `trigger_time` set).
         let now = env.ledger().timestamp();
         if now > grace_deadline(&will) {
             panic_with_error!(&env, WillError::GracePeriodExpired);
@@ -1250,19 +1258,25 @@ impl WillContract {
             WillError::WillNotTriggered,
         );
 
-        let now = env.ledger().timestamp();
-        if now < grace_deadline(&will) {
         // Timing invariant (#442): funds may only leave via this path once
         // the grace period has fully elapsed, i.e. `now >= grace_period_end`.
-        let grace_deadline = grace_period_end(&env, &will);
-        let now = env.ledger().timestamp();
-        // Strictly greater: the boundary second belongs to the owner's
-        // `emergency_checkin`, so exactly one of these two entry points is
-        // valid at any timestamp and the outcome cannot depend on transaction
-        // order within a ledger (#354). `emergency_checkin` and
+        // Strictly greater than is rejected: the boundary second belongs to
+        // the owner's `emergency_checkin`, so exactly one of these two entry
+        // points is valid at any timestamp and the outcome cannot depend on
+        // transaction order within a ledger (#354). `emergency_checkin` and
         // `guardian_cancel_trigger` enforce the same deadline from the other
         // side, so all three agree on when the grace period is over.
-        if now <= grace_deadline {
+        //
+        // #751 — this used to also bind its own local `grace_deadline` via
+        // `grace_period_end(&env, &will)` and re-check `now <= grace_deadline`
+        // nested inside this same condition, which both shadowed the
+        // `grace_deadline` function used in the outer check and -- because
+        // the outer `if` was never actually closed -- silently made this
+        // function's entire body (the state transition and the `distribute`
+        // call below) conditional on the grace period *not yet* having
+        // expired, the exact opposite of this function's purpose.
+        let now = env.ledger().timestamp();
+        if now < grace_deadline(&will) {
             panic_with_error!(&env, WillError::GracePeriodNotExpired);
         }
 
@@ -4405,9 +4419,9 @@ impl WillContract {
         );
 
         if env.ledger().timestamp() < grace_deadline(&will) {
-        let grace_deadline = grace_period_end(&env, &will);
-        if env.ledger().timestamp() < grace_deadline {
             panic_with_error!(&env, WillError::GracePeriodNotExpired);
+        }
+
         // Reject a wrong-length pre-image before doing anything with it (#370).
         // The documented pre-image layout is 32 address bytes plus a 32-byte
         // salt, so any other length can never be a valid reveal; catching it
@@ -4433,15 +4447,6 @@ impl WillContract {
             panic_with_error!(&env, WillError::PreimageAddressMismatch);
         }
 
-        // Bind the pre-image to the recipient so an intercepted pre-image
-        // cannot be redirected to a different address (#440).
-        let claimant_xdr = claimant.clone().to_xdr(&env);
-        if preimage.len() <= claimant_xdr.len()
-            || preimage.slice(0..claimant_xdr.len()) != claimant_xdr
-        {
-            panic_with_error!(&env, WillError::InvalidPreimage);
-        }
-
         // Hash the supplied pre-image with SHA-256.
         let digest = env.crypto().sha256(&preimage);
         let digest_bytes = Bytes::from_array(&env, &digest.to_array());
@@ -4449,7 +4454,7 @@ impl WillContract {
         // Find the matching hashed beneficiary slot.
         let mut found_idx: Option<u32> = None;
         for (i, hb) in will.hashed_beneficiaries.iter().enumerate() {
-            if hb.commitment == digest_bytes {
+            if constant_time_bytes_eq(&hb.commitment, &digest_bytes) {
                 found_idx = Some(i as u32);
                 break;
             }
@@ -4468,16 +4473,6 @@ impl WillContract {
             panic_with_error!(&env, WillError::AlreadyClaimed);
         }
 
-        let share = will.balance * (hb.percentage as i128) / 100;
-
-        // --- EFFECTS: mark the slot claimed and persist before transferring,
-        // so the payout can never be repeated (#440).
-        will.balance -= share;
-        let primary = will.balances.get(will.token.clone()).unwrap_or(0);
-        will.balances.set(will.token.clone(), primary - share);
-        if share > 0 {
-            storage::adjust_locked_value(&env, &will.token, -share);
-        }
         // --- COMPUTE: each token's share from the current (pre-mutation) balances,
         // and the post-claim balances map, in a single pass ---
         // Mirrors distribute()'s multi-token payout so a hashed beneficiary on
@@ -4502,6 +4497,11 @@ impl WillContract {
             };
             if share > 0 {
                 transfer_plan.push_back((token_addr.clone(), share));
+                // Every token actually paid out here must leave the
+                // protocol-wide "total locked" count, not just the primary
+                // token (#497) -- otherwise a secondary token's locked total
+                // would stay inflated forever after a hashed-beneficiary claim.
+                storage::adjust_locked_value(&env, &token_addr, -share);
             }
             if token_addr == will.token {
                 primary_share = share;
@@ -4509,13 +4509,6 @@ impl WillContract {
             updated_balances.set(token_addr, total - share);
         }
 
-        will.balance -= share;
-        // Keep the per-token balances map in sync: `distribute` pays out of
-        // `balances`, so without this a later `release_inheritance` would pay
-        // the already-claimed share a second time (#458).
-        let token_balance = will.balances.get(will.token.clone()).unwrap_or(0);
-        will.balances
-            .set(will.token.clone(), (token_balance - share).max(0));
         // --- EFFECTS: mutate and persist all state before any external call ---
         will.balances = updated_balances;
         // `will.balance` mirrors `will.balances[will.token]` for backward
@@ -4539,16 +4532,6 @@ impl WillContract {
         will.hashed_beneficiaries = updated_hb;
         storage::save_will(&env, &will);
 
-        // --- INTERACTIONS ---
-        if share > 0 {
-            token::Client::new(&env, &will.token).transfer(
-                &env.current_contract_address(),
-                &claimant,
-                &share,
-            );
-        }
-
-        events::hashed_claimed(&env, will_id, &claimant, share);
         // --- INTERACTIONS: external token transfers execute after state is settled ---
         let contract_address = env.current_contract_address();
         for (token_addr, share) in transfer_plan.iter() {
@@ -4897,6 +4880,33 @@ fn assert_valid_percentages(
 fn preimage_address_binding(env: &Env, address: &Address) -> Bytes {
     let digest = env.crypto().sha256(&address.clone().to_xdr(env));
     Bytes::from_array(env, &digest.to_array())
+}
+
+/// Constant-time equality for two `Bytes` values (#495).
+///
+/// `Bytes`'s own `PartialEq` compares byte-by-byte and returns as soon as it
+/// finds a mismatch, so how long the comparison takes leaks how many leading
+/// bytes matched. Used for `reveal_and_claim`'s commitment check, where the
+/// comparison is standing in for "is this the right secret" -- the standard
+/// recommendation for any such check is to never let its running time depend
+/// on *where* two values first differ, even when (as here) the practical
+/// exploitability is debatable, since SHA-256's avalanche effect means a
+/// matching prefix is not evidence of a related input.
+///
+/// Different-length inputs return `false` immediately: every call site in
+/// this contract compares two fixed, already-length-validated digests, so
+/// the length check itself is never a timing channel in practice, and
+/// comparing byte-by-byte past the shorter input's end isn't meaningful
+/// anyway.
+fn constant_time_bytes_eq(a: &Bytes, b: &Bytes) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for i in 0..a.len() {
+        diff |= a.get_unchecked(i) ^ b.get_unchecked(i);
+    }
+    diff == 0
 }
 
 /// Returns whether `preimage`'s address half is the fingerprint of `address`.
@@ -5300,6 +5310,8 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
             bounty_computed = true;
             bounty_amount = proportional_share(total, will.keeper_bounty_bps);
             token_bounty = bounty_amount;
+        }
+
         // Deduct the keeper bounty only from the token it was computed from.
         // Comparing the address (rather than relying on iteration position)
         // keeps the deduction and the payout tied to the same token (#378).
@@ -5318,15 +5330,6 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
 
         let mut shares: Vec<(Address, i128)> = Vec::new(env);
 
-        // Fixed-amount beneficiaries are paid first, capped at what is
-        // actually available so a misconfigured/under-funded token never
-        // aborts the whole distribution.
-        let mut remaining = total - token_bounty;
-        for beneficiary in will.beneficiaries.iter() {
-            if let Allocation::FixedAmount(amt) = beneficiary.allocation {
-                let share = amt.min(remaining).max(0);
-                remaining -= share;
-                shares.push_back((beneficiary.address.clone(), share));
         // Fixed amounts are denominated in the will's primary token only
         // (#384): a `FixedAmount(100)` on a two-token will is 100 units of
         // `will.token` in total, not 100 units of every token the will holds.
@@ -5391,6 +5394,8 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
         }
         if planned != total {
             panic_with_error!(env, WillError::DistributionMismatch);
+        }
+
         // With no percentage beneficiaries there is nobody left to absorb what
         // the fixed amounts did not claim. Refunding it to the owner keeps the
         // tokens from being stranded in the contract with no accounting and no
