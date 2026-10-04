@@ -99,8 +99,9 @@ fn test_get_contract_version() {
     assert_eq!(client.get_contract_version(), CONTRACT_VERSION);
     // This hardcoded literal must track CONTRACT_VERSION's current value --
     // it was still 1_000_000 (baseline 1.0.0) after CONTRACT_VERSION had
-    // already moved to 1_002_000 (1.2.0), undetected because nothing checked
-    // the literal against the constant.
+    // already moved to 1_002_000 (1.2.0), which `issue_501_test.rs` and
+    // `.github/scripts/check-contract-version.sh` now guard against drifting
+    // again (#501).
     assert_eq!(client.get_contract_version(), 1_003_000);
 }
 

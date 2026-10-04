@@ -178,21 +178,19 @@ mod issue_427_test;
 #[cfg(test)]
 mod issues_502_505_test;
 
-/// Regression tests for issue #496: percentage-sum validation must be
-/// agnostic to the order `Percentage`/`FixedAmount` entries appear in.
+/// Regression tests for issue #499: topping up a token the will already
+/// holds a balance for accumulates (`existing + amount`), never overwrites
+/// or duplicates -- `will.balances` is a `Map`, whose keys are unique by
+/// construction.
 #[cfg(test)]
-mod issue_496_test;
+mod issue_499_test;
 
-/// Regression tests for issue #497: `reveal_and_claim` (pull-mode) must pay a
-/// hashed beneficiary their proportional share of every token the will holds,
-/// not just the primary token.
+/// Regression tests for issue #500: check-ins now append a sequenced entry to
+/// the same audit trail status transitions use, and every entry (check-in or
+/// status transition) carries a monotonic per-will `seq` that survives
+/// `MAX_HISTORY_ENTRIES` trimming without gaps or duplicates.
 #[cfg(test)]
-mod issue_497_test;
-
-/// Regression tests for issue #495: `constant_time_bytes_eq` replaces a
-/// short-circuiting `==` for the hashed-beneficiary commitment check.
-#[cfg(test)]
-mod issue_495_test;
+mod issue_500_test;
 
 /// Regression test for issue #184: `merge_wills` refuses mismatched primary tokens.
 #[cfg(test)]
@@ -311,6 +309,13 @@ mod issue_266_test;
 mod issue_272_test;
 #[cfg(test)]
 mod issue_277_test;
+/// Regression tests for issue #501: `.github/scripts/check-contract-version.sh`
+/// (referenced by CI and CONTRIBUTING.md but never actually committed) is
+/// added alongside these, plus a post-deploy on-chain check in
+/// `scripts/deploy-testnet.sh`, since a Soroban contract cannot read its own
+/// deployed Wasm's metadata back at runtime.
+#[cfg(test)]
+mod issue_501_test;
 #[cfg(test)]
 mod issue_278_test;
 #[cfg(test)]
@@ -337,6 +342,12 @@ mod issue_422_test;
 mod migrate_will_test;
 #[cfg(test)]
 mod protocol_stats_test;
+/// Regression tests for issue #498: `audit_protocol_stats`/`repair_protocol_stats`
+/// (added for #441) had no test coverage at all, and `ProtocolStatsAudit` --
+/// the type `audit_protocol_stats` returns -- was referenced but never
+/// defined, a compile error fixed alongside these tests.
+#[cfg(test)]
+mod audit_protocol_stats_test;
 #[cfg(test)]
 mod renounce_validation_test;
 #[cfg(test)]
@@ -378,13 +389,14 @@ pub use errors::WillError;
 // import path (`crate::CURRENT_SCHEMA_VERSION`) for entry points and tests.
 pub use storage::GuardianVoteRecord;
 pub use storage::CURRENT_SCHEMA_VERSION;
+// NOTE(ci-cleanup): a bad merge had triple-duplicated this list (Allocation,
+// Beneficiary, ProtocolStats, Will, etc. each appearing three times), which
+// also hid that ProtocolStatsAudit (used by audit_protocol_stats below) was
+// never actually defined in types.rs -- fixed alongside this (#498).
 pub use types::{
-    Allocation, Beneficiary, Guardian, GuardianVoteReason, HashedBeneficiary, ProtocolStats, Will,
-    WillPage, WillStatus, WillStatusTransition,
-    Allocation, Beneficiary, Guardian, GuardianVoteReason, HashedBeneficiary, ProtocolStats,
-    ProtocolStatsAudit, Will, WillStatus, WillStatusTransition,
     Allocation, Beneficiary, Guardian, GuardianConsent, GuardianSpec, GuardianVoteReason,
-    HashedBeneficiary, ProtocolStats, Will, WillStatus, WillStatusTransition,
+    HashedBeneficiary, ProtocolStats, ProtocolStatsAudit, Will, WillPage, WillStatus,
+    WillStatusTransition,
 };
 
 /// Semantic version of the contract logic, encoded as
@@ -397,10 +409,8 @@ pub use types::{
 /// Current value: **1.3.0** → `1_003_000`. 1.1.0 made `get_triggered_wills`
 /// take a `(cursor, limit)` page instead of returning the whole index (#368);
 /// 1.2.0 bound `reveal_and_claim` to the address in the pre-image (#369);
-/// 1.3.0 fixed `reveal_and_claim`'s pull-mode claim to pay every token
-/// proportionally instead of only the primary one (#497), and reassigned the
-/// `UnsupportedSchemaVersion`/`PrimaryTokenMismatch` error codes off of a
-/// collision with `DistributionMismatch` (#751).
+/// 1.3.0 added `WillStatusTransition::seq` and made `check_in`/
+/// `batch_check_in` append audit-trail entries (#500).
 pub const CONTRACT_VERSION: u32 = 1_003_000;
 
 /// Number of seconds in a day, used to convert the day-denominated periods
@@ -974,6 +984,21 @@ impl WillContract {
         let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
         storage::save_will(&env, &will);
 
+        // Record the check-in in the same audit trail status transitions use
+        // (#500). `status` does not change, so this is a same-status entry
+        // (`Active` -> `Active`); what matters is that every event that moves
+        // `last_checkin` -- not just the ones that also move `status` -- gets
+        // a sequenced entry, so a reader of the trail never sees a status
+        // change following a check-in that left no trace of when it happened.
+        record_transition(
+            &env,
+            will_id,
+            WillStatus::Active,
+            WillStatus::Active,
+            &caller,
+            symbol_short!("checkin"),
+        );
+
         events::check_in(&env, will_id, &caller, next_deadline);
     }
 
@@ -1029,6 +1054,18 @@ impl WillContract {
             will.last_checkin = now;
             let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
             storage::save_will(&env, &will);
+
+            // Same per-will audit entry as the single-will `check_in` path,
+            // so a batched check-in is indistinguishable in the trail from
+            // one done individually (#500).
+            record_transition(
+                &env,
+                will_id,
+                WillStatus::Active,
+                WillStatus::Active,
+                &owner,
+                symbol_short!("checkin"),
+            );
 
             events::check_in(&env, will_id, &owner, next_deadline);
         }
@@ -2085,6 +2122,14 @@ impl WillContract {
     /// can be added via `top_up`, up to the same [`MAX_TOKENS`]
     /// distinct-token cap `create_will` enforces.
     ///
+    /// Topping up a `token` the will already holds a balance for is not a
+    /// distinct code path: `will.balances` is a `Map<Address, i128>`, whose
+    /// keys are unique by construction, so there is no way for a token to
+    /// appear twice regardless of how many times `top_up` is called for it.
+    /// Each call reads the existing entry (`0` if genuinely new) and writes
+    /// back `existing + amount` — repeated top-ups of the same token always
+    /// accumulate; they never overwrite or duplicate (#499).
+    ///
     /// # Panics
     /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
     /// - [`WillError::WillNotActive`] if the will is not `Active`.
@@ -2144,6 +2189,33 @@ impl WillContract {
     ///
     /// SDKs and apps can call this to detect version mismatches before
     /// submitting transactions that depend on specific contract behaviour.
+    ///
+    /// # Why this returns a compiled-in constant, not something read back out
+    /// of the deployed Wasm at call time (#501)
+    ///
+    /// A Soroban contract's execution environment has no host function that
+    /// lets a contract inspect its own deployed Wasm binary's custom sections
+    /// (which is where `soroban_sdk::contractmeta!`'s `"Version"` entry,
+    /// declared further up this file, actually lives) -- `CONTRACT_VERSION`
+    /// *is* "the binary" as far as on-chain execution can observe: it is
+    /// compiled directly into the function body that returns it, so there is
+    /// no separate copy inside the same binary it could drift from at
+    /// runtime. What *can* drift, because they are three independent literals
+    /// a human edits, are:
+    /// - `CONTRACT_VERSION` here vs. the crate `version` in
+    ///   `contracts/will/Cargo.toml` -- checked by `cargo test` via
+    ///   `issue_501_test.rs`'s `CARGO_PKG_VERSION` comparison, and again by
+    ///   `.github/scripts/check-contract-version.sh` (run in CI from
+    ///   `test.yml`).
+    /// - `CONTRACT_VERSION` here vs. the `contractmeta!(key = "Version", ...)`
+    ///   string literal -- checked by `issue_272_test.rs`.
+    /// - The source `CONTRACT_VERSION` that was compiled vs. the Wasm binary
+    ///   actually deployed on a given network -- source-level checks cannot
+    ///   catch a stale or wrong artifact being deployed, so
+    ///   `scripts/deploy-testnet.sh` calls `get_contract_version` on the
+    ///   freshly deployed contract immediately after deployment and fails the
+    ///   deploy if it disagrees with the source constant, rather than
+    ///   silently recording a contract id that doesn't match what was built.
     pub fn get_contract_version(_env: Env) -> u32 {
         CONTRACT_VERSION
     }
@@ -5683,6 +5755,9 @@ fn record_transition(
         timestamp: env.ledger().timestamp(),
         actor: actor.clone(),
         action,
+        // Overwritten by `append_history` with the will's next sequence
+        // value (#500); the placeholder here is never observed by a caller.
+        seq: 0,
     };
     storage::append_history(env, will_id, &transition);
 }

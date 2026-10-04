@@ -15,45 +15,48 @@ gets its own [contract spec artifact](./spec) once exported.
   wills, the `total_count` of all matches and an explicit `next_cursor` (#455).
 - `WillError::DistributionMismatch` (39): release aborts if planned payouts for
   a token do not sum to exactly its balance (#456).
-- `archive_will` now has dedicated integration-test coverage confirming it
-  publishes the `archived` event through the real entry point, not just a
-  direct call to the events module (#494). The event itself (owner,
-  timestamp, terminal-status reason) was already implemented.
-- **CONTRACT_VERSION bumped to 1.3.0** (`1_003_000`) for the behavioral
-  changes below.
+- **CONTRACT_VERSION bumped to 1.3.0** (`1_003_000`) for the `seq` field and
+  check-in audit-trail entries described under #500 below.
+- `ProtocolStatsAudit`, the type `audit_protocol_stats` returns, was referenced
+  in `lib.rs` but never defined -- a compile error. Defined it, deduplicated a
+  triple-duplicated `pub use types::{...}` import block that had hidden the
+  missing type, and added test coverage for `audit_protocol_stats` /
+  `repair_protocol_stats` (#498).
+- `WillStatusTransition::seq`: a monotonically increasing, per-will sequence
+  number stamped on every audit-trail entry by `storage::append_history`.
+  Lets a caller detect that an entry was trimmed by `MAX_HISTORY_ENTRIES`
+  (a gap in `seq`) instead of mistaking a shifted trail position for an
+  unchanged entry (#500).
+- `check_in` and `batch_check_in` now append a same-status (`Active` ->
+  `Active`) entry to the audit trail via the existing `record_transition`
+  path, so check-ins are no longer invisible to `get_will_history` /
+  `get_will_history_page` (#500).
+- `.github/scripts/check-contract-version.sh`: verifies `CONTRACT_VERSION`
+  (`contracts/will/src/lib.rs`) matches the crate `version`
+  (`contracts/will/Cargo.toml`) and, when present, the git tag. Referenced by
+  `test.yml` and `CONTRIBUTING.md` since #439 but never actually committed
+  (#501).
+- `scripts/deploy-testnet.sh` now calls the freshly deployed contract's
+  `get_contract_version` immediately after deployment and refuses to record
+  `deployments/testnet.json` if it disagrees with source `CONTRACT_VERSION`,
+  catching a stale or wrong Wasm artifact that source-level checks alone
+  cannot (#501).
 
 ### Fixed
-- `reveal_and_claim` (pull-mode hashed-beneficiary claims) now pays every
-  token the will holds proportionally, not just the primary token -- a
-  multi-token will is no longer partially liquidated when a hashed
-  beneficiary claims (#497).
-- `reveal_and_claim`'s commitment check now uses a constant-time byte
-  comparison (`constant_time_bytes_eq`) instead of `==`, which short-circuits
-  on the first mismatching byte (#495).
-- Fixed three instances of the same bad-merge corruption pattern (a missing
-  closing brace immediately followed by a stale duplicate of
-  already-superseded logic) found while implementing the above, all in
-  `contracts/will/src/lib.rs`: `emergency_checkin` and `release_inheritance`
-  each had a shadowed, non-callable local `grace_deadline` where the shared
-  `grace_deadline()` helper should have been used directly (a hard compile
-  error); `release_inheritance`'s was additionally nested so the *entire*
-  function body only ran when the grace period had **not** yet expired, the
-  opposite of its purpose. `distribute()` had a duplicate, pre-#378/#384
-  keeper-bounty/fixed-amount computation left dangling inside an unclosed
-  `if`, which (had it compiled) would have let a `FixedAmount` allocation be
-  deducted from every token's balance instead of the primary token only, and
-  paid the primary token's share twice. (#751)
-- `WillError::UnsupportedSchemaVersion` and `WillError::PrimaryTokenMismatch`
-  both declared discriminant `39`, colliding with `DistributionMismatch` -- a
-  hard compile error (duplicate enum discriminant). Reassigned to `51` and
-  `52`; the README error-code table is updated to match. (#751)
-- `test.rs::test_get_contract_version`'s hardcoded `1_000_000` literal was
-  already stale relative to `CONTRACT_VERSION` before this PR; updated to
-  track the current value.
-- Added regression tests confirming percentage-sum validation
-  (`assert_valid_allocations`/`assert_valid_percentages`) is already
-  order-agnostic for interleaved `Percentage`/`FixedAmount` beneficiaries;
-  the reported bug was not reproducible against current code (#496).
+- `top_up` already accumulated (`existing + amount`) rather than overwriting
+  when called for a token the will already holds a balance for -- documented
+  this explicitly and added regression coverage, since `will.balances` being
+  a `Map` made the correct behavior easy to assume without ever pinning it in
+  a test (#499).
+- `contracts/will/Cargo.toml`'s crate `version` had drifted to `0.1.0` while
+  `CONTRACT_VERSION` had moved on to `1.2.0`, undetected because the check
+  that was supposed to catch it (see `.github/scripts/check-contract-version.sh`
+  above) didn't exist. Bumped `Cargo.toml` back in sync (#501).
+- `test.rs::test_get_contract_version` asserted the stale baseline
+  `1_000_000` even though `CONTRACT_VERSION` had already moved to a later
+  value, which happened to still pass only because the assertion above it
+  (against the `CONTRACT_VERSION` constant itself) never catches the literal
+  going stale. Updated it to track the current value (#501).
 - Guardian release/cancel votes are tallied from per-guardian records, so a
   guardian re-voting after expiry is no longer counted twice (#458).
 - The keeper bounty is deducted from the will's balance instead of being paid
