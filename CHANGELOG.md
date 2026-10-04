@@ -10,6 +10,21 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ## [Unreleased]
 
+### Security
+- `release_inheritance` re-reads the will from storage and re-validates that
+  it is still `Triggered` (with a recorded `trigger_time`) immediately before
+  distributing; documented that the atomic invocation locks the will for the
+  whole call (#490).
+- Added `MAX_RELEASE_PAYOUTS` (`MAX_BENEFICIARIES * MAX_TOKENS` = 100) and
+  documented the bounded release work; `release_inheritance` re-checks the
+  beneficiary and token caps before distributing (#491).
+- Owner-index pagination treats the cursor strictly as a value bound: stale
+  cursors from removed wills resume correctly, and out-of-bounds cursors
+  return an empty page (#492).
+- Documented `confirm_will`'s re-validation of ownership and beneficiaries at
+  confirmation time, and that account existence cannot be checked on-chain
+  (failed payouts fall back to `retry_failed_payout`) (#493).
+
 ### Added
 - `get_wills_by_owner_and_status_page`, returning a `WillPage` with the page's
   wills, the `total_count` of all matches and an explicit `next_cursor` (#455).
