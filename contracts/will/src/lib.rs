@@ -2396,7 +2396,6 @@ impl WillContract {
                 Some(deadline - now)
             }
             WillStatus::Triggered => {
-                Some(grace_deadline(&will) as i64 - now)
                 // `trigger_will` is the only path that sets `WillStatus::Triggered`,
                 // and it always sets `trigger_time` to `Some(now)` in the same
                 // write. `trigger_time` should therefore never be `None` here;
@@ -2676,7 +2675,6 @@ impl WillContract {
         cursor: Option<u64>,
         limit: u32,
     ) -> WillPage {
-        wills_by_owner_and_status_page(&env, &owner, status, cursor, limit)
         let ids = storage::get_owner_wills(&env, &owner);
         let page_size = limit.min(storage::MAX_PAGE_SIZE);
         let mut wills = Vec::new(&env);
@@ -5223,6 +5221,8 @@ fn grace_deadline(will: &Will) -> u64 {
         .trigger_time
         .unwrap_or(will.last_checkin + will.checkin_period_days * SECONDS_PER_DAY);
     start + will.grace_period_days * SECONDS_PER_DAY
+}
+
 /// Counts the live votes on `will` and returns `(vote_count, vote_weight)`.
 /// A vote is live only if it was cast by a guardian on the *current* list who
 /// has accepted the role and whose vote has not expired.

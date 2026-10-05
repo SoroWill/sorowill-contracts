@@ -748,6 +748,8 @@ pub fn tally_guardian_cancel_votes(
         }
     }
     (weight, count)
+}
+
 /// Removes the trigger vote recorded for `guardian` against `will_id`, if any.
 ///
 /// Used by `reject_guardian_role` so a guardian who withdraws consent after
