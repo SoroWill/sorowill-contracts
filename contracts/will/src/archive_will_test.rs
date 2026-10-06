@@ -397,7 +397,7 @@ fn archive_will_emits_archived_event_with_owner_and_timestamp() {
 
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.all() {
         if event.1.is_empty() {
             continue;
         }

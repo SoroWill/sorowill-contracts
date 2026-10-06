@@ -21,6 +21,8 @@ use soroban_sdk::{
     vec, Address, Env, TryIntoVal,
 };
 
+use soroban_sdk::testutils::Events as EventsTraitMethods;
+
 use crate::{
     events,
     types::{Allocation, Beneficiary, Guardian, GuardianConsent},
@@ -47,7 +49,7 @@ fn find_event_by_topic(
     will_id: Option<u64>,
 ) -> Option<soroban_sdk::Val> {
     let events = env.events().all();
-    for event in events.iter() {
+    for event in events.all().iter() {
         if event.1.is_empty() {
             continue;
         }
@@ -506,7 +508,7 @@ fn test_batch_and_advanced_events_snapshot() {
     // Find batch event (topic is owner, not a standard will_id pattern)
     let events = env.events().all();
     let mut found_batch = false;
-    for event in events.iter() {
+    for event in events.all().iter() {
         if !event.1.is_empty() {
             let topic0: Result<soroban_sdk::Symbol, _> = event.1.get(0).unwrap().try_into_val(&env);
             if topic0 == Ok(symbol_short!("batch")) {
@@ -708,7 +710,7 @@ fn test_event_ordering_lifecycle() {
     let all_events = env.events().all();
     let mut event_symbols = Vec::new();
 
-    for event in all_events.iter() {
+    for event in all_events.all().iter() {
         if !event.1.is_empty() {
             let symbol: Result<soroban_sdk::Symbol, _> = event.1.get(0).unwrap().try_into_val(&env);
             if let Ok(symbol) = symbol {
@@ -802,7 +804,7 @@ fn test_multi_token_event_snapshot_with_mixed_allocations() {
     let all_events = env.events().all();
     let mut found = false;
 
-    for event in all_events.iter() {
+    for event in all_events.all().iter() {
         if event.1.is_empty() {
             continue;
         }

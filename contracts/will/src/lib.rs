@@ -2603,7 +2603,7 @@ impl WillContract {
     /// the page is cut, so a page is only shorter than `limit` when there are
     /// no further matching wills (#455).
     ///
-    /// Prefer [`Self::get_wills_by_owner_and_status_page`], which also returns
+    /// Prefer [`Self::get_owner_status_page`], which also returns
     /// the total number of matches and an explicit `next_cursor`.
     ///
     /// # Parameters
@@ -2636,7 +2636,7 @@ impl WillContract {
     /// ```ignore
     /// let mut cursor = None;
     /// loop {
-    ///     let page = client.get_wills_by_owner_and_status_page(&owner, &status, &cursor, &20);
+    ///     let page = client.get_owner_status_page(&owner, &status, &cursor, &20);
     ///     // page.total_count is the same on every page.
     ///     handle(page.wills);
     ///     match page.next_cursor {
@@ -2653,7 +2653,7 @@ impl WillContract {
     ///   or `0` for the first page.
     /// - `limit`: maximum number of wills to return. Capped at
     ///   [`storage::MAX_PAGE_SIZE`].
-    pub fn get_wills_by_owner_and_status_page(
+    pub fn get_owner_status_page(
         env: Env,
         owner: Address,
         status: WillStatus,

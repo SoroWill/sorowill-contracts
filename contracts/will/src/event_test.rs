@@ -18,6 +18,7 @@ use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Events, Ledger},
     token::StellarAssetClient,
+    testutils::Events as EventsTrait,
     vec, Address, Env, TryIntoVal,
 };
 

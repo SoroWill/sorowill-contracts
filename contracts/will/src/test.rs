@@ -875,7 +875,7 @@ fn test_update_beneficiaries_event_payload() {
     use soroban_sdk::{symbol_short, testutils::Events, TryIntoVal};
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.all() {
         if !event.1.is_empty() {
             if let Ok(topic0) = event.1.get(0).unwrap().try_into_val(&env) {
                 let topic0_sym: soroban_sdk::Symbol = topic0;
@@ -1274,7 +1274,7 @@ fn test_top_up_zero_amount_rejected() {
     use soroban_sdk::{symbol_short, testutils::Events, TryIntoVal};
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.all() {
         if !event.1.is_empty() {
             if let Ok(topic0) = event.1.get(0).unwrap().try_into_val(&env) {
                 let topic0_sym: soroban_sdk::Symbol = topic0;
@@ -2438,7 +2438,7 @@ fn test_migrate_will_emits_event() {
     let events = env.events().all();
 
     let mut found = false;
-    for event in events.iter() {
+    for event in events.all() {
         if !event.1.is_empty() {
             if let Ok(topic0) = event.1.get(0).unwrap().try_into_val(&env) {
                 let topic0_sym: soroban_sdk::Symbol = topic0;
@@ -3361,7 +3361,7 @@ fn test_merge_wills_updates_beneficiary_index() {
     use soroban_sdk::{symbol_short, testutils::Events, TryIntoVal};
     let events = env.events().all();
     let mut found = false;
-    for event in events.iter() {
+    for event in events.all() {
         if !event.1.is_empty() {
             if let Ok(topic0) = event.1.get(0).unwrap().try_into_val(&env) {
                 let topic0_sym: soroban_sdk::Symbol = topic0;
@@ -4059,7 +4059,7 @@ fn test_claim_share_rejects_already_claimed() {
     use soroban_sdk::testutils::Events;
     let events = env.events().all();
     let mut found_gvote = false;
-    for event in events.iter() {
+    for event in events.all() {
         if !event.1.is_empty() {
             if let Ok(topic0) = event.1.get(0).unwrap().try_into_val(&env) {
                 let topic0_sym: soroban_sdk::Symbol = topic0;
@@ -5063,7 +5063,7 @@ fn test_batch_checkin_emits_event() {
 
     let events = env.events().all();
     let mut found_batch = false;
-    for event in events.iter() {
+    for event in events.all() {
         if !event.1.is_empty() {
             if let Ok(topic0) = event.1.get(0).unwrap().try_into_val(&env) {
                 let topic0_sym: soroban_sdk::Symbol = topic0;
