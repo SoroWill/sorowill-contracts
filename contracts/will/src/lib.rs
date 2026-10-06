@@ -381,11 +381,26 @@ use soroban_sdk::{
 
 pub use errors::WillError;
 pub use migration::CURRENT_SCHEMA_VERSION;
+pub use types::{
+    Allocation, Beneficiary, Guardian, GuardianVoteReason, HashedBeneficiary, OwnerStats,
+    ProtocolStats, TokenLockedBalance, Will, WillStatus, WillStatusTransition,
+    contract, contractimpl, panic_with_error, symbol_short, token, xdr::ToXdr, Address, Bytes, Env,
+    Map, Vec,
+};
+
+pub use errors::WillError;
+// Re-exported so the schema version has one definition (`storage`) and one
+// import path (`crate::CURRENT_SCHEMA_VERSION`) for entry points and tests.
 pub use storage::GuardianVoteRecord;
+pub use storage::CURRENT_SCHEMA_VERSION;
+// NOTE(ci-cleanup): a bad merge had triple-duplicated this list (Allocation,
+// Beneficiary, ProtocolStats, Will, etc. each appearing three times), which
+// also hid that ProtocolStatsAudit (used by audit_protocol_stats below) was
+// never actually defined in types.rs -- fixed alongside this (#498).
 pub use types::{
     Allocation, Beneficiary, Guardian, GuardianConsent, GuardianSpec, GuardianVoteReason,
-    HashedBeneficiary, OwnerStats, ProtocolStats, ProtocolStatsAudit, TokenLockedBalance, Will,
-    WillPage, WillStatus, WillStatusTransition,
+    HashedBeneficiary, ProtocolStats, ProtocolStatsAudit, Will, WillPage, WillStatus,
+    WillStatusTransition,
 };
 
 /// Semantic version of the contract logic, encoded as
@@ -2667,37 +2682,30 @@ impl WillContract {
         let skip = cursor.is_some();
         let mut skipping = skip;
 
-        let mut total_count = 0;
         for id in ids.iter() {
+            // Check the page size *before* considering another will, exactly
+            // like `storage::paginate_ids` does: with `limit == 0` the loop
+            // exits immediately and the page comes back empty, instead of
+            // collecting one will before a post-push size check could stop it
+            // (#360).
+            if wills.len() >= page_size {
+                break;
+            }
+            if skipping {
+                if id <= cursor_val {
+                    continue;
+                }
+                skipping = false;
+            }
             let will = match storage::load_will(&env, id) {
                 Ok(w) => w,
                 Err(e) => panic_with_error!(&env, e),
             };
             if will.status == status {
-                total_count += 1;
-                // Check the page size *before* considering another will, exactly
-                // like `storage::paginate_ids` does: with `limit == 0` the loop
-                // exits immediately and the page comes back empty, instead of
-                // collecting one will before a post-push size check could stop it
-                // (#360).
-                if wills.len() >= page_size {
-                    break;
-                }
-                if skipping {
-                    if id <= cursor_val {
-                        continue;
-                    }
-                    skipping = false;
-                }
                 wills.push_back(will);
             }
         }
-        let next_cursor = if wills.len() >= page_size {
-            wills.get(wills.len() - 1).map(|w| w.id)
-        } else {
-            None
-        };
-        WillPage { wills, total_count, next_cursor }
+        wills
     }
 
     /// Returns wills `beneficiary` is named in, with optional pagination.
