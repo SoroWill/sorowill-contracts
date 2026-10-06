@@ -381,26 +381,11 @@ use soroban_sdk::{
 
 pub use errors::WillError;
 pub use migration::CURRENT_SCHEMA_VERSION;
-pub use types::{
-    Allocation, Beneficiary, Guardian, GuardianVoteReason, HashedBeneficiary, OwnerStats,
-    ProtocolStats, TokenLockedBalance, Will, WillStatus, WillStatusTransition,
-    contract, contractimpl, panic_with_error, symbol_short, token, xdr::ToXdr, Address, Bytes, Env,
-    Map, Vec,
-};
-
-pub use errors::WillError;
-// Re-exported so the schema version has one definition (`storage`) and one
-// import path (`crate::CURRENT_SCHEMA_VERSION`) for entry points and tests.
 pub use storage::GuardianVoteRecord;
-pub use storage::CURRENT_SCHEMA_VERSION;
-// NOTE(ci-cleanup): a bad merge had triple-duplicated this list (Allocation,
-// Beneficiary, ProtocolStats, Will, etc. each appearing three times), which
-// also hid that ProtocolStatsAudit (used by audit_protocol_stats below) was
-// never actually defined in types.rs -- fixed alongside this (#498).
 pub use types::{
     Allocation, Beneficiary, Guardian, GuardianConsent, GuardianSpec, GuardianVoteReason,
-    HashedBeneficiary, ProtocolStats, ProtocolStatsAudit, Will, WillPage, WillStatus,
-    WillStatusTransition,
+    HashedBeneficiary, OwnerStats, ProtocolStats, ProtocolStatsAudit, TokenLockedBalance, Will,
+    WillPage, WillStatus, WillStatusTransition,
 };
 
 /// Semantic version of the contract logic, encoded as
