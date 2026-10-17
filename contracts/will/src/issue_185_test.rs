@@ -84,7 +84,7 @@ fn add_hashed_beneficiary_emits_event() {
     // Verify that an event was emitted
     let events = env.events().all();
     assert!(
-        !events.is_empty(),
+        !events.events().is_empty(),
         "add_hashed_beneficiary should emit an event"
     );
 

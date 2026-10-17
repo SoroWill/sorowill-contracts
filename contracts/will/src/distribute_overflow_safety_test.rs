@@ -221,3 +221,106 @@ fn distribute_with_keeper_bounty_reduces_beneficiary_shares() {
     assert_eq!(beneficiary_balance, expected_beneficiary_share);
     assert_eq!(beneficiary_balance + keeper_balance, locked_amount);
 }
+
+/// Issue #595: Test boundary amounts where keeper bounty rounding matters.
+/// Verifies:
+/// 1. Floor truncation when `balance * bps < 10_000` (bounty rounds to 0, no dust lost, beneficiaries receive full amount).
+/// 2. Floor rounding with non-zero remainder (dust is retained in distributed balance, not lost).
+/// 3. Invariant: `sum(beneficiary_shares) + keeper_bounty == locked_amount` down to the exact unit.
+#[test]
+fn test_keeper_bounty_rounding_and_dust_preservation() {
+    let (env, client, owner, token, token_address) = setup();
+    let beneficiary1 = Address::generate(&env);
+    let beneficiary2 = Address::generate(&env);
+    let keeper = Address::generate(&env);
+
+    // Two beneficiaries splitting remaining balance (60% and 40%)
+    let beneficiaries: SorobanVec<Beneficiary> = vec![
+        &env,
+        Beneficiary {
+            address: beneficiary1.clone(),
+            allocation: Allocation::Percentage(6_000),
+        },
+        Beneficiary {
+            address: beneficiary2.clone(),
+            allocation: Allocation::Percentage(4_000),
+        },
+    ];
+
+    // Boundary Test Case 1: Locked amount 199 with 50 bps (0.5%)
+    // 199 * 50 / 10_000 = 9_950 / 10_000 = 0 (floor)
+    // Bounty must be 0, full 199 distributed to beneficiaries with zero dust loss.
+    let locked_amount = 199i128;
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), locked_amount)];
+
+    let will_id = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &Some(50),
+        &0,
+    );
+
+    advance(&env, 91);
+    client.trigger_will(&will_id);
+    advance(&env, 8);
+    client.release_inheritance(&will_id, &Some(keeper.clone()));
+
+    assert_eq!(token.balance(&keeper), 0, "Bounty should round down to 0 when balance * bps < 10_000");
+    let b1 = token.balance(&beneficiary1);
+    let b2 = token.balance(&beneficiary2);
+    assert_eq!(b1 + b2, locked_amount, "Beneficiaries must receive 100% of balance, zero dust lost");
+
+    // Boundary Test Case 2: Locked amount 201 with 50 bps (0.5%)
+    // 201 * 50 / 10_000 = 10_050 / 10_000 = 1 (floor, remainder 50)
+    // Keeper receives 1, remaining 200 distributed to beneficiaries.
+    let (env2, client2, owner2, token2, token_address2) = setup();
+    let ben1 = Address::generate(&env2);
+    let ben2 = Address::generate(&env2);
+    let keeper2 = Address::generate(&env2);
+
+    let bens2: SorobanVec<Beneficiary> = vec![
+        &env2,
+        Beneficiary {
+            address: ben1.clone(),
+            allocation: Allocation::Percentage(6_000),
+        },
+        Beneficiary {
+            address: ben2.clone(),
+            allocation: Allocation::Percentage(4_000),
+        },
+    ];
+
+    let locked2 = 201i128;
+    let tokens2: SorobanVec<(Address, i128)> = vec![&env2, (token_address2, locked2)];
+
+    let will_id2 = client2.create_will(
+        &owner2,
+        &tokens2,
+        &bens2,
+        &90,
+        &7,
+        &vec![&env2],
+        &0,
+        &Some(50),
+        &0,
+    );
+
+    advance(&env2, 91);
+    client2.trigger_will(&will_id2);
+    advance(&env2, 8);
+    client2.release_inheritance(&will_id2, &Some(keeper2.clone()));
+
+    let keeper_bal2 = token2.balance(&keeper2);
+    let ben1_bal2 = token2.balance(&ben1);
+    let ben2_bal2 = token2.balance(&ben2);
+
+    assert_eq!(keeper_bal2, 1, "Bounty floor rounding of 201 * 50 / 10_000 is 1");
+    assert_eq!(ben1_bal2 + ben2_bal2, 200, "Remaining 200 distributed to beneficiaries");
+    assert_eq!(ben1_bal2 + ben2_bal2 + keeper_bal2, locked2, "Zero dust loss invariant holds");
+}
+
