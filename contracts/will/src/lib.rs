@@ -995,6 +995,9 @@ impl WillContract {
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
         assert_owner_or_delegate(&env, &will, &caller);
 
+        // The check-in time is the ledger close time, which consensus sets. Block
+        // production delays move that time forward for everyone at once, so the
+        // cooldown is measured in ledger seconds, not in blocks (#652).
         let now = env.ledger().timestamp();
         will.last_checkin = now;
         let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
