@@ -1397,6 +1397,8 @@ impl WillContract {
         let mut will = load_owned(&env, will_id, &owner);
 
         // Allow cancellation from both Active and PendingConfirmation (#43).
+        // A keeper bounty is paid only when a will is released, and a released
+        // will is not cancellable, so cancelling never has a bounty to refund (#639).
         if will.status != WillStatus::Active && will.status != WillStatus::PendingConfirmation {
             panic_with_error!(&env, WillError::WillNotActive);
         }
