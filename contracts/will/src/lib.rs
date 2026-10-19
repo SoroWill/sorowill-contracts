@@ -4895,6 +4895,9 @@ fn assert_valid_allocations(env: &Env, beneficiaries: &Vec<Beneficiary>, primary
 /// arise. If it ever does, silently erasing an accumulating cancel would let
 /// a fresh trigger bypass it, so the update is refused instead and the cancel
 /// votes are left intact.
+// Every guardian-list update calls this first, so the list cannot change while a
+// cancel vote is open. A cancel vote's weight therefore always refers to the
+// list it was cast against (#642).
 fn assert_no_guardian_cancel_in_flight(env: &Env, will: &Will) {
     if will.guardian_cancel_votes > 0 || will.guardian_cancel_vote_weight > 0 {
         panic_with_error!(env, WillError::GuardianCancelInProgress);
