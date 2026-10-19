@@ -1872,6 +1872,8 @@ impl WillContract {
         }
 
         let now = env.ledger().timestamp();
+        // Every vote cast under the old guardian list is cleared here, before the
+        // new list takes effect, so a stale vote cannot combine with new ones (#646).
         storage::reset_guardian_votes(&env, &will);
         storage::reset_guardian_cancel_votes(&env, &will);
         let mut guardian_structs: Vec<Guardian> = Vec::new(&env);
