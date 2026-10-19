@@ -2889,6 +2889,9 @@ impl WillContract {
             None => panic_with_error!(&env, WillError::NotGuardian),
         };
 
+        // A vote lapses by comparing its timestamp with the current ledger time on
+        // each call. No event fires when it lapses, so the audit trail records a
+        // vote when it is cast, not when it expires (#649).
         let expiry_days = will.grace_period_days;
         if storage::has_guardian_voted(&env, will_id, &guardian, now, expiry_days) {
             panic_with_error!(&env, WillError::AlreadyVoted);
