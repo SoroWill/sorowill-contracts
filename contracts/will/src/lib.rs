@@ -1387,6 +1387,11 @@ impl WillContract {
     }
 
     /// Cancels the will and refunds every locked token balance to the owner.
+    ///
+    /// The refund is sent to the owner address the will was created with (#645).
+    /// Soroban has no account-validity state to check first, so the owner is
+    /// not re-validated here. A refund that cannot be sent panics and the cancel
+    /// is rolled back.
     /// Only possible while the will is `Active`, i.e. before it has ever
     /// been triggered by a missed check-in (an owner who is mid-grace-period
     /// must first call `emergency_checkin` to return the will to `Active`).
