@@ -1312,6 +1312,9 @@ impl WillContract {
         // function's entire body (the state transition and the `distribute`
         // call below) conditional on the grace period *not yet* having
         // expired, the exact opposite of this function's purpose.
+        // Soroban has no account-state check to run on a beneficiary address, so
+        // none is made here. A payout that cannot be made panics and rolls the
+        // whole release back, so no beneficiary is paid partially (#643).
         let now = env.ledger().timestamp();
         if now < grace_deadline(&will) {
             panic_with_error!(&env, WillError::GracePeriodNotExpired);
