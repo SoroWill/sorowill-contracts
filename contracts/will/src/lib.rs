@@ -3695,6 +3695,9 @@ impl WillContract {
     pub fn merge_wills(env: Env, owner: Address, will_id_a: u64, will_id_b: u64) {
         owner.require_auth();
 
+        // Both wills live in this one contract instance, which runs on a single
+        // network, so every address in either will is on that network by
+        // construction. No cross-network address can reach a merge (#648).
         if will_id_a == will_id_b {
             panic_with_error!(&env, WillError::SameWillId);
         }
