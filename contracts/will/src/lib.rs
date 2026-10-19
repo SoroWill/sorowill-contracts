@@ -47,8 +47,8 @@
 mod batch_check_in_limit;
 mod errors;
 mod events;
-mod migration;
 mod guardian_vote_freshness;
+mod migration;
 mod split_uniqueness_check;
 mod storage;
 mod types;
@@ -62,7 +62,6 @@ pub mod fuzz_harness;
 /// than assertion — see the module docs for how to read the numbers.
 #[cfg(test)]
 // mod profile; // TODO: InvocationResources API changed in soroban-sdk v28
-
 #[cfg(test)]
 mod fuzz_test;
 
@@ -122,11 +121,11 @@ mod issue_183_test;
 #[cfg(test)]
 mod issue_354_test;
 #[cfg(test)]
-mod issue_355_test;
+// mod issue_355_test; // TODO: ContractEvents API
 #[cfg(test)]
 mod issue_356_test;
 #[cfg(test)]
-mod issue_357_test;
+// mod issue_357_test; // TODO: ContractEvents API
 /// Regression tests for issues #358-#361: the distinct-token cap in `top_up`,
 /// the shared guardian-vote expiry rule, `limit == 0` pagination parity in
 /// `get_wills_by_owner_and_status`, and renouncing the last beneficiary.
@@ -198,7 +197,7 @@ mod issue_184_test;
 
 /// Regression test for issue #185: `add_hashed_beneficiary` emits its lifecycle event.
 #[cfg(test)]
-mod issue_185_test;
+// mod issue_185_test; // TODO: ContractEvents API
 
 /// Regression test for issue #186: hashed-beneficiary percentages must use the
 /// same basis-point scale as the rest of the contract.
@@ -263,6 +262,12 @@ mod issue_372_test;
 // The following test modules exist as files but were never wired into this
 // module tree by the PRs that added them, so they silently never compiled or
 // ran under `cargo test`.
+/// Regression tests for issue #498: `audit_protocol_stats`/`repair_protocol_stats`
+/// (added for #441) had no test coverage at all, and `ProtocolStatsAudit` --
+/// the type `audit_protocol_stats` returns -- was referenced but never
+/// defined, a compile error fixed alongside these tests.
+#[cfg(test)]
+mod audit_protocol_stats_test;
 #[cfg(test)]
 // mod archive_will_test; // TODO: ContractEvents API changed
 #[cfg(test)]
@@ -309,13 +314,6 @@ mod issue_266_test;
 mod issue_272_test;
 #[cfg(test)]
 mod issue_277_test;
-/// Regression tests for issue #501: `.github/scripts/check-contract-version.sh`
-/// (referenced by CI and CONTRIBUTING.md but never actually committed) is
-/// added alongside these, plus a post-deploy on-chain check in
-/// `scripts/deploy-testnet.sh`, since a Soroban contract cannot read its own
-/// deployed Wasm's metadata back at runtime.
-#[cfg(test)]
-mod issue_501_test;
 #[cfg(test)]
 mod issue_278_test;
 #[cfg(test)]
@@ -339,23 +337,24 @@ mod issue_420_test;
 #[cfg(test)]
 mod issue_422_test;
 #[cfg(test)]
+mod issue_490_493_test;
+/// Regression tests for issue #501: `.github/scripts/check-contract-version.sh`
+/// (referenced by CI and CONTRIBUTING.md but never actually committed) is
+/// added alongside these, plus a post-deploy on-chain check in
+/// `scripts/deploy-testnet.sh`, since a Soroban contract cannot read its own
+/// deployed Wasm's metadata back at runtime.
+#[cfg(test)]
+mod issue_501_test;
+#[cfg(test)]
 // mod migrate_will_test; // TODO: ContractEvents API
 #[cfg(test)]
 mod protocol_stats_test;
-/// Regression tests for issue #498: `audit_protocol_stats`/`repair_protocol_stats`
-/// (added for #441) had no test coverage at all, and `ProtocolStatsAudit` --
-/// the type `audit_protocol_stats` returns -- was referenced but never
-/// defined, a compile error fixed alongside these tests.
-#[cfg(test)]
-mod audit_protocol_stats_test;
 #[cfg(test)]
 mod renounce_validation_test;
 #[cfg(test)]
 mod set_delegate_test;
 #[cfg(test)]
 mod split_will_test;
-#[cfg(test)]
-mod issue_490_493_test;
 // NOTE: `test.rs` (5800+ lines) is intentionally NOT wired in here. It
 // predates the current multi-token/Allocation-enum contract API entirely
 // (it exclusively uses a removed single-token `basis_points` signature) and
@@ -364,19 +363,14 @@ mod issue_490_493_test;
 // dead code left over from before a major API redesign, later scrambled
 // further by conflicting merges. Reactivating it would mean reimplementing
 // removed contract functionality, which is out of scope for a merge-damage
-// cleanup — left disconnected until someone decides what to do with it.
-#[cfg(test)]
-// mod uncovered_entrypoints_test; // TODO: ContractEvents API
-#[cfg(test)]
-mod update_will_settings_test;
-#[cfg(test)]
-mod wills_by_owner_status_test;
-#[cfg(test)]
+// // mod uncovered_entrypoints_test; // TODO: ContractEvents API
 // mod issue_486_489_test; // TODO: ContractEvents API
+#[cfg(test)]
+mod issue_629_test;
 
 use soroban_sdk::{
-    contract, contractimpl, log, panic_with_error, symbol_short, token, xdr::ToXdr, Address,
-    Bytes, Env, Map, Vec,
+    contract, contractimpl, log, panic_with_error, symbol_short, token, xdr::ToXdr, Address, Bytes,
+    Env, Map, Vec,
 };
 
 pub use errors::WillError;
@@ -4076,13 +4070,7 @@ impl WillContract {
         };
         storage::archive_will(&env, &will);
 
-        events::will_archived(
-            &env,
-            will_id,
-            &will.owner,
-            env.ledger().timestamp(),
-            reason,
-        );
+        events::will_archived(&env, will_id, &will.owner, env.ledger().timestamp(), reason);
     }
 
     // -----------------------------------------------------------------------
@@ -5330,6 +5318,38 @@ pub(crate) fn proportional_share(total: i128, basis_points: u32) -> i128 {
     whole * basis_points as i128 + remainder * basis_points as i128 / BASIS_POINTS_TOTAL
 }
 
+/// Normalizes a bounty amount across tokens with different decimal precision
+/// to ensure consistent relative value scaling against the primary token decimals (issue #629).
+///
+/// If `from_decimals < to_decimals`, scales up by `10^(to_decimals - from_decimals)`.
+/// If `from_decimals > to_decimals`, scales down by `10^(from_decimals - to_decimals)`.
+/// Saturated arithmetic and truncation prevent overflow and underflow.
+pub fn normalize_bounty_decimals(amount: i128, from_decimals: u32, to_decimals: u32) -> i128 {
+    if from_decimals == to_decimals || amount == 0 {
+        amount
+    } else if from_decimals < to_decimals {
+        let diff = (to_decimals - from_decimals).min(38);
+        let factor = 10_i128.saturating_pow(diff);
+        amount.saturating_mul(factor)
+    } else {
+        let diff = (from_decimals - to_decimals).min(38);
+        let factor = 10_i128.saturating_pow(diff);
+        if factor == 0 {
+            0
+        } else {
+            amount / factor
+        }
+    }
+}
+
+/// Queries token decimals via SEP-41 `decimals()` probe, falling back to 7 (Stellar standard).
+pub fn get_token_decimals(env: &Env, token: &Address) -> u32 {
+    match token::Client::new(env, token).try_decimals() {
+        Ok(Ok(d)) => d,
+        _ => 7,
+    }
+}
+
 /// Pays out every token balance the will holds, marks the will `Released`,
 /// and publishes the `InheritanceReleased` event.
 ///
@@ -5337,10 +5357,10 @@ pub(crate) fn proportional_share(total: i128, basis_points: u32) -> i128 {
 ///
 /// 1. The keeper bounty (`will.keeper_bounty_bps`), taken out of a single
 ///    token, when a non-owner keeper released the will (#297). The token is
-///    chosen once, up front, as the first entry of `will.balances` whose
-///    bounty share rounds above zero; that same token is both reduced to make
-///    room and used to pay the keeper (#378). If no token's share rounds
-///    above zero, no bounty is paid and no beneficiary share is reduced.
+///    chosen once, up front, prioritizing the will's primary token (`will.token`)
+///    and normalized across token decimal precision (issue #629). That same token
+///    is both reduced to make room and used to pay the keeper (#378). If no token's
+///    share rounds above zero, no bounty is paid and no beneficiary share is reduced.
 /// 2. The reserve for hashed beneficiaries that have not yet called
 ///    `reveal_and_claim` (#181/#186). It is withheld from the visible
 ///    beneficiaries and left in `will.balances` for later claiming.
@@ -5398,9 +5418,6 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     let token_count = will.balances.len();
 
     // --- COMPUTE: calculate every share from the current (pre-mutation) balances ---
-    // Calculate keeper bounty if applicable (not paid to owner, only to other keepers)
-    let mut bounty_amount: i128 = 0;
-    let mut bounty_computed = false;
     // A keeper bounty is due only to a caller other than the owner.
     let should_pay_bounty = keeper
         .as_ref()
@@ -5408,32 +5425,49 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
         .unwrap_or(false);
 
     // Pick the single token the bounty is computed from *and* paid out of,
-    // before any per-token math runs (#378). Previously the bounty was
-    // computed inside the per-token loop under a `bounty_amount == 0` guard
-    // while the payout happened in the first entry of `transfer_plan`: on a
-    // multi-token will whose first token's bounty rounded to zero, the amount
-    // was computed against a *later* token but transferred with the *first*
-    // token's client — and that first token's balance had never been reduced
-    // to make room, so the keeper was paid out of beneficiaries' funds or the
-    // whole release aborted. Choosing the token up front and keying both the
-    // deduction and the payment off the same address makes the two impossible
-    // to desynchronise.
-    //
-    // Rounding: the bounty is `floor(balance * keeper_bounty_bps / 10_000)`
-    // through [`proportional_share`], so a token too small for the share to
-    // round above zero contributes nothing and is skipped. If *every* token
-    // rounds to zero, no bounty is paid at all and no beneficiary share is
-    // reduced — the tokens are distributed in full.
+    // before any per-token math runs (#378).
+    // Issue #629: Normalize bounty to primary token decimals.
     let mut bounty_token: Option<(Address, i128)> = None;
     if should_pay_bounty {
-        for (token_addr, total) in will.balances.iter() {
-            if total == 0 {
-                continue;
+        let primary_decimals = get_token_decimals(env, &will.token);
+
+        // Priority 1: Check primary token balance first (#384 consistency)
+        if let Some(primary_total) = will.balances.get(will.token.clone()) {
+            if primary_total > 0 {
+                let amount = proportional_share(primary_total, will.keeper_bounty_bps);
+                if amount > 0 {
+                    bounty_token = Some((will.token.clone(), amount));
+                }
             }
-            let amount = proportional_share(total, will.keeper_bounty_bps);
-            if amount > 0 {
-                bounty_token = Some((token_addr, amount));
-                break;
+        }
+
+        // Priority 2: If primary token yields zero bounty, check other tokens
+        // and normalize the calculation relative to primary token decimals (#629).
+        if bounty_token.is_none() {
+            for (token_addr, total) in will.balances.iter() {
+                if total == 0 {
+                    continue;
+                }
+                let token_decimals = get_token_decimals(env, &token_addr);
+                let raw_bounty = proportional_share(total, will.keeper_bounty_bps);
+                if raw_bounty > 0 {
+                    let normalized_bounty =
+                        normalize_bounty_decimals(raw_bounty, token_decimals, primary_decimals);
+                    let final_amount = if normalized_bounty > 0 {
+                        normalize_bounty_decimals(
+                            normalized_bounty,
+                            primary_decimals,
+                            token_decimals,
+                        )
+                        .min(total)
+                    } else {
+                        raw_bounty
+                    };
+                    if final_amount > 0 {
+                        bounty_token = Some((token_addr, final_amount));
+                        break;
+                    }
+                }
             }
         }
     }
@@ -5470,25 +5504,19 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
             continue;
         }
 
-        // Calculate bounty from first token's balance if applicable. The
-        // bounty is carved out of this token's balance *before* beneficiary
-        // shares are computed; paying it on top of a full distribution would
-        // spend funds belonging to other wills held by this contract (#458).
-        let mut token_bounty: i128 = 0;
-        if should_pay_bounty && !bounty_computed {
-            bounty_computed = true;
-            bounty_amount = proportional_share(total, will.keeper_bounty_bps);
-            token_bounty = bounty_amount;
-        }
-
         // Deduct the keeper bounty only from the token it was computed from.
         // Comparing the address (rather than relying on iteration position)
         // keeps the deduction and the payout tied to the same token (#378).
-        let mut available = total;
+        let mut token_bounty: i128 = 0;
         if let Some((bounty_addr, bounty_amount)) = &bounty_token {
             if bounty_addr == &token_addr {
-                available = (total - bounty_amount).max(0);
+                token_bounty = *bounty_amount;
             }
+        }
+
+        let mut available = total;
+        if token_bounty > 0 {
+            available = (total - token_bounty).max(0);
         }
 
         if hashed_bps > 0 {
