@@ -4421,7 +4421,11 @@ impl WillContract {
             claimed: false,
         });
 
-        // Validate combined percentages.
+        // Validate combined percentages. Percentage shares are absolute basis
+        // points of the balance, not a ratio of the other beneficiaries, so adding
+        // a hashed entry never rescales the others. The combined total is checked
+        // against 100% here, and any later change to the list is checked the same
+        // way (#641).
         assert_valid_percentages(&env, &will.beneficiaries, &will.hashed_beneficiaries);
 
         storage::save_will(&env, &will);
