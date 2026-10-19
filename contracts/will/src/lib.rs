@@ -793,7 +793,9 @@ impl WillContract {
         }
 
         // Fixed amounts are denominated in the will's primary token, which is
-        // the first entry of `tokens` (mirrored into `Will::token` below).
+        // the first entry of `tokens` (mirrored into `Will::token` below). The
+        // contract does not price tokens, so the owner's ordering is the choice,
+        // and it is fixed at creation (#640).
         let (primary_token, _) = tokens.get_unchecked(0);
         assert_valid_allocations(
             &env,
