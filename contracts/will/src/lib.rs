@@ -1948,6 +1948,8 @@ impl WillContract {
                 // it to be excluded from quorum would otherwise see it
                 // promoted to weight 1, skewing total_weight and the
                 // resulting threshold range in a way they did not intend (#489).
+                // A zero-weight guardian is refused here, so none can be created
+                // through a weighted update either (#654).
                 if g.weight == 0 {
                     panic_with_error!(&env, WillError::InvalidGuardianThreshold);
                 }
