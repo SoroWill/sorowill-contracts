@@ -2539,6 +2539,9 @@ impl WillContract {
         cursor: Option<u64>,
         limit: u32,
     ) -> Vec<Will> {
+        // The owner's id list is read once and paged in memory. The page is capped
+        // at `MAX_PAGE_SIZE`, so one call's response stays bounded however many
+        // wills the owner holds (#644).
         let ids = storage::get_owner_wills(&env, &owner);
         let page = storage::paginate_ids(&env, &ids, cursor, limit);
         let mut wills = Vec::new(&env);
