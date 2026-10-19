@@ -5416,6 +5416,8 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
         .map(|k| k != &will.owner && will.keeper_bounty_bps > 0)
         .unwrap_or(false);
 
+    // The bounty is `keeper_bounty_bps` of that token's balance at release, so it
+    // grows with the locked balance and needs no separate total_locked figure (#650).
     // Pick the single token the bounty is computed from *and* paid out of,
     // before any per-token math runs (#378). Previously the bounty was
     // computed inside the per-token loop under a `bounty_amount == 0` guard
