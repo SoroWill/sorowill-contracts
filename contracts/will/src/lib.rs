@@ -924,6 +924,9 @@ impl WillContract {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
 
+        // Balances are not re-read here. Each fixed-amount share was checked against
+        // the will's balance at creation and on every top-up, and a balance only
+        // leaves through a payout, a cancel or a release (#647).
         if will.status != WillStatus::PendingConfirmation {
             panic_with_error!(&env, WillError::WillNotConfirmed);
         }
