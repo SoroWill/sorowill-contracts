@@ -373,6 +373,9 @@ pub fn hashed_claimed(env: &Env, will_id: u64, claimant: &Address, amount: i128)
 /// Published when the owner adds a hashed beneficiary commitment to a will
 /// (issue #185). Without this, off-chain indexers reconstructing will state
 /// purely from events would silently miss every hashed beneficiary.
+///
+/// It has its own topic, separate from the regular beneficiary event, so an
+/// indexer can tell a hashed beneficiary apart from a regular one (#651).
 pub fn hashed_beneficiary_added(
     env: &Env,
     will_id: u64,
