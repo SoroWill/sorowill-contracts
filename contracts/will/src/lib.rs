@@ -5403,7 +5403,10 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     let token_count = will.balances.len();
 
     // --- COMPUTE: calculate every share from the current (pre-mutation) balances ---
-    // Calculate keeper bounty if applicable (not paid to owner, only to other keepers)
+    // Calculate keeper bounty if applicable (not paid to owner, only to other keepers).
+    // The bounty is at most `MAX_KEEPER_BOUNTY_BPS` (1%) of one token's balance and
+    // is taken out of that balance before the beneficiary split, so it can never
+    // exceed the balance it is paid from (#653).
     let mut bounty_amount: i128 = 0;
     let mut bounty_computed = false;
     // A keeper bounty is due only to a caller other than the owner.
