@@ -62,7 +62,7 @@ pub enum WillError {
     WillNotBothActive = 14,
     /// Cannot merge: same will id provided for both wills.
     SameWillId = 15,
-    /// Cannot merge: merging would result in too many beneficiaries or guardians.
+    /// Cannot merge: merging would result in too many beneficiaries, guardians, or tokens.
     MergeWouldExceedLimits = 16,
     /// A check-in or grace period was zero, or long enough that the resulting
     /// deadline could not be represented as a ledger timestamp.
@@ -157,8 +157,8 @@ pub enum WillError {
     /// unrelated issues in this same file and corrected alongside them since
     /// nothing else in this repo could compile until it was.
     UnsupportedSchemaVersion = 51,
-    /// Cannot merge: the two wills' primary tokens differ, so summing their
-    /// legacy `balance` fields would be nonsensical.
+    /// Cannot merge: the two wills' primary tokens differ or have disjoint token sets,
+    /// so summing their balances would create ambiguous fixed-amount semantics (#184, #667).
     ///
     /// #751 — previously also `= 39`; see `UnsupportedSchemaVersion` above.
     PrimaryTokenMismatch = 52,

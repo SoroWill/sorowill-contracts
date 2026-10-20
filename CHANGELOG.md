@@ -58,6 +58,10 @@ gets its own [contract spec artifact](./spec) once exported.
   cannot (#501).
 
 ### Fixed
+- `merge_wills` validates token overlap requirements and disallows merging wills
+  with completely disjoint token sets, preventing ambiguous fixed-amount
+  semantics; also enforces `MAX_TOKENS` and re-validates allocations on merged
+  balances (#667).
 - `renounce_beneficiary` redistribution now caps the percentage total at
   10,000 bps; the last remaining percentage beneficiary absorbs the rounding
   remainder as a non-negative top-up, using checked arithmetic (#486).
