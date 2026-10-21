@@ -725,8 +725,8 @@ pub fn tally_guardian_votes(env: &Env, will: &Will, now: u64, expiry_days: u64) 
     let mut count: u32 = 0;
     for guardian in will.guardians.iter() {
         if has_guardian_voted(env, will.id, &guardian.address, now, expiry_days) {
-            weight += guardian.weight;
-            count += 1;
+            weight = weight.saturating_add(guardian.weight);
+            count = count.saturating_add(1);
         }
     }
     (weight, count)
@@ -743,8 +743,8 @@ pub fn tally_guardian_cancel_votes(
     let mut count: u32 = 0;
     for guardian in will.guardians.iter() {
         if has_guardian_cancel_voted(env, will.id, &guardian.address, now, expiry_days) {
-            weight += guardian.weight;
-            count += 1;
+            weight = weight.saturating_add(guardian.weight);
+            count = count.saturating_add(1);
         }
     }
     (weight, count)
