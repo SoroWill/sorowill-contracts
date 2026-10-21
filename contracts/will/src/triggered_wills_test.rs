@@ -252,6 +252,119 @@ fn unindex_triggered_will_extends_ttl() {
     );
 }
 
+// ── Issue #657: beneficiary order snapshot at trigger ─────────────────────
+
+/// Builds a will with three percentage beneficiaries, in a caller-chosen
+/// order, so tests can assert the trigger-time snapshot preserves that order.
+fn create_multi_beneficiary_will(
+    env: &Env,
+    client: &WillContractClient<'_>,
+    owner: &Address,
+    token_address: &Address,
+    beneficiaries: &[Address],
+) -> u64 {
+    let mut entries = soroban_sdk::Vec::new(env);
+    for address in beneficiaries {
+        entries.push_back(Beneficiary {
+            address: address.clone(),
+            allocation: Allocation::Percentage(3_333),
+        });
+    }
+    client.create_will(
+        owner,
+        &vec![env, (token_address.clone(), 1_000_000_i128)],
+        &entries,
+        &90,
+        &7,
+        &vec![env],
+        &0,
+        &None,
+        &0,
+    )
+}
+
+/// Issue #657: `trigger_will` must snapshot the beneficiary order so that a
+/// later reorder cannot change which beneficiary a percentage applies to.
+///
+/// This pins the snapshot lifecycle to the triggered-wills index behaviour
+/// covered above: the snapshot exists exactly while the will is Triggered and
+/// is cleared when the will returns to Active.
+#[test]
+fn trigger_will_snapshots_beneficiary_order_and_clears_on_return_to_active() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    let (client, owner, token_address) = setup(&env);
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    let third = Address::generate(&env);
+    let order = [first.clone(), second.clone(), third.clone()];
+
+    let will_id = create_multi_beneficiary_will(
+        &env,
+        &client,
+        &owner,
+        &token_address,
+        &order,
+    );
+
+    // No snapshot before the will is triggered.
+    assert!(
+        client.get_beneficiary_snapshot(&will_id).is_none(),
+        "an Active will must not carry a beneficiary snapshot",
+    );
+
+    env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
+    client.trigger_will(&will_id);
+    assert_eq!(client.get_triggered_wills(&None, &50).len(), 1);
+
+    // The snapshot mirrors the creation order exactly.
+    let snapshot = client
+        .get_beneficiary_snapshot(&will_id)
+        .expect("trigger_will must store a beneficiary snapshot");
+    assert_eq!(snapshot.len(), order.len());
+    for (index, expected) in order.iter().enumerate() {
+        assert_eq!(
+            snapshot.get(index as u32).unwrap(),
+            expected.clone(),
+            "snapshot must preserve the beneficiary order captured at trigger",
+        );
+    }
+
+    // Returning to Active clears the snapshot alongside the index entry.
+    env.ledger().with_mut(|l| l.timestamp += DAY);
+    client.emergency_checkin(&will_id, &owner);
+    assert!(client.get_triggered_wills(&None, &50).is_empty());
+    assert!(
+        client.get_beneficiary_snapshot(&will_id).is_none(),
+        "emergency_checkin must clear the beneficiary snapshot",
+    );
+
+    // Re-trigger, then cancel via a guardian: the snapshot must be cleared too.
+    let guardian = Address::generate(&env);
+    let will_id = create_will(
+        &env,
+        &client,
+        &owner,
+        &token_address,
+        &first,
+        vec![&env, guardian.clone()],
+        1,
+    );
+    env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
+    client.trigger_will(&will_id);
+    assert!(client.get_beneficiary_snapshot(&will_id).is_some());
+
+    client.accept_guardian_role(&will_id, &guardian);
+    client.guardian_cancel_trigger(&will_id, &guardian);
+    assert!(client.get_triggered_wills(&None, &50).is_empty());
+    assert!(
+        client.get_beneficiary_snapshot(&will_id).is_none(),
+        "guardian_cancel_trigger must clear the beneficiary snapshot",
+    );
+}
+
 /// The early return for an id that is not in the index must stay a pure read:
 /// no `set` and no `extend_ttl`, so an unindex that changes nothing costs
 /// nothing. Asserted by ageing the entry and confirming an unindex of an absent

@@ -9,6 +9,16 @@
 //! Self-contained module (its own `setup`) so it does not depend on the
 //! large pre-existing `test.rs` suite, which still constructs `Beneficiary`
 //! via the old `basis_points` field.
+//!
+//! # Beneficiary-order immutability guarantee (issue #657)
+//!
+//! The beneficiary list (addresses *and* their order) is snapshotted at
+//! `trigger_will` time. Once a will is `Triggered`, `update_beneficiaries`
+//! is rejected, so `release_inheritance` always pays exactly the list that
+//! was current when the will was triggered — even if the owner reorders or
+//! replaces beneficiaries between trigger and release. The snapshot is only
+//! discarded if the will returns to `Active` (e.g. via `emergency_checkin`),
+//! in which case the next `trigger_will` captures the then-current list.
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -245,4 +255,184 @@ fn update_beneficiaries_rejected_after_trigger() {
         result.is_err(),
         "update_beneficiaries must be rejected after trigger"
     );
+}
+
+/// Issue #657: the beneficiary list (addresses and order) is snapshotted at
+/// trigger time. A reorder/replacement attempted between trigger and release
+/// must not affect payouts: `release_inheritance` pays exactly the
+/// trigger-time snapshot.
+#[test]
+fn release_pays_trigger_time_snapshot_despite_reorder_attempt() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    let owner = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(owner.clone());
+    let token_address = sac.address();
+    StellarAssetClient::new(&env, &token_address).mint(&owner, &1_000_000);
+    let token = TokenClient::new(&env, &token_address);
+
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+
+    // Trigger-time list: alice 60%, bob 40% (in that order).
+    let will_id = client.create_will(
+        &owner,
+        &vec![&env, (token_address.clone(), 1_000_000_i128)],
+        &vec![
+            &env,
+            Beneficiary {
+                address: alice.clone(),
+                allocation: Allocation::Percentage(6_000),
+            },
+            Beneficiary {
+                address: bob.clone(),
+                allocation: Allocation::Percentage(4_000),
+            },
+        ],
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+
+    // Snapshot the trigger-time list for later comparison.
+    let snapshot = client.get_will(&will_id).beneficiaries.clone();
+    assert_eq!(snapshot.len(), 2);
+
+    env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
+    client.trigger_will(&will_id);
+
+    // Within the grace period, attempt to reorder/replace the list. This must
+    // be rejected because the will is no longer Active.
+    let reorder_result = client.try_update_beneficiaries(
+        &will_id,
+        &owner,
+        &vec![
+            &env,
+            Beneficiary {
+                address: bob.clone(),
+                allocation: Allocation::Percentage(4_000),
+            },
+            Beneficiary {
+                address: alice.clone(),
+                allocation: Allocation::Percentage(6_000),
+            },
+        ],
+    );
+    assert!(
+        reorder_result.is_err(),
+        "reordering beneficiaries after trigger must be rejected"
+    );
+
+    let replace_result = client.try_update_beneficiaries(
+        &will_id,
+        &owner,
+        &vec![
+            &env,
+            Beneficiary {
+                address: carol.clone(),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
+    );
+    assert!(
+        replace_result.is_err(),
+        "replacing beneficiaries after trigger must be rejected"
+    );
+
+    // The stored list is still exactly the trigger-time snapshot.
+    let after_attempts = client.get_will(&will_id).beneficiaries.clone();
+    assert_eq!(after_attempts.len(), snapshot.len());
+    for i in 0..snapshot.len() {
+        assert_eq!(after_attempts.get(i).unwrap(), snapshot.get(i).unwrap());
+    }
+
+    // Release pays exactly the trigger-time snapshot.
+    env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
+    client.release_inheritance(&will_id, &None);
+
+    assert_eq!(token.balance(&alice), 600_000);
+    assert_eq!(token.balance(&bob), 400_000);
+    assert_eq!(token.balance(&carol), 0);
+    assert_eq!(token.balance(&client.address), 0);
+    assert_eq!(client.get_will(&will_id).status, WillStatus::Released);
+}
+
+/// Issue #657: after `emergency_checkin` returns the will to Active, a new
+/// `trigger_will` must capture the then-current beneficiary list (the old
+/// snapshot is discarded).
+#[test]
+fn retrigger_after_emergency_checkin_captures_current_list() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    let owner = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(owner.clone());
+    let token_address = sac.address();
+    StellarAssetClient::new(&env, &token_address).mint(&owner, &1_000_000);
+    let token = TokenClient::new(&env, &token_address);
+
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    let will_id = client.create_will(
+        &owner,
+        &vec![&env, (token_address.clone(), 1_000_000_i128)],
+        &vec![
+            &env,
+            Beneficiary {
+                address: alice.clone(),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+
+    // First trigger captures [alice].
+    env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
+    client.trigger_will(&will_id);
+
+    // Owner checks in, returning the will to Active.
+    client.emergency_checkin(&will_id, &owner);
+    assert_eq!(client.get_will(&will_id).status, WillStatus::Active);
+
+    // Owner changes the list while Active again.
+    client.update_beneficiaries(
+        &will_id,
+        &owner,
+        &vec![
+            &env,
+            Beneficiary {
+                address: bob.clone(),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
+    );
+
+    // Second trigger must capture the then-current list ([bob]).
+    env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
+    client.trigger_will(&will_id);
+    env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
+    client.release_inheritance(&will_id, &None);
+
+    assert_eq!(token.balance(&alice), 0);
+    assert_eq!(token.balance(&bob), 1_000_000);
+    assert_eq!(token.balance(&client.address), 0);
 }

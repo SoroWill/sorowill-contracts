@@ -166,3 +166,110 @@ fn update_guardians_valid_shrink_then_cooldown_blocks_trigger() {
     client.guardian_trigger(&will_id, &g1, &crate::GuardianVoteReason::Unreachable);
     assert_eq!(client.get_will(&will_id).guardian_votes, 1);
 }
+
+// ---------------------------------------------------------------------------
+// Issue #658: removed guardians' votes must not linger in the accumulator
+// ---------------------------------------------------------------------------
+
+/// Removing a guardian who had already voted must drop both `guardian_votes`
+/// and `guardian_vote_weight` so the remaining votes are the only ones counted.
+#[test]
+fn update_guardians_clears_votes_of_removed_voting_guardian() {
+    let (env, contract_id, owner, [g1, g2, g3], will_id) = setup_three_guardians_threshold_two();
+    let client = WillContractClient::new(&env, &contract_id);
+
+    // Two guardians accept their role and cast votes.
+    client.accept_guardian_role(&will_id, &g1);
+    client.accept_guardian_role(&will_id, &g2);
+    client.guardian_trigger(&will_id, &g1, &crate::GuardianVoteReason::Unreachable);
+    client.guardian_trigger(&will_id, &g2, &crate::GuardianVoteReason::Unreachable);
+
+    let will = client.get_will(&will_id);
+    assert_eq!(will.guardian_votes, 2);
+    assert_eq!(will.guardian_vote_weight, 2);
+
+    // Remove g2, who had voted. Only g1's vote should remain.
+    client.update_guardians(&will_id, &owner, &vec![&env, g1.clone(), g3.clone()]);
+
+    let will = client.get_will(&will_id);
+    assert_eq!(
+        will.guardian_votes, 1,
+        "removed guardian's vote must be dropped from guardian_votes"
+    );
+    assert_eq!(
+        will.guardian_vote_weight, 1,
+        "removed guardian's weight must be dropped from guardian_vote_weight"
+    );
+    assert!(
+        will.guardian_vote_weight < will.guardian_threshold,
+        "quorum must no longer be satisfied after the voting guardian is removed"
+    );
+}
+
+/// After a voting guardian is removed, a fresh vote from a remaining guardian
+/// must be required to reach the threshold again.
+#[test]
+fn update_guardians_requires_new_vote_to_reach_quorum_after_removal() {
+    let (env, contract_id, owner, [g1, g2, g3], will_id) = setup_three_guardians_threshold_two();
+    let client = WillContractClient::new(&env, &contract_id);
+
+    client.accept_guardian_role(&will_id, &g1);
+    client.accept_guardian_role(&will_id, &g2);
+    client.accept_guardian_role(&will_id, &g3);
+    client.guardian_trigger(&will_id, &g1, &crate::GuardianVoteReason::Unreachable);
+    client.guardian_trigger(&will_id, &g2, &crate::GuardianVoteReason::Unreachable);
+
+    // Remove g2 (a voter); g1 remains with a single vote.
+    client.update_guardians(&will_id, &owner, &vec![&env, g1.clone(), g3.clone()]);
+    assert_eq!(client.get_will(&will_id).guardian_vote_weight, 1);
+
+    // g3 has not voted yet — their vote is needed to reach threshold = 2.
+    client.guardian_trigger(&will_id, &g3, &crate::GuardianVoteReason::Unreachable);
+    let will = client.get_will(&will_id);
+    assert_eq!(will.guardian_votes, 2);
+    assert_eq!(will.guardian_vote_weight, 2);
+    assert!(will.guardian_vote_weight >= will.guardian_threshold);
+}
+
+/// Cancelling a vote by a guardian who is subsequently removed must not leave
+/// a stale entry in the accumulator.
+#[test]
+fn update_guardians_clears_cancelled_vote_of_removed_guardian() {
+    let (env, contract_id, owner, [g1, g2, g3], will_id) = setup_three_guardians_threshold_two();
+    let client = WillContractClient::new(&env, &contract_id);
+
+    client.accept_guardian_role(&will_id, &g1);
+    client.accept_guardian_role(&will_id, &g2);
+    client.guardian_trigger(&will_id, &g1, &crate::GuardianVoteReason::Unreachable);
+    client.guardian_trigger(&will_id, &g2, &crate::GuardianVoteReason::Unreachable);
+    assert_eq!(client.get_will(&will_id).guardian_vote_weight, 2);
+
+    // g2 cancels their vote, then is removed from the guardian list.
+    client.cancel_guardian_vote(&will_id, &g2);
+    assert_eq!(client.get_will(&will_id).guardian_vote_weight, 1);
+
+    client.update_guardians(&will_id, &owner, &vec![&env, g1.clone(), g3.clone()]);
+
+    let will = client.get_will(&will_id);
+    assert_eq!(will.guardian_votes, 1);
+    assert_eq!(will.guardian_vote_weight, 1);
+}
+
+/// If the removed guardian was the only voter, the counts must drop to zero.
+#[test]
+fn update_guardians_zeroes_counts_when_only_voter_removed() {
+    let (env, contract_id, owner, [g1, g2, g3], will_id) = setup_three_guardians_threshold_two();
+    let client = WillContractClient::new(&env, &contract_id);
+
+    client.accept_guardian_role(&will_id, &g1);
+    client.guardian_trigger(&will_id, &g1, &crate::GuardianVoteReason::Unreachable);
+    assert_eq!(client.get_will(&will_id).guardian_vote_weight, 1);
+
+    // Remove g1, the sole voter.
+    client.update_guardians(&will_id, &owner, &vec![&env, g2.clone(), g3.clone()]);
+
+    let will = client.get_will(&will_id);
+    assert_eq!(will.guardian_votes, 0);
+    assert_eq!(will.guardian_vote_weight, 0);
+    assert!(will.guardian_vote_weight < will.guardian_threshold);
+}

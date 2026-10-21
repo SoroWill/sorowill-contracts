@@ -379,6 +379,44 @@ pub struct Will {
     /// Optional delegate address that may call `check_in` on the owner's
     /// behalf. `None` means only the owner can check in.
     pub delegate: Option<Address>,
+    /// Frozen snapshot of [`Will::beneficiaries`] taken at the moment the will
+    /// transitioned to `Triggered` (issue #657).
+    ///
+    /// `None` while the will has never been triggered. Once `trigger_will`
+    /// moves the will to `Triggered`, this holds a clone of the beneficiary
+    /// list as it stood at that instant, preserving both order and
+    /// allocations.
+    ///
+    /// # Immutability guarantee
+    ///
+    /// From the moment the will is triggered until it is released (or
+    /// cancelled back to `Active`), the beneficiary order and allocations used
+    /// for distribution are frozen. Later `update_beneficiaries` calls cannot
+    /// affect an in-flight release: distribution reads this snapshot rather
+    /// than the live list, so reordering or editing `beneficiaries` between
+    /// trigger and release can never cause a percentage to be applied to a
+    /// different beneficiary than the one it was computed for.
+    ///
+    /// Use [`Will::distribution_beneficiaries`] to obtain the list that
+    /// distribution should actually use.
+    pub triggered_beneficiaries: Option<Vec<Beneficiary>>,
+}
+
+impl Will {
+    /// Returns the beneficiary list that distribution must use.
+    ///
+    /// If the will has been triggered, this is the frozen snapshot taken at
+    /// trigger time ([`Will::triggered_beneficiaries`]); otherwise it falls
+    /// back to the live [`Will::beneficiaries`] list. This keeps the order and
+    /// allocations used for a release consistent with the state at trigger
+    /// time, regardless of any later `update_beneficiaries` calls (issue
+    /// #657).
+    pub fn distribution_beneficiaries(&self) -> Vec<Beneficiary> {
+        match &self.triggered_beneficiaries {
+            Some(snapshot) => snapshot.clone(),
+            None => self.beneficiaries.clone(),
+        }
+    }
 }
 
 /// A page of wills returned by a filtered, paginated query (#455).

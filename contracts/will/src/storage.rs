@@ -767,6 +767,34 @@ pub fn clear_guardian_cancel_vote(env: &Env, will_id: u64, guardian: &Address) {
     env.storage().persistent().remove(&key);
 }
 
+/// Purges every stored vote belonging to guardians that have just been
+/// removed from `will_id`'s guardian list (#658).
+///
+/// Guardian votes are tallied from the per-guardian `GuardianVote` /
+/// `GuardianCancelVote` records (see [`tally_guardian_votes`] and
+/// [`recount_guardian_votes`]), so a removed guardian's records would no
+/// longer be counted by a fresh tally. The persisted
+/// `guardian_vote_weight` / `guardian_votes` counters on the `Will` are,
+/// however, carried forward across updates, so any weight a removed guardian
+/// contributed before removal would keep inflating the count and could let a
+/// later quorum be reached with fewer live votes than the threshold requires.
+///
+/// This helper removes both vote records for each address in `removed`, so
+/// the accumulator can be recomputed from the surviving guardians alone.
+/// Callers are expected to recompute the will's vote counters from
+/// [`recount_guardian_votes`] / [`recount_guardian_cancel_votes`] after
+/// calling this, so the stored tallies match the surviving guardian set.
+///
+/// Removal is idempotent: `remove` on an absent key is a no-op, so passing an
+/// address that never voted costs nothing beyond the lookup. The list is
+/// bounded by [`crate::MAX_GUARDIANS`] (at most two removals per address).
+pub fn purge_removed_guardian_votes(env: &Env, will_id: u64, removed: &Vec<Address>) {
+    for guardian in removed.iter() {
+        clear_guardian_vote(env, will_id, &guardian);
+        clear_guardian_cancel_vote(env, will_id, &guardian);
+    }
+}
+
 /// Clears all guardian votes cast against `will`, starting a fresh voting cycle.
 ///
 /// Called whenever a will returns to `Active` (e.g. via `emergency_checkin`)
