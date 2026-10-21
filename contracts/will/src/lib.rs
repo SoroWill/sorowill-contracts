@@ -3770,10 +3770,22 @@ impl WillContract {
     /// - `will_id_a`: the will that survives and receives the merged state.
     /// - `will_id_b`: the will that is consumed (marked Cancelled).
     ///
+    /// # State requirements
+    ///
+    /// Both wills must be in [`WillStatus::Active`] status at the time of the
+    /// call. A will that has already been released (or triggered, cancelled,
+    /// confirmed or closed) is rejected with
+    /// [`WillError::WillNotBothActive`] *before* any merge work happens, so a
+    /// released will can never be folded into another will and its
+    /// beneficiaries can never be paid out twice (#656). The status check runs
+    /// immediately after both wills are loaded and before balances,
+    /// beneficiaries or guardians are touched.
+    ///
     /// # Panics
     /// - [`WillError::NotSameOwner`] if the two wills have different owners.
     /// - [`WillError::NotOwner`] if `owner` does not own both wills.
-    /// - [`WillError::WillNotBothActive`] if either will is not in `Active` status.
+    /// - [`WillError::WillNotBothActive`] if either will is not in `Active` status
+    ///   (including a will that is already `Released`).
     /// - [`WillError::SameWillId`] if `will_id_a` equals `will_id_b`.
     /// - [`WillError::MergeWithHashedBeneficiaries`] if either will still has a
     ///   hashed beneficiary that has not revealed and claimed. Only *visible*
@@ -3814,6 +3826,13 @@ impl WillContract {
             panic_with_error!(&env, WillError::NotSameOwner);
         }
 
+        // Both wills must be `Active` before anything is merged (#656). A
+        // released will has already distributed its balance to its
+        // beneficiaries; merging it would move its (now zeroed) state into the
+        // survivor and let the distribution logic process the same
+        // beneficiaries a second time. Rejecting here, before any balances,
+        // beneficiaries or guardians are read or mutated, guarantees a
+        // non-`Active` will can never take part in a merge.
         assert_status(
             &env,
             &will_a,
@@ -4085,6 +4104,50 @@ impl WillContract {
         limit: u32,
     ) -> Vec<WillStatusTransition> {
         storage::paginate_history(&env, will_id, cursor, limit)
+    }
+
+    /// Returns a page of wills owned by `owner`, optionally filtered by
+    /// `status`, using an opaque cursor for pagination.
+    ///
+    /// # Cursor validation
+    ///
+    /// The `cursor` argument is validated before it is parsed (#655). A
+    /// malformed cursor — one that is not a well-formed, non-negative decimal
+    /// offset — is rejected with [`WillError::InvalidCursor`] rather than
+    /// being parsed leniently and panicking. Pass `None` to start a walk.
+    ///
+    /// # Panics
+    /// - [`WillError::InvalidCursor`] if `cursor` is not well-formed.
+    pub fn get_wills_by_owner(
+        env: Env,
+        owner: Address,
+        status: Option<WillStatus>,
+        cursor: Option<u32>,
+        limit: u32,
+    ) -> Vec<u64> {
+        validate_cursor(&env, &cursor);
+        storage::paginate_ids(&env, &owner, status, cursor, limit)
+    }
+
+    /// Returns a page of wills naming `beneficiary`, using an opaque cursor
+    /// for pagination.
+    ///
+    /// # Cursor validation
+    ///
+    /// As with [`WillContract::get_wills_by_owner`], the `cursor` is validated
+    /// before parsing and a malformed value is rejected with
+    /// [`WillError::InvalidCursor`] (#655).
+    ///
+    /// # Panics
+    /// - [`WillError::InvalidCursor`] if `cursor` is not well-formed.
+    pub fn get_wills_by_beneficiary(
+        env: Env,
+        beneficiary: Address,
+        cursor: Option<u32>,
+        limit: u32,
+    ) -> Vec<u64> {
+        validate_cursor(&env, &cursor);
+        storage::paginate_ids_by_beneficiary(&env, &beneficiary, cursor, limit)
     }
 
     /// Archives a Released or Cancelled will, removing it from active
@@ -6110,6 +6173,29 @@ fn purge_removed_guardian_votes(
         tally_guardian_votes(env, will, now, storage::has_guardian_cancel_voted);
     will.guardian_cancel_votes = cancel_votes;
     will.guardian_cancel_vote_weight = cancel_weight;
+}
+
+/// Validates a pagination cursor before it is handed to the storage layer
+/// (#655).
+///
+/// Cursors in this contract are positional offsets encoded as a `u32`. The
+/// type system already rules out negative or non-numeric values, but a cursor
+/// can still be malformed in ways that would make the pagination logic panic
+/// if it were trusted blindly — most notably an offset that cannot be
+/// represented as a valid index (`u32::MAX`, which would overflow when the
+/// page length is added to it). This helper rejects such values up front with
+/// a typed [`WillError::InvalidCursor`] error instead of letting the storage
+/// layer unwrap or overflow.
+///
+/// `None` is always valid: it means "start from the beginning".
+fn validate_cursor(env: &Env, cursor: &Option<u32>) {
+    if let Some(offset) = cursor {
+        // A cursor at or beyond `u32::MAX` cannot be advanced by a page
+        // length without overflowing, so it is not a well-formed offset.
+        if *offset == u32::MAX {
+            panic_with_error!(env, WillError::InvalidCursor);
+        }
+    }
 }
 
 /// Records a status transition in `will_id`'s on-chain audit trail.

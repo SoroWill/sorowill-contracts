@@ -152,3 +152,78 @@ fn pagination_with_invalid_cursor_starts_from_beginning() {
     // Should return remaining wills after cursor, or empty if cursor is beyond all
     assert!(results.len() <= 2);
 }
+
+#[test]
+fn pagination_rejects_malformed_cursor() {
+    let (env, client, owner, _token, token_address) = setup();
+    let beneficiary = Address::generate(&env);
+
+    // Create 2 wills
+    for i in 0..2 {
+        client.create_will(
+            &owner,
+            &vec![&env, (token_address.clone(), 100_000_i128 + i as i128)],
+            &vec![
+                &env,
+                Beneficiary {
+                    address: beneficiary.clone(),
+                    allocation: Allocation::Percentage(10_000),
+                },
+            ],
+            &90,
+            &7,
+            &vec![&env],
+            &0,
+            &None,
+            &0,
+        );
+    }
+
+    // A cursor that does not correspond to any valid will id must be rejected
+    // with an error rather than panicking.
+    let result = client.try_get_wills_by_beneficiary(&beneficiary, &Some(u64::MAX), &10);
+    assert!(result.is_err());
+
+    // The owner listing must also reject malformed cursors.
+    let result = client.try_get_wills_by_owner(&owner, &Some(u64::MAX), &10);
+    assert!(result.is_err());
+}
+
+#[test]
+fn pagination_valid_cursor_still_pages() {
+    let (env, client, owner, _token, token_address) = setup();
+    let beneficiary = Address::generate(&env);
+
+    // Create 4 wills with the same beneficiary
+    let mut will_ids = vec![&env];
+    for i in 0..4 {
+        let will_id = client.create_will(
+            &owner,
+            &vec![&env, (token_address.clone(), 100_000_i128 + i as i128)],
+            &vec![
+                &env,
+                Beneficiary {
+                    address: beneficiary.clone(),
+                    allocation: Allocation::Percentage(10_000),
+                },
+            ],
+            &90,
+            &7,
+            &vec![&env],
+            &0,
+            &None,
+            &0,
+        );
+        will_ids.push_back(will_id);
+    }
+
+    // A valid cursor (an existing will id) must still page correctly.
+    let cursor = will_ids.get(1).unwrap();
+    let page = client.try_get_wills_by_beneficiary(&beneficiary, &Some(cursor), &10);
+    assert!(page.is_ok());
+    let page = page.unwrap().unwrap();
+    assert!(page.len() <= 4);
+    for will in page.iter() {
+        assert_ne!(will.id, cursor);
+    }
+}

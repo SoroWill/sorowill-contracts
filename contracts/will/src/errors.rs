@@ -236,4 +236,15 @@ pub enum WillError {
     /// release is rejected up front instead of running out of Soroban
     /// transaction resources partway through the payout loop (#597).
     DistributionTooLarge = 55,
+    /// A pagination cursor string was malformed and could not be decoded into
+    /// a valid cursor. Cursors are opaque, contract-produced values; a caller
+    /// that supplies a truncated, corrupted or otherwise ill-formed string is
+    /// rejected with this error instead of being parsed, so a bad cursor can
+    /// never reach the pagination logic and cause a panic (#655).
+    InvalidCursor = 56,
+    /// `merge_wills` was called with a will that is already `Released` (or
+    /// otherwise not `Active`). Merging a released will into an active one
+    /// would let the distribution logic process the same beneficiary twice,
+    /// so both wills must be `Active` before a merge is accepted (#656).
+    MergeWithReleasedWill = 57,
 }

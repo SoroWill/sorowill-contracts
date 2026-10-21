@@ -235,3 +235,79 @@ fn merge_multiple_small_shares_preserved() {
         "total should equal combined will balance"
     );
 }
+
+/// Regression test for issue #656: merging a released will with an active will
+/// must be rejected. Otherwise distribution logic could process the same
+/// beneficiary twice (once via the released will, once via the merged will).
+///
+/// State requirements: `merge_wills` may only combine wills that are both in
+/// the `Active` state. A will that has already been released is terminal and
+/// cannot participate in a merge.
+#[test]
+fn merge_rejects_released_will() {
+    let (env, client, owner, token, token_address) = setup();
+    let beneficiary = Address::generate(&env);
+
+    let beneficiaries: SorobanVec<Beneficiary> = vec![
+        &env,
+        Beneficiary {
+            address: beneficiary.clone(),
+            allocation: Allocation::Percentage(10_000),
+        },
+    ];
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 1_000_000i128)];
+
+    let will_a = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+    let will_b = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+
+    // Release will_a so it is no longer in the Active state.
+    release(&env, &client, will_a);
+
+    let balance_after_release = token.balance(&beneficiary);
+    assert_eq!(
+        balance_after_release, 1_000_000,
+        "released will should have distributed its balance exactly once"
+    );
+
+    // Attempting to merge the released will with an active will must fail.
+    let result = client.try_merge_wills(&owner, &will_a, &will_b);
+    assert!(
+        result.is_err(),
+        "merging a released will with an active will must be rejected"
+    );
+
+    // No double processing: the beneficiary balance must be unchanged.
+    assert_eq!(
+        token.balance(&beneficiary),
+        balance_after_release,
+        "rejected merge must not distribute funds again"
+    );
+
+    // The active will remains intact and can still be released normally.
+    release(&env, &client, will_b);
+    assert_eq!(
+        token.balance(&beneficiary),
+        2_000_000,
+        "active will should distribute its own balance exactly once"
+    );
+}

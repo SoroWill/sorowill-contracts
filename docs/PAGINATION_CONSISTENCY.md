@@ -20,6 +20,32 @@ between two page requests:
 - **Status changes** do not move a will within the index, but the `Will`
   returned for an id always reflects its state at the time of the call.
 
+## Cursor format and validation
+
+A cursor must be a well-formed will id: a non-empty string of ASCII decimal
+digits (`0`-`9`) that parses as a `u64`. Leading zeros are accepted; no sign,
+whitespace, separators or other characters are allowed.
+
+Cursors are validated before parsing. A malformed cursor is rejected with the
+`InvalidCursor` error instead of panicking, so callers can handle bad input
+gracefully.
+
+Valid cursors:
+
+- `"0"` (start from the first id)
+- `"42"`
+- `"007"` (parsed as `7`)
+
+Invalid cursors (all rejected with `InvalidCursor`):
+
+- `""` (empty)
+- `" 42"` / `"42 "` (whitespace)
+- `"-1"` / `"+1"` (sign)
+- `"1.5"` (non-integer)
+- `"abc"` (non-numeric)
+- `"18446744073709551616"` (overflows `u64`)
+=======
+
 ## What is not guaranteed
 
 Pages are not a snapshot. A client that wants a consistent view must tolerate

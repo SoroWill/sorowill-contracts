@@ -199,3 +199,64 @@ fn merge_wills_rejects_different_owners() {
     let res = client.try_merge_wills(&owner_a, &will_a, &will_b);
     assert_eq!(res, Err(Ok(crate::WillError::NotSameOwner.into())));
 }
+
+/// Regression test for issue #656: merging a will that has already been
+/// released must be rejected, otherwise distribution logic could process the
+/// same beneficiary twice.
+#[test]
+fn merge_wills_rejects_released_will() {
+    let (env, client, owner, token_address) = setup();
+    let beneficiary = Address::generate(&env);
+
+    let beneficiaries: SorobanVec<Beneficiary> = vec![
+        &env,
+        Beneficiary {
+            address: beneficiary.clone(),
+            allocation: Allocation::Percentage(10_000),
+        },
+    ];
+    let tokens: SorobanVec<(Address, i128)> = vec![&env, (token_address.clone(), 500_000_i128)];
+
+    let will_id_a = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+    let will_id_b = client.create_will(
+        &owner,
+        &tokens,
+        &beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+
+    // Trigger will_b and advance past the grace period so it can be released.
+    client.trigger_will(&will_id_b);
+    env.ledger().set_timestamp(1_700_000_000 + 90 * 86_400 + 7 * 86_400 + 1);
+    client.release_inheritance(&will_id_b);
+
+    let stats_before = client.get_protocol_stats();
+
+    let res = client.try_merge_wills(&owner, &will_id_a, &will_id_b);
+    assert_eq!(
+        res,
+        Err(Ok(crate::WillError::WillAlreadyReleased.into())),
+        "merging a released will must be rejected"
+    );
+
+    let stats_after = client.get_protocol_stats();
+    assert_eq!(
+        stats_after.active_will_count, stats_before.active_will_count,
+        "a rejected merge must not change the active will count"
+    );
+}
