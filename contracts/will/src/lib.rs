@@ -961,6 +961,9 @@ impl WillContract {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
 
+        // Balances are not re-read here. Each fixed-amount share was checked against
+        // the will's balance at creation and on every top-up, and a balance only
+        // leaves through a payout, a cancel or a release (#647).
         if will.status != WillStatus::PendingConfirmation {
             panic_with_error!(&env, WillError::WillNotConfirmed);
         }
@@ -2966,6 +2969,9 @@ impl WillContract {
             None => panic_with_error!(&env, WillError::NotGuardian),
         };
 
+        // A vote lapses by comparing its timestamp with the current ledger time on
+        // each call. No event fires when it lapses, so the audit trail records a
+        // vote when it is cast, not when it expires (#649).
         let expiry_days = will.grace_period_days;
         if storage::has_guardian_voted(&env, will_id, &guardian, now, expiry_days) {
             panic_with_error!(&env, WillError::AlreadyVoted);
@@ -3781,6 +3787,9 @@ impl WillContract {
     pub fn merge_wills(env: Env, owner: Address, will_id_a: u64, will_id_b: u64) {
         owner.require_auth();
 
+        // Both wills live in this one contract instance, which runs on a single
+        // network, so every address in either will is on that network by
+        // construction. No cross-network address can reach a merge (#648).
         if will_id_a == will_id_b {
             panic_with_error!(&env, WillError::SameWillId);
         }
@@ -5537,6 +5546,8 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
         .map(|k| k != &will.owner && will.keeper_bounty_bps > 0)
         .unwrap_or(false);
 
+    // The bounty is `keeper_bounty_bps` of that token's balance at release, so it
+    // grows with the locked balance and needs no separate total_locked figure (#650).
     // Pick the single token the bounty is computed from *and* paid out of,
     // before any per-token math runs (#378). Previously the bounty was
     // computed inside the per-token loop under a `bounty_amount == 0` guard
