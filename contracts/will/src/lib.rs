@@ -1041,6 +1041,9 @@ impl WillContract {
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
         assert_owner_or_delegate(&env, &will, &caller);
 
+        // The check-in time is the ledger close time, which consensus sets. Block
+        // production delays move that time forward for everyone at once, so the
+        // cooldown is measured in ledger seconds, not in blocks (#652).
         let now = env.ledger().timestamp();
         will.last_checkin = now;
         let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
@@ -2017,6 +2020,8 @@ impl WillContract {
                 // it to be excluded from quorum would otherwise see it
                 // promoted to weight 1, skewing total_weight and the
                 // resulting threshold range in a way they did not intend (#489).
+                // A zero-weight guardian is refused here, so none can be created
+                // through a weighted update either (#654).
                 if g.weight == 0 {
                     panic_with_error!(&env, WillError::InvalidGuardianThreshold);
                 }
@@ -5537,7 +5542,10 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     distribute_limits::assert_payout_budget(env, count, token_count);
 
     // --- COMPUTE: calculate every share from the current (pre-mutation) balances ---
-    // Calculate keeper bounty if applicable (not paid to owner, only to other keepers)
+    // Calculate keeper bounty if applicable (not paid to owner, only to other keepers).
+    // The bounty is at most `MAX_KEEPER_BOUNTY_BPS` (1%) of one token's balance and
+    // is taken out of that balance before the beneficiary split, so it can never
+    // exceed the balance it is paid from (#653).
     let mut bounty_amount: i128 = 0;
     let mut bounty_computed = false;
     // A keeper bounty is due only to a caller other than the owner.
