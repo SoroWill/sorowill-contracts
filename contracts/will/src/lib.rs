@@ -2987,27 +2987,16 @@ impl WillContract {
         // expired votes drop out (#458). A running `+= 1` would let a guardian
         // whose earlier vote expired be counted twice.
         storage::set_guardian_voted(&env, will_id, &guardian, now, reason);
-        let (tally_weight, tally_count) =
-            storage::tally_guardian_votes(&env, &will, now, expiry_days);
-        will.guardian_vote_weight = tally_weight;
-        will.guardian_votes = tally_count;
         // Recount from the current guardian list instead of incrementing a
         // running total (#453), so votes from removed, rejected or expired
-        // guardians can never count toward the threshold.
+        // guardians can never count toward the threshold. This is the single
+        // authoritative tally: it walks the live guardian list, so a guardian
+        // removed by `update_guardians` (whose vote record is purged there,
+        // #658) contributes nothing even if a stale record survived.
         let (votes, vote_weight) =
             tally_guardian_votes(&env, &will, now, storage::has_guardian_voted);
         will.guardian_votes = votes;
         will.guardian_vote_weight = vote_weight;
-        // Recount from the vote records that are still live rather than adding
-        // to the persisted counters: a record that has already aged past the
-        // expiry window no longer counts, so voting again after expiry replaces
-        // the old vote rather than stacking on top of it (#372). Without this a
-        // single guardian could vote once per grace period and reach the
-        // threshold alone.
-        let (live_weight, live_votes) =
-            storage::recount_guardian_votes(&env, &will, now, expiry_days);
-        will.guardian_vote_weight = live_weight;
-        will.guardian_votes = live_votes;
         storage::save_will(&env, &will);
 
         // Events are part of this invocation: if the release below fails, the
@@ -3118,22 +3107,14 @@ impl WillContract {
         }
 
         storage::set_guardian_cancel_voted(&env, will_id, &guardian, now);
-        let (tally_weight, tally_count) =
-            storage::tally_guardian_cancel_votes(&env, &will, now, expiry_days);
-        will.guardian_cancel_vote_weight = tally_weight;
-        will.guardian_cancel_votes = tally_count;
         // Recount from the current guardian list (#453); see `guardian_trigger`.
+        // The tally walks only the live guardian set, so a guardian removed by
+        // `update_guardians` (whose cancel-vote record is purged there, #658)
+        // can never inflate the cancel count or satisfy quorum.
         let (votes, vote_weight) =
             tally_guardian_votes(&env, &will, now, storage::has_guardian_cancel_voted);
         will.guardian_cancel_votes = votes;
         will.guardian_cancel_vote_weight = vote_weight;
-        // Same recount-from-live-records rule as `guardian_trigger`: an expired
-        // cancel vote is replaced, not accumulated, so one guardian cannot reach
-        // the cancel threshold alone by voting once per grace period (#372).
-        let (live_weight, live_votes) =
-            storage::recount_guardian_cancel_votes(&env, &will, now, expiry_days);
-        will.guardian_cancel_vote_weight = live_weight;
-        will.guardian_cancel_votes = live_votes;
         storage::save_will(&env, &will);
 
         events::guardian_cancel_voted(
@@ -3158,6 +3139,11 @@ impl WillContract {
             will.guardian_votes = 0;
             will.guardian_cancel_vote_weight = 0;
             will.guardian_cancel_votes = 0;
+            // The will is Active again, so the beneficiary snapshot taken at
+            // trigger time is stale: clear it so the next `trigger_will`
+            // re-snapshots whatever the beneficiary list is at that point
+            // (#657).
+            will.triggered_beneficiaries = None;
             storage::save_will(&env, &will);
 
             storage::unindex_triggered_will(&env, will_id);
@@ -3465,6 +3451,9 @@ impl WillContract {
             schema_version: CURRENT_SCHEMA_VERSION,
             keeper_bounty_bps: source.keeper_bounty_bps,
             delegate: None,
+            // A fresh will is Active, so it has no trigger-time beneficiary
+            // snapshot yet (#657).
+            triggered_beneficiaries: None,
         };
         storage::save_will(&env, &will);
         storage::index_by_owner(&env, &owner, will_id);
@@ -5752,6 +5741,10 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     }
 
     storage::unindex_triggered_will(env, will.id);
+    // The will is Released: the trigger-time beneficiary snapshot has served
+    // its purpose and is cleared so it can never be mistaken for live state
+    // (#657).
+    will.triggered_beneficiaries = None;
     storage::save_will(env, will);
 
     // --- INTERACTIONS: external token transfers execute after state is settled ---
@@ -6063,6 +6056,45 @@ fn merge_beneficiaries(env: &Env, will_a: &Will, will_b: &Will) -> Vec<Beneficia
     }
 
     merged_beneficiaries
+}
+
+/// Purges the vote records of every guardian that was in `old_guardians` but
+/// is absent from `new_guardians`, then recomputes the four vote counters from
+/// the surviving guardian set (#658).
+///
+/// Without this, a guardian removed mid-voting would leave their entry in the
+/// `guardian_vote_weight` / `guardian_votes` (and cancel-vote) accumulators,
+/// inflating the count and potentially letting the remaining guardians reach
+/// quorum with fewer live votes than `guardian_threshold` requires. Purging
+/// the records and re-tallying from the current list guarantees the counters
+/// only ever reflect guardians who are still named on the will.
+fn purge_removed_guardian_votes(
+    env: &Env,
+    will: &mut Will,
+    old_guardians: &Vec<Guardian>,
+    new_guardians: &Vec<Guardian>,
+) {
+    let now = env.ledger().timestamp();
+    for old in old_guardians.iter() {
+        let still_present = new_guardians.iter().any(|g| g.address == old.address);
+        if !still_present {
+            storage::clear_guardian_vote(env, will.id, &old.address);
+            storage::clear_guardian_cancel_vote(env, will.id, &old.address);
+        }
+    }
+
+    // Recompute every counter from the surviving guardian set. The tally
+    // helpers walk `will.guardians`, so assign the new list first.
+    will.guardians = new_guardians.clone();
+    let expiry_days = will.grace_period_days;
+    let (votes, vote_weight) =
+        tally_guardian_votes(env, will, now, storage::has_guardian_voted);
+    will.guardian_votes = votes;
+    will.guardian_vote_weight = vote_weight;
+    let (cancel_votes, cancel_weight) =
+        tally_guardian_votes(env, will, now, storage::has_guardian_cancel_voted);
+    will.guardian_cancel_votes = cancel_votes;
+    will.guardian_cancel_vote_weight = cancel_weight;
 }
 
 /// Records a status transition in `will_id`'s on-chain audit trail.
