@@ -484,6 +484,9 @@ const MAX_TOKENS: u32 = 10;
 /// payouts, plus at most one keeper bounty and one owner refund per token.
 /// Distribution therefore needs no pagination: the work is bounded by
 /// construction rather than by the caller.
+// Payout order does not change this bound: a release makes at most this many
+// transfers whichever beneficiary comes first, so list order cannot raise the
+// gas cost of a release past it (#635).
 pub const MAX_RELEASE_PAYOUTS: u32 = MAX_BENEFICIARIES * MAX_TOKENS;
 
 /// Exact byte length of a hashed beneficiary's pre-image: a 32-byte address
@@ -2927,6 +2930,9 @@ impl WillContract {
         let mut will = load_will(&env, will_id);
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
 
+        // `now` is the ledger close time agreed by network consensus, so a vote's
+        // expiry window is measured in network time and one node's clock cannot
+        // stretch or shorten it (#636).
         // Enforce guardian-list cooldown.
         let now = env.ledger().timestamp();
         let cooldown_seconds = GUARDIAN_COOLDOWN_DAYS * SECONDS_PER_DAY;
@@ -3905,6 +3911,11 @@ impl WillContract {
         for (token_addr, amount) in will_b.balances.iter() {
             let prev = combined_balances.get(token_addr.clone()).unwrap_or(0);
             combined_balances.set(token_addr, prev + amount);
+        }
+        // The merged will holds the union of both token sets, so it must respect
+        // the same token cap that `create_will` enforces (#637).
+        if combined_balances.len() > MAX_TOKENS {
+            panic_with_error!(&env, WillError::MergeWouldExceedLimits);
         }
 
         // Clear persistent GuardianVote/GuardianCancelVote entries for both
