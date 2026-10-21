@@ -1362,6 +1362,9 @@ impl WillContract {
         // function's entire body (the state transition and the `distribute`
         // call below) conditional on the grace period *not yet* having
         // expired, the exact opposite of this function's purpose.
+        // Soroban has no account-state check to run on a beneficiary address, so
+        // none is made here. A payout that cannot be made panics and rolls the
+        // whole release back, so no beneficiary is paid partially (#643).
         let now = env.ledger().timestamp();
         if !grace_boundary::grace_elapsed(now, grace_deadline(&will)) {
             panic_with_error!(&env, WillError::GracePeriodNotExpired);
@@ -1435,6 +1438,11 @@ impl WillContract {
     }
 
     /// Cancels the will and refunds every locked token balance to the owner.
+    ///
+    /// The refund is sent to the owner address the will was created with (#645).
+    /// Soroban has no account-validity state to check first, so the owner is
+    /// not re-validated here. A refund that cannot be sent panics and the cancel
+    /// is rolled back.
     /// Only possible while the will is `Active`, i.e. before it has ever
     /// been triggered by a missed check-in (an owner who is mid-grace-period
     /// must first call `emergency_checkin` to return the will to `Active`).
@@ -2602,6 +2610,9 @@ impl WillContract {
         cursor: Option<u64>,
         limit: u32,
     ) -> Vec<Will> {
+        // The owner's id list is read once and paged in memory. The page is capped
+        // at `MAX_PAGE_SIZE`, so one call's response stays bounded however many
+        // wills the owner holds (#644).
         let ids = storage::get_owner_wills(&env, &owner);
         let page = storage::paginate_ids(&env, &ids, cursor, limit);
         let mut wills = Vec::new(&env);
