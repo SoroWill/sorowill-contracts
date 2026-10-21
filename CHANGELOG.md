@@ -10,6 +10,13 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ## [Unreleased]
 
+### Fixed
+- `distribute` now skips the keeper bounty when the caller-supplied keeper
+  address equals the contract's own address. Previously, passing the contract
+  address as the keeper would deduct the bounty from the beneficiaries' pool
+  and attempt a circular transfer to the contract itself, where the funds
+  could not be claimed (#662).
+
 ### Security
 - `release_inheritance` refuses the grace deadline second itself, so exactly one of `release_inheritance` and `emergency_checkin` succeeds at any timestamp (#622).
 - Guardian release-vote weights are summed with an overflow check. A total that does not fit in a `u32` is rejected with `GuardianWeightOverflow` (error 54) instead of wrapping (#620).

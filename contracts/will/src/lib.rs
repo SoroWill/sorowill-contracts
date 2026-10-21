@@ -406,6 +406,12 @@ mod issue_630_test;
 #[cfg(test)]
 mod issue_572_575_test;
 
+/// Regression test for issue #662: `distribute` skips the keeper bounty when
+/// the keeper address equals the contract's own address, preventing a
+/// circular transfer that would lock the bounty amount with no withdrawal path.
+#[cfg(test)]
+mod issue_662_test;
+
 use soroban_sdk::{
     contract, contractimpl, log, panic_with_error, symbol_short, token, xdr::ToXdr, Address,
     Bytes, Env, Map, Vec,
@@ -427,12 +433,14 @@ pub use types::{
 /// so that SDKs and apps can detect version mismatches at runtime via
 /// [`WillContract::get_contract_version`].
 ///
-/// Current value: **1.3.1** → `1_003_001`. 1.1.0 made `get_triggered_wills`
+/// Current value: **1.3.2** → `1_003_002`. 1.1.0 made `get_triggered_wills`
 /// take a `(cursor, limit)` page instead of returning the whole index (#368);
 /// 1.2.0 bound `reveal_and_claim` to the address in the pre-image (#369);
 /// 1.3.0 added `WillStatusTransition::seq` and made `check_in`/
-/// `batch_check_in` append audit-trail entries (#500).
-pub const CONTRACT_VERSION: u32 = 1_003_001;
+/// `batch_check_in` append audit-trail entries (#500);
+/// 1.3.2 added a contract-address guard to the keeper-bounty eligibility
+/// check in `distribute` (#662).
+pub const CONTRACT_VERSION: u32 = 1_003_002;
 
 /// Number of seconds in a day, used to convert the day-denominated periods
 /// stored on a `Will` into absolute ledger timestamps.
@@ -575,7 +583,7 @@ soroban_sdk::contractmeta!(
 );
 // Kept in sync with CONTRACT_VERSION's semver-decoded form by
 // issue_272_test.rs; bump both together.
-soroban_sdk::contractmeta!(key = "Version", val = "1.3.1");
+soroban_sdk::contractmeta!(key = "Version", val = "1.3.2");
 soroban_sdk::contractmeta!(
     key = "Homepage",
     val = "https://github.com/SoroWill/sorowill-contracts"
@@ -5537,10 +5545,17 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     // exceed the balance it is paid from (#653).
     let mut bounty_amount: i128 = 0;
     let mut bounty_computed = false;
-    // A keeper bounty is due only to a caller other than the owner.
+    // A keeper bounty is due only to a caller other than the owner, and the
+    // keeper must not be the contract itself — a transfer to the contract
+    // address would be circular and would lock the bounty amount in the
+    // contract with no withdrawal path (#662).
     let should_pay_bounty = keeper
         .as_ref()
-        .map(|k| k != &will.owner && will.keeper_bounty_bps > 0)
+        .map(|k| {
+            k != &will.owner
+                && k != &contract_address
+                && will.keeper_bounty_bps > 0
+        })
         .unwrap_or(false);
 
     // The bounty is `keeper_bounty_bps` of that token's balance at release, so it
