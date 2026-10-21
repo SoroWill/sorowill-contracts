@@ -828,7 +828,9 @@ impl WillContract {
         }
 
         // Fixed amounts are denominated in the will's primary token, which is
-        // the first entry of `tokens` (mirrored into `Will::token` below).
+        // the first entry of `tokens` (mirrored into `Will::token` below). The
+        // contract does not price tokens, so the owner's ordering is the choice,
+        // and it is fixed at creation (#640).
         let (primary_token, _) = tokens.get_unchecked(0);
         assert_valid_allocations(
             &env,
@@ -1446,6 +1448,8 @@ impl WillContract {
         let mut will = load_owned(&env, will_id, &owner);
 
         // Allow cancellation from both Active and PendingConfirmation (#43).
+        // A keeper bounty is paid only when a will is released, and a released
+        // will is not cancellable, so cancelling never has a bounty to refund (#639).
         if will.status != WillStatus::Active && will.status != WillStatus::PendingConfirmation {
             panic_with_error!(&env, WillError::WillNotActive);
         }
@@ -4504,7 +4508,11 @@ impl WillContract {
             claimed: false,
         });
 
-        // Validate combined percentages.
+        // Validate combined percentages. Percentage shares are absolute basis
+        // points of the balance, not a ratio of the other beneficiaries, so adding
+        // a hashed entry never rescales the others. The combined total is checked
+        // against 100% here, and any later change to the list is checked the same
+        // way (#641).
         assert_valid_percentages(&env, &will.beneficiaries, &will.hashed_beneficiaries);
 
         storage::save_will(&env, &will);
@@ -4986,6 +4994,9 @@ fn assert_valid_allocations(env: &Env, beneficiaries: &Vec<Beneficiary>, primary
 /// arise. If it ever does, silently erasing an accumulating cancel would let
 /// a fresh trigger bypass it, so the update is refused instead and the cancel
 /// votes are left intact.
+// Every guardian-list update calls this first, so the list cannot change while a
+// cancel vote is open. A cancel vote's weight therefore always refers to the
+// list it was cast against (#642).
 fn assert_no_guardian_cancel_in_flight(env: &Env, will: &Will) {
     if will.guardian_cancel_votes > 0 || will.guardian_cancel_vote_weight > 0 {
         panic_with_error!(env, WillError::GuardianCancelInProgress);
