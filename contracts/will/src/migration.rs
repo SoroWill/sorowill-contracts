@@ -22,7 +22,7 @@
 use soroban_sdk::{Env, TryFromVal, Val};
 
 use crate::errors::WillError;
-use crate::types::Will;
+use crate::types::{Will, WillStatus};
 
 /// Schema version written into every newly created or migrated will.
 ///
@@ -57,13 +57,70 @@ pub fn decode_will(env: &Env, raw: &Val) -> Result<Will, WillError> {
 /// current version is returned unchanged.
 pub fn upgrade(env: &Env, mut will: Will) -> Will {
     while will.schema_version < CURRENT_SCHEMA_VERSION {
+        let previous = will.schema_version;
         will = match will.schema_version {
-            0 => migrate_v0_to_v1(env, will),
+            0 => {
+                let upgraded = migrate_v0_to_v1(env, will);
+                assert_migration_invariants(env, &upgraded);
+                upgraded
+            }
             // Every version below CURRENT_SCHEMA_VERSION must have a step.
             _ => soroban_sdk::panic_with_error!(env, WillError::UnsupportedSchemaVersion),
         };
+        // Each step must advance the schema by exactly one version and leave
+        // a structurally consistent will behind (#596).
+        crate::migration_rules::validate_step(env, &will, previous);
     }
     will
+}
+
+/// Invariant checks run after each migration step to guarantee that the upgraded
+/// `Will` satisfies core consistency invariants.
+pub fn assert_migration_invariants(env: &Env, will: &Will) {
+    // 1. Primary token balance mirror agreement: balances[token] == balance
+    if let Some(token_bal) = will.balances.get(will.token.clone()) {
+        if token_bal != will.balance {
+            soroban_sdk::panic_with_error!(env, WillError::DistributionMismatch);
+        }
+    }
+
+    // 2. All balances must be non-negative
+    for (_, bal) in will.balances.iter() {
+        if bal < 0 {
+            soroban_sdk::panic_with_error!(env, WillError::ZeroAmount);
+        }
+    }
+
+    // 3. Check-in and grace periods must be valid (> 0)
+    if will.checkin_period_days == 0 || will.grace_period_days == 0 {
+        soroban_sdk::panic_with_error!(env, WillError::InvalidPeriod);
+    }
+
+    // 4. Beneficiaries must not be empty and must not exceed limit
+    if will.beneficiaries.is_empty() || will.beneficiaries.len() > 10 {
+        soroban_sdk::panic_with_error!(env, WillError::TooManyBeneficiaries);
+    }
+
+    // 5. Guardian threshold reachability when guardians are present
+    if !will.guardians.is_empty() {
+        if will.guardian_threshold == 0 || will.guardian_threshold > will.guardians.len() {
+            soroban_sdk::panic_with_error!(env, WillError::InvalidGuardianThreshold);
+        }
+    }
+
+    // 6. Beneficiary percentages must not exceed 10,000 basis points
+    let mut total_pct: u32 = 0;
+    for b in will.beneficiaries.iter() {
+        if let crate::types::Allocation::Percentage(p) = b.allocation {
+            total_pct = match total_pct.checked_add(p) {
+                Some(s) => s,
+                None => soroban_sdk::panic_with_error!(env, WillError::InvalidPercentages),
+            };
+        }
+    }
+    if total_pct > 10_000 {
+        soroban_sdk::panic_with_error!(env, WillError::InvalidPercentages);
+    }
 }
 
 /// v0 → v1: v0 wills predate the `schema_version` field being populated; the

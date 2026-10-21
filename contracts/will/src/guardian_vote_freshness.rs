@@ -13,7 +13,7 @@
 
 use soroban_sdk::Env;
 
-use crate::{storage, types::Will};
+use crate::{errors::WillError, storage, types::Will};
 
 /// Number of seconds in a day, used to keep the grace period and the ledger
 /// timestamp in the same unit (seconds) when computing vote expiry.
@@ -26,6 +26,16 @@ const SECONDS_PER_DAY: u64 = 86_400;
 #[inline]
 fn to_vote_seconds(timestamp: u64) -> u64 {
     timestamp
+}
+
+/// Adds one guardian's weight to the running quorum total. An overflow is
+/// rejected rather than wrapped, so a set of weights that cannot be counted
+/// cannot reach a threshold by accident (#620).
+pub(crate) fn add_guardian_weight(env: &Env, total: u32, weight: u32) -> u32 {
+    match total.checked_add(weight) {
+        Some(sum) => sum,
+        None => soroban_sdk::panic_with_error!(env, WillError::GuardianWeightOverflow),
+    }
 }
 
 /// Sums the weight of guardian release votes that are still live (not older
@@ -42,7 +52,7 @@ pub(crate) fn live_guardian_vote_weight(env: &Env, will_id: u64, will: &Will, no
     let mut total: u32 = 0;
     for g in will.guardians.iter() {
         if storage::has_guardian_voted(env, will_id, &g.address, now, will.grace_period_days) {
-            total += g.weight;
+            total = add_guardian_weight(env, total, g.weight);
         }
     }
     total

@@ -102,7 +102,7 @@ fn test_get_contract_version() {
     // already moved to 1_002_000 (1.2.0), which `issue_501_test.rs` and
     // `.github/scripts/check-contract-version.sh` now guard against drifting
     // again (#501).
-    assert_eq!(client.get_contract_version(), 1_003_000);
+    assert_eq!(client.get_contract_version(), 1_003_001);
 }
 
 const DAY: u64 = 86_400;

@@ -11,6 +11,8 @@ gets its own [contract spec artifact](./spec) once exported.
 ## [Unreleased]
 
 ### Security
+- `release_inheritance` refuses the grace deadline second itself, so exactly one of `release_inheritance` and `emergency_checkin` succeeds at any timestamp (#622).
+- Guardian release-vote weights are summed with an overflow check. A total that does not fit in a `u32` is rejected with `GuardianWeightOverflow` (error 54) instead of wrapping (#620).
 - `release_inheritance` re-reads the will from storage and re-validates that
   it is still `Triggered` (with a recorded `trigger_time`) immediately before
   distributing; documented that the atomic invocation locks the will for the
@@ -28,8 +30,28 @@ gets its own [contract spec artifact](./spec) once exported.
 ### Added
 - `get_wills_by_owner_and_status_page`, returning a `WillPage` with the page's
   wills, the `total_count` of all matches and an explicit `next_cursor` (#455).
+- `WillError::MigrationInvariantViolation` (54): `migration::upgrade` now
+  validates the will after every migration step (version advances by exactly
+  one, `Triggered` wills keep a `trigger_time`, vote tallies fit the guardian
+  list, list caps and percentage totals hold) via `migration_rules.rs` (#596).
+- `update_guardians`, `update_guardians_weighted` and the guardian branch of
+  `update_will_settings` now remove every stored guardian vote record (live or
+  expired) before replacing the list, so a removed-then-re-added guardian can
+  never revive an old vote (#598).
+- `distribute` no longer rounds a non-final percentage beneficiary's share
+  down to zero when the balance can still cover one unit per remaining
+  beneficiary (`distribute_limits::min_one_unit_share`); the final percentage
+  beneficiary keeps absorbing the rounding remainder, so no dust is stranded
+  (#599).
+- `WillError::DistributionTooLarge` (55): `distribute` now checks
+  beneficiaries x tokens against `MAX_RELEASE_PAYOUTS` before computing or
+  moving anything, covering the guardian-quorum release path too; the
+  per-payout resource cost is documented in `docs/DISTRIBUTE_RESOURCES.md`
+  (#597).
 - `WillError::DistributionMismatch` (39): release aborts if planned payouts for
   a token do not sum to exactly its balance (#456).
+- **CONTRACT_VERSION bumped to 1.3.1** (`1_003_001`) for the Valreb001 hardening
+  fixes (#596-#599).
 - **CONTRACT_VERSION bumped to 1.3.0** (`1_003_000`) for the `seq` field and
   check-in audit-trail entries described under #500 below.
 - `ProtocolStatsAudit`, the type `audit_protocol_stats` returns, was referenced
@@ -60,6 +82,20 @@ gets its own [contract spec artifact](./spec) once exported.
 ### Fixed
 - `renounce_beneficiary` redistribution now caps the percentage total at
   10,000 bps; the last remaining percentage beneficiary absorbs the rounding
+- Keeper bounty rounding is specified (floor, in favour of beneficiaries) and
+  dust handling documented in `bounty_rounding`; `distribute` computes the
+  bounty through it, with boundary-amount tests (#595).
+- Documented (docs/EVENT_ATOMICITY.md) that `guardian_trigger` and
+  `distribute` events are discarded with the state when the invocation fails,
+  and that `inheritance_released` is published only after every payout was
+  attempted; added a regression test (#594).
+- `confirm_will` allows one ledger interval (5 s, `deadline_precision`) of slack
+  past `confirmation_deadline`, so coarse ledger timestamps no longer make an
+  owner miss the window by a second or two; the minimum practical window is
+  documented (#593).
+- `top_up` and `emergency_checkin` keep the legacy `balance` mirror equal to
+  `balances[primary_token]` through the new `balance_consistency` helpers, so
+  a stale mirror can no longer feed FixedAmount over-commitment (#592).
   remainder as a non-negative top-up, using checked arithmetic (#486).
 - The `renounce` event now carries `trigger_time: Option<u64>` so a
   renunciation during a grace period can be tied to its trigger cycle.
@@ -84,6 +120,18 @@ gets its own [contract spec artifact](./spec) once exported.
   value, which happened to still pass only because the assertion above it
   (against the `CONTRACT_VERSION` constant itself) never catches the literal
   going stale. Updated it to track the current value (#501).
+- `release_inheritance` and the post-release payout check now treat the grace
+  deadline second as still belonging to the owner (`now > deadline` releases),
+  matching `emergency_checkin` and the docs; previously both succeeded at
+  exactly the deadline. Shared predicate in `grace_boundary.rs` (#588).
+- Documented salt entropy guidance for hashed-beneficiary commitments (32 bytes
+  of CSPRNG output, example, references) in
+  `docs/HASHED_BENEFICIARY_SALT_GUIDANCE.md` (#589).
+- `batch_check_in` validates every will (exists, owned, `Active`) in a
+  read-only pass before writing anything; `batch_create_wills` documents its
+  all-or-nothing atomicity (#590).
+- Documented `get_wills_by_owner` pagination consistency guarantees when the
+  collection changes mid-pagination, with a regression test (#591).
 - Guardian release/cancel votes are tallied from per-guardian records, so a
   guardian re-voting after expiry is no longer counted twice (#458).
 - The keeper bounty is deducted from the will's balance instead of being paid
@@ -96,6 +144,9 @@ gets its own [contract spec artifact](./spec) once exported.
   helper (#457).
 - Fixed-amount-only wills pay any leftover balance to the final beneficiary
   instead of stranding it in the contract (#456).
+- `release_inheritance` holds a per-will release lock for its whole run; a
+  concurrent or re-entrant call fails with the new
+  `WillError::ReleaseInProgress` (80) (#586).
 - `get_wills_by_owner_and_status` filters by status before cutting the page, so
   short pages no longer hide matching wills (#455).
 ### Fixed

@@ -259,6 +259,9 @@ pub fn recompute_protocol_stats(env: &Env) -> ProtocolStats {
         .unwrap_or(0);
 
     let mut active_will_count: u64 = 0;
+    // There is no token delisting: a token only leaves the totals when every live
+    // will's balance in it reaches zero, and zero totals are dropped from the
+    // summary (see `get_protocol_stats`). Nothing is lost when a token is removed (#634).
     let mut totals: Map<Address, i128> = Map::new(env);
     let mut id = 1u64;
     while id <= last_id {
@@ -779,9 +782,6 @@ pub fn clear_guardian_cancel_vote(env: &Env, will_id: u64, guardian: &Address) {
 /// overwritten if that guardian votes again. This is the common case: most
 /// wills never see a guardian vote at all.
 pub fn reset_guardian_votes(env: &Env, will: &Will) {
-    if will.guardian_votes == 0 {
-        return;
-    }
     for guardian in will.guardians.iter() {
         let key = DataKey::GuardianVote(will.id, guardian.address.clone());
         env.storage().persistent().remove(&key);

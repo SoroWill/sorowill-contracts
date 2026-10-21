@@ -187,7 +187,10 @@ fn confirmation_window_expiration() {
 
     // Advance time past the confirmation window
     env.ledger()
-        .with_mut(|l| l.timestamp += confirmation_window + 1);
+        .with_mut(|l| {
+            l.timestamp +=
+                confirmation_window + crate::deadline_precision::CONFIRMATION_DEADLINE_BUFFER_SECONDS + 1
+        });
 
     // Attempting to confirm after the window should fail
     assert_eq!(

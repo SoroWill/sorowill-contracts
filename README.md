@@ -171,10 +171,18 @@ If you need more than 10 heirs, you can:
 
 ### Release safety
 
+- **Hashed-beneficiary salts.** The contract cannot check a salt's entropy; use 32 bytes from a cryptographically secure RNG per commitment. See [docs/HASHED_BENEFICIARY_SALT_GUIDANCE.md](./docs/HASHED_BENEFICIARY_SALT_GUIDANCE.md).
 - **One payout per will.** A will is distributed at most once: `release_inheritance`, `guardian_trigger` and the internal `distribute` all refuse a will that is no longer `Active`/`Triggered`. `reveal_and_claim` deducts the hashed beneficiary's share from the will's token balance, so a later release cannot pay it again.
 - **Guardian votes are deduplicated.** Vote weight and count are recomputed from per-guardian records on every vote, so each guardian counts at most once and expired votes drop out; re-voting after expiry refreshes the vote instead of adding to it. The same applies to `guardian_cancel_trigger`.
 - **Keeper bounty comes out of the will.** The bounty is deducted from the first token's balance before the beneficiary split rather than paid on top of it.
 - **Balances are conserved.** For every token, bounty plus beneficiary shares must equal the balance exactly, or the release aborts with `DistributionMismatch`. Percentage rounding dust goes to the last percentage beneficiary; for fixed-amount-only wills any leftover (e.g. from `top_up`) goes to the last beneficiary.
+
+### Dust and Leftover Handling: Refunded vs Retained
+
+The contract enforces strict balance conservation: **no dust is ever retained** or stranded in the contract.
+- **Percentage rounding dust (Beneficiary allocation):** During proportional distribution, fractional truncation remainder (dust) resulting from integer division is allocated to the final percentage beneficiary. The contract retains 0 units.
+- **Unallocated balance / leftover in fixed-amount wills (Refunded to Owner):** For wills containing only `Allocation::FixedAmount` beneficiaries (or where fixed allocations do not exhaust the total balance), any leftover balance is refunded directly to the will owner and emitted via the `leftover_refunded` event, rather than being retained by the contract.
+- **Multi-token conservation:** Every token's `balances` entry is fully cleared to zero upon release (`Released` status), ensuring all funds are completely drained from contract custody to either the designated beneficiaries or refunded to the owner.
 
 `checkin_period_days` and `grace_period_days` passed to `create_will` must each be at least `1` day (and at most `MAX_PERIOD_DAYS`); a value of `0` panics with `WillError::InvalidPeriod`.
 
@@ -317,6 +325,8 @@ disambiguate.
 | 39 | `DistributionMismatch` | The computed payouts for a token did not sum to exactly the will's balance of that token; the release is aborted instead of losing or over-drawing funds. |
 | 51 | `UnsupportedSchemaVersion` | A stored will matches neither the current `Will` layout nor any known legacy layout. |
 | 52 | `PrimaryTokenMismatch` | Cannot merge: the two wills' primary tokens differ. |
+| 55 | `DistributionTooLarge` | `distribute` was asked to pay out more than `MAX_RELEASE_PAYOUTS` (beneficiaries x tokens) transfers; rejected before any state change. |
+| 54 | `MigrationInvariantViolation` | A schema migration step produced a will that breaks a structural invariant (non-sequential version, `Triggered` without `trigger_time`, vote tally above the guardian list, or list caps / percentage total exceeded). |
 | 40 | `DuplicateToken` | The same token address was supplied more than once in a `tokens` list. |
 | 41 | `BatchTooLarge` | A `batch_check_in` call supplied more than `MAX_BATCH_CHECK_IN` (50) will ids. |
 | 42 | `InvalidTokenCount` | The token list supplied to `create_will`, `clone_will`, `split_will`, or `batch_create_wills` was empty, or contained more than `MAX_TOKENS` entries. Also raised by `top_up` when the token is not already in the will's `balances` map and that map already holds `MAX_TOKENS` distinct tokens; topping up an already-held token stays allowed at the cap. |
