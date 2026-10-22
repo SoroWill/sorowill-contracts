@@ -260,3 +260,87 @@ fn merge_preserves_all_fixed_amounts() {
         amount_b * 2
     );
 }
+
+/// Regression test for issue #656: merging a released will with an active will
+/// must be rejected. Otherwise distribution logic could process the same
+/// beneficiary twice (once for the released will, once for the merged will).
+#[test]
+fn merge_rejects_released_will() {
+    let (env, client, owner, token, token_address) = setup();
+    let beneficiary = Address::generate(&env);
+
+    let amount = 100_000i128;
+
+    let released_beneficiaries: SorobanVec<Beneficiary> = vec![
+        &env,
+        Beneficiary {
+            address: beneficiary.clone(),
+            allocation: Allocation::FixedAmount(amount),
+        },
+    ];
+    let released_tokens: SorobanVec<(Address, i128)> =
+        vec![&env, (token_address.clone(), amount)];
+
+    let active_beneficiaries: SorobanVec<Beneficiary> = vec![
+        &env,
+        Beneficiary {
+            address: beneficiary.clone(),
+            allocation: Allocation::FixedAmount(amount),
+        },
+    ];
+    let active_tokens: SorobanVec<(Address, i128)> =
+        vec![&env, (token_address.clone(), amount)];
+
+    let released_will = client.create_will(
+        &owner,
+        &released_tokens,
+        &released_beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+    let active_will = client.create_will(
+        &owner,
+        &active_tokens,
+        &active_beneficiaries,
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+
+    // Release the first will so it is no longer in an active state.
+    release(&env, &client, released_will);
+
+    let balance_after_release = token.balance(&beneficiary);
+    assert_eq!(
+        balance_after_release, amount,
+        "beneficiary should have received the released will's fixed amount"
+    );
+
+    // Attempting to merge the released will with an active will must fail.
+    let result = client.try_merge_wills(&owner, &released_will, &active_will);
+    assert!(
+        result.is_err(),
+        "merging a released will with an active will must be rejected"
+    );
+
+    // The active will must remain untouched and no double payout may occur.
+    let active = client.get_will(&active_will);
+    assert_eq!(
+        active.beneficiaries.len(),
+        1,
+        "active will should be unchanged after a rejected merge"
+    );
+
+    let balance_after_failed_merge = token.balance(&beneficiary);
+    assert_eq!(
+        balance_after_failed_merge, balance_after_release,
+        "a rejected merge must not pay the beneficiary again"
+    );
+}
