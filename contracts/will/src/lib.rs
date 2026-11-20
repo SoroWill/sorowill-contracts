@@ -823,6 +823,8 @@ impl WillContract {
             {
                 panic_with_error!(&env, WillError::InvalidToken);
             }
+            // Verify the owner can fund this token before pulling it in (#713).
+            assert_owner_can_fund(&env, &token_addr, &owner, amount);
             // Transfer this token from the owner into the contract.
             token::Client::new(&env, &token_addr).transfer(
                 &owner,
@@ -2340,6 +2342,9 @@ impl WillContract {
             panic_with_error!(&env, WillError::InvalidTokenCount);
         }
 
+        // Verify the owner can fund the top-up before any state change (#713).
+        assert_owner_can_fund(&env, &token, &owner, amount);
+
         // Snapshot values needed after state mutation (checks-effects-interactions).
         let prev = will.balances.get(token.clone()).unwrap_or(0);
         let new_balance = prev + amount;
@@ -3404,6 +3409,7 @@ impl WillContract {
             if amount <= 0 {
                 panic_with_error!(&env, WillError::ZeroAmount);
             }
+            assert_owner_can_fund(&env, &token_addr, &owner, amount);
             token::Client::new(&env, &token_addr).transfer(
                 &owner,
                 &env.current_contract_address(),
@@ -3595,6 +3601,7 @@ impl WillContract {
                 if amount <= 0 {
                     panic_with_error!(&env, WillError::ZeroAmount);
                 }
+                assert_owner_can_fund(&env, &token_addr, &owner, amount);
                 token::Client::new(&env, &token_addr).transfer(
                     &owner,
                     &env.current_contract_address(),
@@ -4907,6 +4914,20 @@ fn stats_match(a: &ProtocolStats, b: &ProtocolStats) -> bool {
 }
 
 /// Loads a will by id, panicking with [`WillError::WillNotFound`] if it does not exist.
+/// Checks that `owner` holds at least `amount` of `token` before the contract
+/// pulls it in (#713).
+///
+/// Owner funds move with `token.transfer(owner, contract, amount)`. That call
+/// is authorized by the owner's own `require_auth`, so these entry points do
+/// not use a SEP-41 allowance. See `docs/TOKEN_PERMISSIONS.md`. A short
+/// balance would otherwise fail deep inside the token contract with an opaque
+/// host error. This check returns [`WillError::InsufficientBalance`] instead.
+fn assert_owner_can_fund(env: &Env, token: &Address, owner: &Address, amount: i128) {
+    if token::Client::new(env, token).balance(owner) < amount {
+        panic_with_error!(env, WillError::InsufficientBalance);
+    }
+}
+
 fn load_will(env: &Env, will_id: u64) -> Will {
     match storage::load_will(env, will_id) {
         Ok(will) => will,
