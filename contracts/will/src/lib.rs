@@ -1572,9 +1572,20 @@ impl WillContract {
     /// Replaces the beneficiary list for `will_id`. Only possible while the
     /// will is `Active`. The new basis points must sum to exactly 10,000.
     ///
+    /// # State constraints (#728)
+    ///
+    /// The list is frozen for every status other than `Active`, including
+    /// `Triggered` (grace period running), `PendingConfirmation`, `Released`,
+    /// `Cancelled` and `Settled`. A `Triggered` will's beneficiaries are
+    /// snapshotted at trigger time, so an update attempted during the grace
+    /// period is refused with [`WillError::WillNotActive`] and leaves the
+    /// snapshot untouched. The owner must call `emergency_checkin` to return
+    /// the will to `Active` before the list can change.
+    ///
     /// # Panics
     /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
-    /// - [`WillError::WillNotActive`] if the will is not `Active`.
+    /// - [`WillError::WillNotActive`] if the will is not `Active`, including
+    ///   any update attempted while the will is `Triggered`.
     /// - [`WillError::TooManyBeneficiaries`] if the new list is empty or too large.
     /// - [`WillError::InvalidPercentages`] if the new basis points do not sum to 10,000.
     /// - [`WillError::DuplicateBeneficiary`] if the same address is supplied twice.
