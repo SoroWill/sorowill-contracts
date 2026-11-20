@@ -247,4 +247,8 @@ pub enum WillError {
     /// would let the distribution logic process the same beneficiary twice,
     /// so both wills must be `Active` before a merge is accepted (#656).
     MergeWithReleasedWill = 57,
+    /// The owner cannot be named as one of their own will's beneficiaries.
+    /// An owner-beneficiary would create a circular claim, where the owner
+    /// both controls the will and inherits from it (#720).
+    OwnerCannotBeBeneficiary = 58,
 }

@@ -758,6 +758,7 @@ impl WillContract {
             seen_tokens.push_back(token_addr);
         }
         assert_beneficiary_count(&env, &beneficiaries);
+        assert_owner_not_beneficiary(&env, &owner, &beneficiaries);
         assert_valid_guardians(&env, &owner, &guardians);
         assert_valid_periods(&env, checkin_period_days, grace_period_days);
 
@@ -1588,6 +1589,7 @@ impl WillContract {
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
 
         assert_beneficiary_count(&env, &beneficiaries);
+        assert_owner_not_beneficiary(&env, &owner, &beneficiaries);
         assert_valid_allocations(&env, &beneficiaries, total_balance(&will.balances));
         if beneficiaries.is_empty() || beneficiaries.len() > MAX_BENEFICIARIES {
             panic_with_error!(&env, WillError::TooManyBeneficiaries);
@@ -2199,6 +2201,7 @@ impl WillContract {
         // Update beneficiaries if provided
         if let Some(new_beneficiaries) = beneficiaries {
             assert_beneficiary_count(&env, &new_beneficiaries);
+            assert_owner_not_beneficiary(&env, &owner, &new_beneficiaries);
             assert_valid_allocations(&env, &new_beneficiaries, total_balance(&will.balances));
             if new_beneficiaries.is_empty() || new_beneficiaries.len() > MAX_BENEFICIARIES {
                 panic_with_error!(&env, WillError::TooManyBeneficiaries);
@@ -3573,6 +3576,7 @@ impl WillContract {
                 seen_tokens.push_back(token_addr);
             }
             assert_beneficiary_count(&env, &beneficiaries);
+            assert_owner_not_beneficiary(&env, &owner, &beneficiaries);
             assert_valid_guardians(&env, &owner, &guardians);
             assert_valid_periods(&env, checkin_period_days, grace_period_days);
             // Mirror the `create_will` normalisation: an empty guardian list
@@ -4921,6 +4925,18 @@ fn load_will(env: &Env, will_id: u64) -> Will {
 /// Contract errors carry only a numeric code, so the actual count and the
 /// limit are also written to the diagnostic log, which surfaces in simulation
 /// and in the test host.
+/// Rejects any beneficiary entry whose address is the will's owner (#720).
+///
+/// An owner listed as a beneficiary would be able to claim the will's funds
+/// from the very address that controls it, creating a circular claim.
+fn assert_owner_not_beneficiary(env: &Env, owner: &Address, beneficiaries: &Vec<Beneficiary>) {
+    for b in beneficiaries.iter() {
+        if &b.address == owner {
+            panic_with_error!(env, WillError::OwnerCannotBeBeneficiary);
+        }
+    }
+}
+
 fn assert_beneficiary_count(env: &Env, beneficiaries: &Vec<Beneficiary>) {
     let count = beneficiaries.len();
     if count == 0 {
