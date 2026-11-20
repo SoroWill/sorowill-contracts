@@ -15,6 +15,10 @@ use crate::types::{Beneficiary, Guardian};
 ///
 /// `token_count` is the number of distinct tokens locked at creation time.
 ///
+/// The final tuple element is the creation timestamp (ledger Unix seconds)
+/// (#726), so the audit trail records when each will was created without a
+/// follow-up `get_will` call.
+///
 /// `beneficiaries` is the *full* beneficiary list (address + allocation
 /// pairs), not just a count, so an off-chain indexer can reconstruct who a
 /// will's beneficiaries are directly from this event, without a follow-up
@@ -45,6 +49,7 @@ pub fn will_created(
             token_count,
             beneficiaries.clone(),
             checkin_deadline,
+            env.ledger().timestamp(),
         ),
     );
 }
