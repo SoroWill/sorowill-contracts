@@ -418,6 +418,9 @@ mod issue_715_test;
 #[cfg(test)]
 mod issue_716_test;
 
+#[cfg(test)]
+mod issue_717_test;
+
 use soroban_sdk::{
     contract, contractimpl, log, panic_with_error, symbol_short, token, xdr::ToXdr, Address,
     Bytes, Env, Map, Vec,
