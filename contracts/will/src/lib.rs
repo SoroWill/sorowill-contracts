@@ -2970,6 +2970,48 @@ impl WillContract {
     /// guardian therefore cannot reach `guardian_threshold` alone by voting once
     /// per expiry window. The same recounting applies to
     /// [`guardian_cancel_trigger`]'s cancel-vote counters.
+    ///
+    /// ## Vote expiry boundary
+    ///
+    /// A vote cast at time `t` is live while `now - t <= grace_period_days * 86_400`
+    /// seconds, so it stays live through the final second of the window and
+    /// lapses on the first second after it. The elapsed time is computed with a
+    /// saturating subtraction: a vote whose timestamp is later than `now`
+    /// (clock skew or repaired state) is not counted as live. The rule lives in
+    /// `storage::vote_is_live` and is shared by every reader, so the expiry
+    /// boundary is identical for `guardian_trigger`, `guardian_cancel_trigger`
+    /// and `get_guardian_vote_status`. Expiry is evaluated lazily on each call;
+    /// no event is emitted when a vote lapses. See #372, #359, #649.
+    ///
+    /// ## Quorum calculation
+    ///
+    /// Quorum is **weight-based**, not head-count based:
+    ///
+    /// 1. Each guardian carries a `weight` set at creation or by
+    ///    `update_guardians_weighted`.
+    /// 2. The tally (`guardian_votes`, `guardian_vote_weight`) is recomputed
+    ///    from the guardian list on every vote. Only guardians whose consent is
+    ///    `Accepted` and whose vote is live are summed (#453, #458).
+    /// 3. The release fires when the **live** weight, re-derived with
+    ///    `guardian_vote_freshness::live_guardian_vote_weight` at the same
+    ///    `now`, is at least `guardian_threshold`. That helper sums every
+    ///    guardian on the list that has a live vote record, so removal or
+    ///    rejection must purge the record (see #658, #374).
+    ///
+    /// The stored `guardian_vote_weight` is the cached total reported in the
+    /// `guardian_voted` event. The release decision uses the live
+    /// re-derivation, so a stale cached total cannot trigger a release alone.
+    ///
+    /// ## Edge cases
+    ///
+    /// - A guardian who votes again after their earlier vote expired replaces
+    ///   that record. Their weight is counted once, never twice (#372).
+    /// - A guardian removed by `update_guardians` has their vote purged (#658),
+    ///   and a rejected or non-accepted guardian is excluded from the tally.
+    /// - Overflow in the weight sum is rejected rather than wrapped (#620).
+    /// - Votes are blocked until the guardian-list cooldown has elapsed, so a
+    ///   freshly changed roster cannot be voted on immediately
+    ///   (`GuardianCooldownActive`).
     pub fn guardian_trigger(env: Env, will_id: u64, guardian: Address, reason: GuardianVoteReason) {
         guardian.require_auth();
         let mut will = load_will(&env, will_id);
