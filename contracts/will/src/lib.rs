@@ -4745,6 +4745,15 @@ impl WillContract {
     pub fn reveal_and_claim(env: Env, will_id: u64, claimant: Address, preimage: Bytes) {
         claimant.require_auth();
         let mut will = load_will(&env, will_id);
+        // A claim attempted while the grace period is still running gets the
+        // grace-period error, not the generic status error, so the caller can
+        // tell "wait for grace to end" apart from "not released yet" (#722).
+        if will.status == WillStatus::Triggered
+            && !grace_boundary::grace_elapsed(env.ledger().timestamp(), grace_deadline(&will))
+        {
+            panic_with_error!(&env, WillError::GracePeriodNotExpired);
+        }
+
         // A hashed beneficiary's reserved share is only carved out of the
         // will's balances once `distribute()` runs (see #181), so claiming
         // is only meaningful -- and only has funds behind it -- once the
