@@ -34,7 +34,7 @@ data, in order.
 | `gcvote` | `guardian_cancel_trigger` | `(guardian: Address, weight: u32, total_weight: u32)` |
 | `gcancel` | `guardian_cancel_trigger` (on quorum) | `(guardian: Address, next_deadline: u64)` |
 | `merged` | `merge_wills` (topic is the surviving id) | `(owner: Address, consumed_will_id: u64, new_balance: i128)` |
-| `migrated` | `migrate_will` | `(owner: Address, from_version: u32, to_version: u32)` |
+| `migrated` | `migrate_will` | `(owner: Address, from_version: u32, to_version: u32, timestamp: u64)` |
 | `cloned` | `clone_will` (topic is the new id) | `(source_id: u64, owner: Address)` |
 | `batch` | `batch_create_wills` (second topic is `owner`) | `will_ids: Vec<u64>` |
 | `split` | `split_will` (topic is the original id) | `(new_id: u64, owner: Address, split_amount: i128)` |
@@ -59,3 +59,26 @@ Indexers should treat this as the will's final lifecycle event.
 A failed invocation rolls back all of its storage writes and events, so no
 event is ever published for a failed operation. The same applies to
 `get_protocol_stats`, which counts successful transitions only.
+
+## Migration event and version scheme (#712)
+
+`migrate_will` emits `migrated` only when it actually changes a will's storage
+layout. A will already at `CURRENT_SCHEMA_VERSION` returns early and emits
+nothing.
+
+- **Topics:** `("migrated", will_id)`
+- **Data:** `(owner, from_version, to_version, timestamp)`
+  - `from_version`: the will's `schema_version` before the migration.
+  - `to_version`: the `schema_version` after it (`CURRENT_SCHEMA_VERSION`).
+  - `timestamp`: ledger time, in seconds, when the migration was applied.
+
+Two version numbers are involved, and they are independent:
+
+| Number | Where | Meaning |
+| --- | --- | --- |
+| `CONTRACT_VERSION` | `get_contract_version()`, encoded `major * 1_000_000 + minor * 1_000 + patch` | The release of the contract logic. Changes on any release. |
+| `CURRENT_SCHEMA_VERSION` (currently `1`) | `will.schema_version`, `migrate_will` | The persisted `Will` layout. Changes only when that layout changes. |
+
+A release that does not change the `Will` layout keeps `CURRENT_SCHEMA_VERSION`
+and emits no `migrated` events. Bumping the schema version requires a decode arm
+and a migration step, as described in CONTRIBUTING.md.
