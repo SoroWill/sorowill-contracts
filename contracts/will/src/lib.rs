@@ -1244,6 +1244,12 @@ impl WillContract {
         // `assert_status(.., Triggered, ..)` above doesn't already guarantee
         // (a `Triggered` will always has `trigger_time` set).
         let now = env.ledger().timestamp();
+        let grace_start = will
+            .trigger_time
+            .unwrap_or(will.last_checkin + will.checkin_period_days * SECONDS_PER_DAY);
+        if now < grace_start {
+            panic_with_error!(&env, WillError::WillNotTriggered);
+        }
         if now > grace_deadline(&will) {
             panic_with_error!(&env, WillError::GracePeriodExpired);
         }
@@ -3012,7 +3018,8 @@ impl WillContract {
         // docs/EVENT_ATOMICITY.md, #594).
         events::guardian_voted(&env, will_id, &guardian, weight, will.guardian_vote_weight);
 
-        if will.guardian_vote_weight >= will.guardian_threshold
+        if will.guardian_votes >= 2
+            && will.guardian_vote_weight >= will.guardian_threshold
             && guardian_vote_freshness::live_guardian_vote_weight(&env, will_id, &will, now)
                 >= will.guardian_threshold
         {
