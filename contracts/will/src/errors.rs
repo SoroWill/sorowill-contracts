@@ -247,4 +247,11 @@ pub enum WillError {
     /// would let the distribution logic process the same beneficiary twice,
     /// so both wills must be `Active` before a merge is accepted (#656).
     MergeWithReleasedWill = 57,
+    /// A check-in or timestamp-advancing operation observed a ledger timestamp
+    /// strictly earlier than the will's recorded `last_checkin`, which would
+    /// move check-in time backward and break deadline calculations (#706).
+    InvalidTimestamp = 58,
+    /// A token transfer failed, for example because the token contract is
+    /// paused or the sender/recipient account is frozen (#704).
+    TokenTransferFailed = 59,
 }
