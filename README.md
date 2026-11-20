@@ -196,7 +196,7 @@ Every state-mutating entry point publishes exactly one event so that off-chain i
 | `confirm_will` | `"confirmed"` | `owner: Address` |
 | `check_in` | `"checkin"` | `(owner: Address, next_deadline: u64)` |
 | `trigger_will` | `"triggered"` | `grace_period_ends: u64` |
-| `emergency_checkin` | `"emerg"` | `(owner: Address, next_deadline: u64)` |
+| `emergency_checkin` | `"emerg"` | `(owner: Address, next_deadline: u64, timestamp: u64)` |
 | `release_inheritance` | `"released"` | `(token_count: u32, beneficiaries_count: u32)` |
 | `cancel_will` | `"cancelled"` | `(owner: Address, token_count: u32)` |
 | `update_beneficiaries` | `"benefup"` | `(owner: Address, beneficiary_count: u32, beneficiaries: Vec<Beneficiary>)` |

@@ -196,19 +196,21 @@ fn test_emergency_checkin_event_snapshot() {
     let (env, owner, contract_id, _client) = setup_test_env();
 
     let will_id = 12345u64;
-    let next_deadline = env.ledger().timestamp() + (90 * 24 * 60 * 60);
+    let now = env.ledger().timestamp();
+    let next_deadline = now + (90 * 24 * 60 * 60);
 
     env.as_contract(&contract_id, || {
-        events::emergency_checkin(&env, will_id, &owner, next_deadline);
+        events::emergency_checkin(&env, will_id, &owner, next_deadline, now);
     });
 
     // Verify emergency_checkin event
     let event_data = find_event_by_topic(&env, symbol_short!("emerg"), Some(will_id))
         .expect("emergency_checkin event not found");
 
-    let data: (Address, u64) = event_data.try_into_val(&env).unwrap();
+    let data: (Address, u64, u64) = event_data.try_into_val(&env).unwrap();
     assert_eq!(data.0, owner, "event owner mismatch");
     assert_eq!(data.1, next_deadline, "event next_deadline mismatch");
+    assert_eq!(data.2, now, "event timestamp mismatch");
 }
 
 #[test]
@@ -699,7 +701,13 @@ fn test_event_ordering_lifecycle() {
         // 3. Will triggered
         events::will_triggered(&env, will_id, env.ledger().timestamp() + 604800);
         // 4. Emergency check-in (cancels trigger)
-        events::emergency_checkin(&env, will_id, &owner, env.ledger().timestamp() + 10800);
+        events::emergency_checkin(
+            &env,
+            will_id,
+            &owner,
+            env.ledger().timestamp() + 10800,
+            env.ledger().timestamp(),
+        );
         // 5. Will triggered again
         events::will_triggered(&env, will_id, env.ledger().timestamp() + 608400);
         // 6. Inheritance released

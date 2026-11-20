@@ -1276,7 +1276,7 @@ impl WillContract {
         );
 
         let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
-        events::emergency_checkin(&env, will_id, &owner, next_deadline);
+        events::emergency_checkin(&env, will_id, &owner, next_deadline, now);
     }
 
     /// Distributes all token balances to beneficiaries proportionally to
