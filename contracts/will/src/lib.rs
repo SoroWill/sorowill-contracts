@@ -412,6 +412,10 @@ mod issue_572_575_test;
 #[cfg(test)]
 mod issue_662_test;
 
+/// Regression tests for issues #700, #701, #703, and #711.
+#[cfg(test)]
+mod issue_700_701_703_711_test;
+
 use soroban_sdk::{
     contract, contractimpl, log, panic_with_error, symbol_short, token, xdr::ToXdr, Address,
     Bytes, Env, Map, Vec,
@@ -813,16 +817,8 @@ impl WillContract {
                 panic_with_error!(&env, WillError::ZeroAmount);
             }
             // Probe the token interface with a read-only `decimals()` call
-            // before attempting any transfer. A non-token address (or any
-            // contract that does not implement SEP-41) will fail here with a
-            // clear `InvalidToken` error rather than an opaque host-level
-            // cross-contract failure deep inside `transfer`.
-            if token::Client::new(&env, &token_addr)
-                .try_decimals()
-                .is_err()
-            {
-                panic_with_error!(&env, WillError::InvalidToken);
-            }
+            // before attempting any transfer (#703).
+            assert_valid_token(&env, &token_addr);
             // Transfer this token from the owner into the contract.
             token::Client::new(&env, &token_addr).transfer(
                 &owner,
@@ -2340,6 +2336,8 @@ impl WillContract {
             panic_with_error!(&env, WillError::InvalidTokenCount);
         }
 
+        assert_valid_token(&env, &token);
+
         // Snapshot values needed after state mutation (checks-effects-interactions).
         let prev = will.balances.get(token.clone()).unwrap_or(0);
         let new_balance = prev + amount;
@@ -3404,6 +3402,7 @@ impl WillContract {
             if amount <= 0 {
                 panic_with_error!(&env, WillError::ZeroAmount);
             }
+            assert_valid_token(&env, &token_addr);
             token::Client::new(&env, &token_addr).transfer(
                 &owner,
                 &env.current_contract_address(),
@@ -3595,6 +3594,7 @@ impl WillContract {
                 if amount <= 0 {
                     panic_with_error!(&env, WillError::ZeroAmount);
                 }
+                assert_valid_token(&env, &token_addr);
                 token::Client::new(&env, &token_addr).transfer(
                     &owner,
                     &env.current_contract_address(),
@@ -4702,6 +4702,7 @@ impl WillContract {
     /// - [`WillError::AlreadyClaimed`] if that slot was already claimed.
     pub fn reveal_and_claim(env: Env, will_id: u64, claimant: Address, preimage: Bytes) {
         claimant.require_auth();
+        assert_valid_beneficiary_address(&env, &claimant);
         let mut will = load_will(&env, will_id);
         // A hashed beneficiary's reserved share is only carved out of the
         // will's balances once `distribute()` runs (see #181), so claiming
@@ -4799,7 +4800,7 @@ impl WillContract {
             let share = if total == 0 || hb.percentage == 0 {
                 0
             } else {
-                total * (hb.percentage as i128) / unclaimed_bps
+                proportional_share_with_denom(total, hb.percentage, unclaimed_bps)
             };
             if share > 0 {
                 transfer_plan.push_back((token_addr.clone(), share));
@@ -5020,6 +5021,26 @@ fn names_address(beneficiaries: &Vec<Beneficiary>, address: &Address) -> bool {
 ///   beneficiaries at all) is allowed to account for less than the whole
 ///   balance; the unallocated remainder is refunded to the owner at
 ///   distribute time rather than left stranded in the contract (#383).
+/// Probes a token address with a read-only `decimals()` call to verify it
+/// implements the SEP-41 token interface before attempting a transfer (#703).
+fn assert_valid_token(env: &Env, token_addr: &Address) {
+    if token::Client::new(env, token_addr)
+        .try_decimals()
+        .is_err()
+    {
+        panic_with_error!(env, WillError::InvalidToken);
+    }
+}
+
+/// Validates that a beneficiary (or hashed-beneficiary claimant) address is
+/// eligible to receive payouts (#711). Rejects the contract's own address so
+/// funds can never be transferred into the contract itself and locked forever.
+fn assert_valid_beneficiary_address(env: &Env, address: &Address) {
+    if *address == env.current_contract_address() {
+        panic_with_error!(env, WillError::InvalidBeneficiaryAddress);
+    }
+}
+
 fn assert_valid_allocations(env: &Env, beneficiaries: &Vec<Beneficiary>, primary_balance: i128) {
     let mut percentage_total: u32 = 0;
     let mut fixed_total: i128 = 0;
@@ -5027,6 +5048,7 @@ fn assert_valid_allocations(env: &Env, beneficiaries: &Vec<Beneficiary>, primary
 
     for i in 0..beneficiaries.len() {
         let beneficiary = beneficiaries.get_unchecked(i);
+        assert_valid_beneficiary_address(env, &beneficiary.address);
         match beneficiary.allocation {
             Allocation::Percentage(bp) => {
                 if bp == 0 {
@@ -5517,12 +5539,17 @@ fn assert_valid_periods(env: &Env, checkin_period_days: u64, grace_period_days: 
 /// truncating towards zero) without ever forming the potentially overflowing
 /// `total * basis_points` intermediate. The workspace release profile enables overflow
 /// checks, but this decomposition also makes the calculation safe independently of that compiler setting.
+/// Calculates `floor(total * numerator / denominator)` without forming the
+/// potentially overflowing `total * numerator` intermediate (#700).
+fn proportional_share_with_denom(total: i128, numerator: u32, denominator: i128) -> i128 {
+    let whole = total / denominator;
+    let remainder = total % denominator;
+    whole * (numerator as i128) + remainder * (numerator as i128) / denominator
+}
+
 pub(crate) fn proportional_share(total: i128, basis_points: u32) -> i128 {
     const BASIS_POINTS_TOTAL: i128 = 10_000;
-
-    let whole = total / BASIS_POINTS_TOTAL;
-    let remainder = total % BASIS_POINTS_TOTAL;
-    whole * basis_points as i128 + remainder * basis_points as i128 / BASIS_POINTS_TOTAL
+    proportional_share_with_denom(total, basis_points, BASIS_POINTS_TOTAL)
 }
 
 /// Pays out every token balance the will holds, marks the will `Released`,
@@ -6061,11 +6088,15 @@ fn merge_beneficiaries(env: &Env, will_a: &Will, will_b: &Will) -> Vec<Beneficia
             Some(Allocation::FixedAmount(amt)) => Allocation::FixedAmount(amt),
             _ => {
                 // Convert to percentage for non-fixed-amount beneficiaries.
-                // Widened to u128 so the `share * 10_000` intermediate can
-                // never overflow, mirroring `proportional_share`'s guarantee
-                // in the other direction (#382).
+                // Widened to u128, with a scaled fallback when `share * 10_000`
+                // would exceed `u128::MAX` (#382, #700).
                 let bp = if total_value > 0 {
-                    ((share as u128 * 10_000u128) / total_value as u128) as u32
+                    let s = share as u128;
+                    let t = total_value as u128;
+                    match s.checked_mul(10_000) {
+                        Some(prod) => (prod / t) as u32,
+                        None => (((s >> 14) * 10_000) / (t >> 14)) as u32,
+                    }
                 } else {
                     0
                 };
