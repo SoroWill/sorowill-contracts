@@ -1048,6 +1048,9 @@ impl WillContract {
         let mut will = load_will(&env, will_id);
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
         assert_owner_or_delegate(&env, &will, &caller);
+        if will.grace_period_days >= will.checkin_period_days {
+            panic_with_error!(&env, WillError::InvalidPeriod);
+        }
 
         // The check-in time is the ledger close time, which consensus sets. Block
         // production delays move that time forward for everyone at once, so the
@@ -1127,6 +1130,9 @@ impl WillContract {
         for will_id in will_ids.iter() {
             let mut will = load_owned(&env, will_id, &owner);
             assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
+            if will.grace_period_days >= will.checkin_period_days {
+                panic_with_error!(&env, WillError::InvalidPeriod);
+            }
 
             will.last_checkin = now;
             let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
@@ -1243,7 +1249,14 @@ impl WillContract {
         // comment, so this now does too; the removed call added no coverage
         // `assert_status(.., Triggered, ..)` above doesn't already guarantee
         // (a `Triggered` will always has `trigger_time` set).
+        let trigger_time = match will.trigger_time {
+            Some(t) => t,
+            None => panic_with_error!(&env, WillError::WillNotTriggered),
+        };
         let now = env.ledger().timestamp();
+        if now < trigger_time {
+            panic_with_error!(&env, WillError::CheckinNotDue);
+        }
         if now > grace_deadline(&will) {
             panic_with_error!(&env, WillError::GracePeriodExpired);
         }
@@ -2127,6 +2140,8 @@ impl WillContract {
             will.grace_period_days = new_grace;
         }
 
+        assert_valid_periods(&env, will.checkin_period_days, will.grace_period_days);
+
         // `trigger_will` derives the deadline from `last_checkin`, which this call
         // leaves untouched, so the event must carry that same value rather than
         // `now + period` — otherwise the published deadline is later than the
@@ -2279,6 +2294,8 @@ impl WillContract {
             will.grace_period_days = new_grace;
             updated_fields.push_back(symbol_short!("grace"));
         }
+
+        assert_valid_periods(&env, will.checkin_period_days, will.grace_period_days);
 
         // Save the will with all updates applied
         storage::save_will(&env, &will);
@@ -5021,12 +5038,16 @@ fn names_address(beneficiaries: &Vec<Beneficiary>, address: &Address) -> bool {
 ///   balance; the unallocated remainder is refunded to the owner at
 ///   distribute time rather than left stranded in the contract (#383).
 fn assert_valid_allocations(env: &Env, beneficiaries: &Vec<Beneficiary>, primary_balance: i128) {
+    let contract_address = env.current_contract_address();
     let mut percentage_total: u32 = 0;
     let mut fixed_total: i128 = 0;
     let mut has_percentage = false;
 
     for i in 0..beneficiaries.len() {
         let beneficiary = beneficiaries.get_unchecked(i);
+        if beneficiary.address == contract_address {
+            panic_with_error!(env, WillError::InvalidBeneficiary);
+        }
         match beneficiary.allocation {
             Allocation::Percentage(bp) => {
                 if bp == 0 {
@@ -5463,7 +5484,10 @@ fn tally_guardian_votes(
 /// mechanism entirely.
 fn assert_valid_periods(env: &Env, checkin_period_days: u64, grace_period_days: u64) {
     let valid = 1..=MAX_PERIOD_DAYS;
-    if !valid.contains(&checkin_period_days) || !valid.contains(&grace_period_days) {
+    if !valid.contains(&checkin_period_days)
+        || !valid.contains(&grace_period_days)
+        || grace_period_days >= checkin_period_days
+    {
         panic_with_error!(env, WillError::InvalidPeriod);
     }
 }
@@ -5725,12 +5749,17 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
         // misconfigured/under-funded will never aborts the whole
         // distribution.
         let mut remaining = available;
+        let mut owner_refund: i128 = 0;
         if token_addr == will.token {
             for beneficiary in will.beneficiaries.iter() {
                 if let Allocation::FixedAmount(amt) = beneficiary.allocation {
                     let share = amt.min(remaining).max(0);
                     remaining -= share;
-                    shares.push_back((beneficiary.address.clone(), share));
+                    if beneficiary.address == contract_address {
+                        owner_refund += share;
+                    } else {
+                        shares.push_back((beneficiary.address.clone(), share));
+                    }
                 }
             }
         }
@@ -5758,7 +5787,11 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
                     percentage_remaining -= portion;
                     portion
                 };
-                shares.push_back((beneficiary.address.clone(), share));
+                if beneficiary.address == contract_address {
+                    owner_refund += share;
+                } else {
+                    shares.push_back((beneficiary.address.clone(), share));
+                }
             }
         }
 
@@ -5768,8 +5801,9 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
         // contract once the balances map is cleared (#456).
         // Any dust or leftover remainder after payouts is refunded to the
         // owner at the end so funds are neither stranded nor distorted.
-        if remaining > 0 {
-            refund_plan.push_back((token_addr.clone(), remaining));
+        let total_refund = remaining.saturating_add(owner_refund);
+        if total_refund > 0 {
+            refund_plan.push_back((token_addr.clone(), total_refund));
         }
 
         // Conservation check (#456): the planned payouts and refund for this token must
@@ -5915,7 +5949,13 @@ fn pay_or_record_failure(
     amount: i128,
     will_id: u64,
 ) -> bool {
-    let result = token::Client::new(env, token_addr).try_transfer(from, to, &amount);
+    let client = token::Client::new(env, token_addr);
+    if client.balance(from) < amount {
+        storage::set_failed_payout(env, will_id, token_addr, to, amount);
+        events::payout_failed(env, will_id, token_addr, to, amount);
+        return false;
+    }
+    let result = client.try_transfer(from, to, &amount);
     if result.is_ok() {
         return true;
     }
