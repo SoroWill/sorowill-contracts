@@ -1569,9 +1569,19 @@ impl WillContract {
     /// Replaces the beneficiary list for `will_id`. Only possible while the
     /// will is `Active`. The new basis points must sum to exactly 10,000.
     ///
+    /// # Behavior while the will is `Triggered` (#732)
+    ///
+    /// The list is frozen from [`Self::trigger_will`] onward: any call here
+    /// returns [`WillError::WillNotActive`] and changes nothing, so the list
+    /// `release_inheritance` pays out is always the one the owner last set
+    /// before the trigger. To change beneficiaries during a grace period, the
+    /// owner must first call [`Self::emergency_checkin`], which returns the
+    /// will to `Active`; the next `trigger_will` then snapshots the new list.
+    ///
     /// # Panics
     /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
-    /// - [`WillError::WillNotActive`] if the will is not `Active`.
+    /// - [`WillError::WillNotActive`] if the will is not `Active`, including
+    ///   when it is `Triggered` (see above).
     /// - [`WillError::TooManyBeneficiaries`] if the new list is empty or too large.
     /// - [`WillError::InvalidPercentages`] if the new basis points do not sum to 10,000.
     /// - [`WillError::DuplicateBeneficiary`] if the same address is supplied twice.

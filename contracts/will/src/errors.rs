@@ -13,7 +13,10 @@ pub enum WillError {
     WillNotFound = 1,
     /// The caller is not the owner of the will.
     NotOwner = 2,
-    /// The requested action requires the will to be `Active`.
+    /// The requested action requires the will to be `Active`. Also returned by
+    /// `update_beneficiaries` while the will is `Triggered`: the beneficiary
+    /// list is frozen during a grace period; call `emergency_checkin` first to
+    /// make it editable again (#732).
     WillNotActive = 3,
     /// The requested action requires the will to be `Triggered`.
     WillNotTriggered = 4,
