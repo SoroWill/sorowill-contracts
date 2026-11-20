@@ -39,20 +39,24 @@ pub(crate) fn add_guardian_weight(env: &Env, total: u32, weight: u32) -> u32 {
 }
 
 /// Sums the weight of guardian release votes that are still live (not older
-/// than the will's grace period). The persisted `guardian_vote_weight` counter
-/// can include votes that have since expired, so quorum must be judged on this
-/// value to stop stale votes being replayed without the guardians re-voting.
+/// than the will's configured vote expiry window). The persisted
+/// `guardian_vote_weight` counter can include votes that have since expired,
+/// so quorum must be judged on this value to stop stale votes being replayed
+/// without the guardians re-voting.
+///
+/// Accumulates in `u64` so guardians with weights up to `u32::MAX` never
+/// overflow during threshold comparison (#666).
 ///
 /// `now` is a ledger timestamp in seconds; it is normalised with
 /// [`to_vote_seconds`] so that votes cast in the same ledger second are always
 /// treated as belonging to the same vote window.
-pub(crate) fn live_guardian_vote_weight(env: &Env, will_id: u64, will: &Will, now: u64) -> u32 {
+pub(crate) fn live_guardian_vote_weight(env: &Env, will_id: u64, will: &Will, now: u64) -> u64 {
     let now = to_vote_seconds(now);
-    let grace_seconds = (will.grace_period_days as u64).saturating_mul(SECONDS_PER_DAY);
-    let mut total: u32 = 0;
+    let expiry_days = storage::get_guardian_vote_expiry_days(env, will);
+    let mut total: u64 = 0;
     for g in will.guardians.iter() {
-        if storage::has_guardian_voted(env, will_id, &g.address, now, will.grace_period_days) {
-            total = add_guardian_weight(env, total, g.weight);
+        if storage::has_guardian_voted(env, will_id, &g.address, now, expiry_days) {
+            total += g.weight as u64;
         }
     }
     total
