@@ -1956,6 +1956,7 @@ impl WillContract {
                 consent: GuardianConsent::Pending,
             });
         }
+        let old_guardians = will.guardians.clone();
         will.guardians = guardian_structs;
         will.guardian_votes = 0;
         will.guardian_cancel_vote_weight = 0;
@@ -1965,6 +1966,7 @@ impl WillContract {
         storage::save_will(&env, &will);
 
         events::guardians_updated(&env, will_id, &owner, &will.guardians);
+        events::guardian_updated(&env, will_id, &owner, &old_guardians, &will.guardians);
     }
 
     /// Updates the guardian list with custom per-guardian vote weights.
@@ -2063,6 +2065,7 @@ impl WillContract {
                 consent: GuardianConsent::Pending,
             });
         }
+        let old_guardians = will.guardians.clone();
         will.guardians = guardian_structs;
         will.guardian_threshold = threshold;
         will.guardian_votes = 0;
@@ -2073,6 +2076,7 @@ impl WillContract {
         storage::save_will(&env, &will);
 
         events::guardians_updated(&env, will_id, &owner, &will.guardians);
+        events::guardian_updated(&env, will_id, &owner, &old_guardians, &will.guardians);
     }
 
     /// Updates the check-in and/or grace period for an active will.
@@ -2229,6 +2233,7 @@ impl WillContract {
         }
 
         // Update guardians if provided
+        let old_guardians = will.guardians.clone();
         let guardians_changed = if let Some(new_guardians) = guardians {
             assert_valid_guardians(&env, &owner, &new_guardians);
             assert_no_guardian_cancel_in_flight(&env, &will);
@@ -2297,6 +2302,7 @@ impl WillContract {
         // through this composite entry point.
         if guardians_changed {
             events::guardians_updated(&env, will_id, &owner, &will.guardians);
+            events::guardian_updated(&env, will_id, &owner, &old_guardians, &will.guardians);
         }
     }
 
