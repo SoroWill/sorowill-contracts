@@ -1942,7 +1942,9 @@ impl WillContract {
 
         let now = env.ledger().timestamp();
         // Every vote cast under the old guardian list is cleared here, before the
-        // new threshold takes effect, so no stale vote can count toward it (#631).
+        // new threshold takes effect, so no stale vote can count toward it (#631, #702).
+        // `purge_guardian_vote_records` also removes dormant records of removed
+        // guardians so they cannot be revived if a guardian is re-added later.
         storage::reset_guardian_votes(&env, &will);
         guardian_vote_purge::purge_guardian_vote_records(&env, &will);
         storage::reset_guardian_cancel_votes(&env, &will);
@@ -4750,7 +4752,8 @@ impl WillContract {
             panic_with_error!(&env, WillError::PreimageAddressMismatch);
         }
 
-        // Hash the supplied pre-image with SHA-256.
+        // Hash the supplied pre-image with SHA-256 and validate it against the
+        // stored hashed-beneficiary commitments before allowing a claim (#696).
         let digest = env.crypto().sha256(&preimage);
         let digest_bytes = Bytes::from_array(&env, &digest.to_array());
 
