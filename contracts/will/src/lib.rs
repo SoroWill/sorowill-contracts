@@ -415,6 +415,9 @@ mod issue_662_test;
 #[cfg(test)]
 mod issue_715_test;
 
+#[cfg(test)]
+mod issue_716_test;
+
 use soroban_sdk::{
     contract, contractimpl, log, panic_with_error, symbol_short, token, xdr::ToXdr, Address,
     Bytes, Env, Map, Vec,
@@ -485,6 +488,34 @@ const MAX_GUARDIANS: u32 = 3;
 const MAX_PERIOD_DAYS: u64 = 3_650;
 /// Maximum number of distinct tokens a single will may hold.
 const MAX_TOKENS: u32 = 10;
+
+/// Largest balance, in token base units, that a will may hold for a single
+/// token (#716).
+///
+/// Every deposit path (`create_will`, `clone_will`, `batch_create_wills`,
+/// `top_up`) and the merge path (`merge_wills`) rejects any balance above this
+/// cap with [`WillError::BalanceExceedsMax`]. The cap is 10^30 base units,
+/// which is far above any real supply but leaves headroom so that balance
+/// arithmetic, fixed-amount sums and distribution shares never approach
+/// `i128::MAX`.
+pub const MAX_BALANCE: i128 = 1_000_000_000_000_000_000_000_000_000_000;
+
+/// Returns `prev + amount` for a single token balance, panicking with
+/// [`WillError::BalanceExceedsMax`] if the sum overflows or exceeds
+/// [`MAX_BALANCE`].
+fn checked_balance_add(env: &Env, prev: i128, amount: i128) -> i128 {
+    match prev.checked_add(amount) {
+        Some(total) if total <= MAX_BALANCE => total,
+        _ => panic_with_error!(env, WillError::BalanceExceedsMax),
+    }
+}
+
+/// Asserts a single deposit amount does not on its own exceed [`MAX_BALANCE`].
+fn assert_deposit_within_max(env: &Env, amount: i128) {
+    if amount > MAX_BALANCE {
+        panic_with_error!(env, WillError::BalanceExceedsMax);
+    }
+}
 
 /// Upper bound on beneficiary transfers a single `release_inheritance` (or
 /// guardian-quorum release) performs (#491).
@@ -643,6 +674,7 @@ impl WillContract {
     ///
     /// # Panics
     /// - [`WillError::ZeroAmount`] if any token amount is not positive.
+    /// - [`WillError::BalanceExceedsMax`] if any token amount is above [`MAX_BALANCE`].
     /// - [`WillError::TooManyBeneficiaries`] if the beneficiary/guardian/token lists are
     ///   empty or exceed their respective caps (at most [`MAX_BENEFICIARIES`] = 10
     ///   beneficiaries).
@@ -815,6 +847,7 @@ impl WillContract {
             if amount <= 0 {
                 panic_with_error!(&env, WillError::ZeroAmount);
             }
+            assert_deposit_within_max(&env, amount);
             // Probe the token interface with a read-only `decimals()` call
             // before attempting any transfer. A non-token address (or any
             // contract that does not implement SEP-41) will fail here with a
@@ -835,7 +868,7 @@ impl WillContract {
             // Duplicates were rejected above, so this is a plain insert; the
             // additive accumulation is kept so the intent stays explicit.
             let prev = balances.get(token_addr.clone()).unwrap_or(0);
-            balances.set(token_addr, prev + amount);
+            balances.set(token_addr, checked_balance_add(&env, prev, amount));
         }
 
         // Fixed amounts are denominated in the will's primary token, which is
@@ -2318,6 +2351,8 @@ impl WillContract {
     /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
     /// - [`WillError::WillNotActive`] if the will is not `Active`.
     /// - [`WillError::ZeroAmount`] if `amount` is not positive.
+    /// - [`WillError::BalanceExceedsMax`] if the token's resulting balance would
+    ///   exceed [`MAX_BALANCE`].
     /// - [`WillError::InvalidTokenCount`] if `token` is not already in the
     ///   will's `balances` map and that map already holds [`MAX_TOKENS`]
     ///   distinct tokens (#358). Topping up a token the will already holds is
@@ -2345,7 +2380,7 @@ impl WillContract {
 
         // Snapshot values needed after state mutation (checks-effects-interactions).
         let prev = will.balances.get(token.clone()).unwrap_or(0);
-        let new_balance = prev + amount;
+        let new_balance = checked_balance_add(&env, prev, amount);
 
         // --- EFFECTS: update state and persist before the external transfer ---
         // `will.balance` is a legacy mirror of `will.balances[will.token]` kept
@@ -3405,13 +3440,14 @@ impl WillContract {
             if amount <= 0 {
                 panic_with_error!(&env, WillError::ZeroAmount);
             }
+            assert_deposit_within_max(&env, amount);
             token::Client::new(&env, &token_addr).transfer(
                 &owner,
                 &env.current_contract_address(),
                 &amount,
             );
             let prev = balances.get(token_addr.clone()).unwrap_or(0);
-            balances.set(token_addr, prev + amount);
+            balances.set(token_addr, checked_balance_add(&env, prev, amount));
         }
 
         // Re-validate `FixedAmount` beneficiaries against the clone's new
@@ -3596,13 +3632,14 @@ impl WillContract {
                 if amount <= 0 {
                     panic_with_error!(&env, WillError::ZeroAmount);
                 }
+                assert_deposit_within_max(&env, amount);
                 token::Client::new(&env, &token_addr).transfer(
                     &owner,
                     &env.current_contract_address(),
                     &amount,
                 );
                 let prev = balances.get(token_addr.clone()).unwrap_or(0);
-                balances.set(token_addr, prev + amount);
+                balances.set(token_addr, checked_balance_add(&env, prev, amount));
             }
 
             // Fixed amounts are denominated in the primary token, the first
@@ -3956,7 +3993,7 @@ impl WillContract {
         let mut combined_balances = will_a.balances.clone();
         for (token_addr, amount) in will_b.balances.iter() {
             let prev = combined_balances.get(token_addr.clone()).unwrap_or(0);
-            combined_balances.set(token_addr, prev + amount);
+            combined_balances.set(token_addr, checked_balance_add(&env, prev, amount));
         }
         // The merged will holds the union of both token sets, so it must respect
         // the same token cap that `create_will` enforces (#637).

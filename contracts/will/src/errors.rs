@@ -247,4 +247,9 @@ pub enum WillError {
     /// would let the distribution logic process the same beneficiary twice,
     /// so both wills must be `Active` before a merge is accepted (#656).
     MergeWithReleasedWill = 57,
+    /// A balance would exceed [`crate::MAX_BALANCE`] for a single token: either
+    /// a deposit (`create_will`, `clone_will`, `batch_create_wills`,
+    /// `top_up`) or a merged total (`merge_wills`) lands above the cap. The
+    /// cap keeps every balance sum far inside `i128` (#716).
+    BalanceExceedsMax = 58,
 }
