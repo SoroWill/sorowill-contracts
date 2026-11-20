@@ -421,6 +421,9 @@ mod issue_716_test;
 #[cfg(test)]
 mod issue_717_test;
 
+#[cfg(test)]
+mod issue_718_test;
+
 use soroban_sdk::{
     contract, contractimpl, log, panic_with_error, symbol_short, token, xdr::ToXdr, Address,
     Bytes, Env, Map, Vec,
@@ -1654,6 +1657,7 @@ impl WillContract {
             }
         }
 
+        let old_beneficiaries = will.beneficiaries.clone();
         will.beneficiaries = beneficiaries;
         storage::save_will(&env, &will);
 
@@ -1662,6 +1666,13 @@ impl WillContract {
             will_id,
             &owner,
             will.beneficiaries.len(),
+            &will.beneficiaries,
+        );
+        events::beneficiary_updated(
+            &env,
+            will_id,
+            &owner,
+            &old_beneficiaries,
             &will.beneficiaries,
         );
     }
@@ -2260,7 +2271,15 @@ impl WillContract {
                 }
             }
 
+            let old_beneficiaries = will.beneficiaries.clone();
             will.beneficiaries = new_beneficiaries;
+            events::beneficiary_updated(
+                &env,
+                will_id,
+                &owner,
+                &old_beneficiaries,
+                &will.beneficiaries,
+            );
             updated_fields.push_back(symbol_short!("benef"));
         }
 
