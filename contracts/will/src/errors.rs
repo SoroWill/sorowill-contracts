@@ -251,4 +251,9 @@ pub enum WillError {
     /// An owner-beneficiary would create a circular claim, where the owner
     /// both controls the will and inherits from it (#720).
     OwnerCannotBeBeneficiary = 58,
+    /// `set_guardian_cooldown` tried to shorten the guardian-list cooldown.
+    /// The cooldown may only be increased. A compromised owner could otherwise
+    /// shorten it and then swap guardians after a short wait, defeating the
+    /// protection it exists to provide (#721).
+    GuardianCooldownCannotDecrease = 59,
 }

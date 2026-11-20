@@ -119,6 +119,9 @@ pub(crate) enum DataKey {
     /// re-reads or re-validates the will, so it still succeeds even if the
     /// will has since been archived.
     FailedPayout(u64, Address, Address),
+    /// Owner-configured guardian-list cooldown, in days, for a will. Absent
+    /// means the protocol default `GUARDIAN_COOLDOWN_DAYS` applies (#721).
+    GuardianCooldownDays(u64),
 }
 
 /// The data stored for each guardian vote: the Unix timestamp when the vote
@@ -1276,4 +1279,21 @@ pub fn get_failed_payout(
 pub fn remove_failed_payout(env: &Env, will_id: u64, token: &Address, recipient: &Address) {
     let key = DataKey::FailedPayout(will_id, token.clone(), recipient.clone());
     env.storage().persistent().remove(&key);
+}
+
+/// Reads the owner-configured guardian cooldown (in days) for `will_id`, or
+/// `None` if the will still uses the protocol default (#721).
+pub fn get_guardian_cooldown_days(env: &Env, will_id: u64) -> Option<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::GuardianCooldownDays(will_id))
+}
+
+/// Records the guardian cooldown (in days) for `will_id` (#721).
+pub fn set_guardian_cooldown_days(env: &Env, will_id: u64, days: u64) {
+    let key = DataKey::GuardianCooldownDays(will_id);
+    env.storage().persistent().set(&key, &days);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
 }

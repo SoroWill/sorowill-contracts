@@ -2079,6 +2079,38 @@ impl WillContract {
         events::guardian_updated(&env, will_id, &owner, &old_guardians, &will.guardians);
     }
 
+    /// Sets the guardian-list cooldown, in days, for an active will (#721).
+    ///
+    /// The cooldown is the delay after a guardian-list change before a guardian
+    /// may vote in `guardian_trigger` or `guardian_cancel_trigger`. It defaults
+    /// to `GUARDIAN_COOLDOWN_DAYS` and can be raised here for a longer window.
+    ///
+    /// The cooldown can only be increased. Shortening it would let a compromised
+    /// owner shrink the delay and swap guardians after a short wait.
+    ///
+    /// # Errors
+    ///
+    /// - [`WillError::NotOwner`] if `owner` is not the will's owner.
+    /// - [`WillError::WillNotActive`] if the will is not `Active`.
+    /// - [`WillError::InvalidPeriod`] if `days` is `0` or above `MAX_PERIOD_DAYS`.
+    /// - [`WillError::GuardianCooldownCannotDecrease`] if `days` is below the
+    ///   cooldown currently in effect.
+    pub fn set_guardian_cooldown(env: Env, will_id: u64, owner: Address, days: u64) {
+        owner.require_auth();
+        let will = load_owned(&env, will_id, &owner);
+        assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
+
+        if days == 0 || days > MAX_PERIOD_DAYS {
+            panic_with_error!(&env, WillError::InvalidPeriod);
+        }
+        let current_days = storage::get_guardian_cooldown_days(&env, will_id)
+            .unwrap_or(GUARDIAN_COOLDOWN_DAYS);
+        if days < current_days {
+            panic_with_error!(&env, WillError::GuardianCooldownCannotDecrease);
+        }
+        storage::set_guardian_cooldown_days(&env, will_id, days);
+    }
+
     /// Updates the check-in and/or grace period for an active will.
     /// Only callable by the owner while the will is `Active`.
     ///
@@ -2975,7 +3007,7 @@ impl WillContract {
         // stretch or shorten it (#636).
         // Enforce guardian-list cooldown.
         let now = env.ledger().timestamp();
-        let cooldown_seconds = GUARDIAN_COOLDOWN_DAYS * SECONDS_PER_DAY;
+        let cooldown_seconds = guardian_cooldown_seconds(&env, will_id);
         let cooldown_ends = will.guardian_list_updated_at + cooldown_seconds;
         if now < cooldown_ends {
             panic_with_error!(&env, WillError::GuardianCooldownActive);
@@ -3100,7 +3132,7 @@ impl WillContract {
         }
 
         // Enforce guardian-list cooldown (same rule as guardian_trigger).
-        let cooldown_seconds = GUARDIAN_COOLDOWN_DAYS * SECONDS_PER_DAY;
+        let cooldown_seconds = guardian_cooldown_seconds(&env, will_id);
         let cooldown_ends = will.guardian_list_updated_at + cooldown_seconds;
         if now < cooldown_ends {
             panic_with_error!(&env, WillError::GuardianCooldownActive);
@@ -5363,6 +5395,14 @@ fn primary_token_balance(balances: &Map<Address, i128>, primary_token: &Address)
 ///
 /// The owner cannot be a guardian since guardians are meant to act when the
 /// owner is incapacitated or known to be dead.
+/// Returns the guardian-list cooldown for `will_id` in seconds: the
+/// owner-configured value if set, otherwise `GUARDIAN_COOLDOWN_DAYS` (#721).
+fn guardian_cooldown_seconds(env: &Env, will_id: u64) -> u64 {
+    let days =
+        storage::get_guardian_cooldown_days(env, will_id).unwrap_or(GUARDIAN_COOLDOWN_DAYS);
+    days * SECONDS_PER_DAY
+}
+
 fn assert_valid_guardians(env: &Env, owner: &Address, guardians: &Vec<Address>) {
     if guardians.len() > MAX_GUARDIANS {
         panic_with_error!(env, WillError::TooManyBeneficiaries);
