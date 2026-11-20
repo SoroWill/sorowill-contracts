@@ -2378,6 +2378,7 @@ impl WillContract {
         token::Client::new(&env, &token).transfer(&owner, &env.current_contract_address(), &amount);
 
         events::top_up(&env, will_id, &owner, &token, amount, new_balance);
+        events::will_funded(&env, will_id, &owner, &token, amount);
     }
 
     /// Returns the contract version as a `u32` encoded semver value:

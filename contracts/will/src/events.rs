@@ -151,6 +151,25 @@ pub fn top_up(
     );
 }
 
+/// Published alongside [`top_up`] whenever a will is funded (#725), so
+/// indexers can track funding activity by will ID.
+///
+/// `amount` is the amount added in this call. `timestamp` is the ledger
+/// timestamp (Unix seconds) at which the funding was applied. The `topup`
+/// event above is kept unchanged for existing consumers, so a successful
+/// `top_up` publishes both events.
+pub fn will_funded(env: &Env, will_id: u64, owner: &Address, token: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "will_funded"), will_id),
+        (
+            owner.clone(),
+            token.clone(),
+            amount,
+            env.ledger().timestamp(),
+        ),
+    );
+}
+
 /// Published each time a guardian votes to trigger an early release.
 pub fn guardian_voted(env: &Env, will_id: u64, guardian: &Address, weight: u32, total_weight: u32) {
     env.events().publish(
