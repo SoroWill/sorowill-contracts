@@ -292,6 +292,8 @@ mod create_will_doc_example_test;
 #[cfg(test)]
 mod entrypoint_coverage_test;
 #[cfg(test)]
+mod issue_729_test;
+#[cfg(test)]
 mod get_contract_version_test;
 #[cfg(test)]
 mod get_time_until_deadline_test;
