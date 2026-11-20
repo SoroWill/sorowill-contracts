@@ -412,6 +412,9 @@ mod issue_572_575_test;
 #[cfg(test)]
 mod issue_662_test;
 
+#[cfg(test)]
+mod network_failure_test;
+
 use soroban_sdk::{
     contract, contractimpl, log, panic_with_error, symbol_short, token, xdr::ToXdr, Address,
     Bytes, Env, Map, Vec,
