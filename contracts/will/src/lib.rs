@@ -5899,7 +5899,25 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
         }
     }
 
-    events::inheritance_released(env, will.id, token_count, count);
+    // Audit trail (#738): record each planned beneficiary share alongside the
+    // release timestamp so indexers can reconstruct per-beneficiary amounts
+    // directly from the event.
+    let mut payouts: Vec<(Address, Address, i128)> = Vec::new(env);
+    for (token_addr, shares) in transfer_plan.iter() {
+        for (beneficiary_addr, share) in shares.iter() {
+            if share > 0 {
+                payouts.push_back((beneficiary_addr, token_addr.clone(), share));
+            }
+        }
+    }
+    events::inheritance_released(
+        env,
+        will.id,
+        token_count,
+        count,
+        env.ledger().timestamp(),
+        &payouts,
+    );
 }
 
 /// Attempts to transfer `amount` of `token_addr` from `from` to `to`,

@@ -92,11 +92,25 @@ pub fn emergency_checkin(env: &Env, will_id: u64, owner: &Address, next_deadline
 
 /// Published when inheritance is released to all beneficiaries.
 ///
-/// `token_count` is the number of distinct tokens distributed.
-pub fn inheritance_released(env: &Env, will_id: u64, token_count: u32, beneficiaries_count: u32) {
+/// Data: `(token_count, beneficiaries_count, released_at, payouts)`.
+/// - `token_count` is the number of distinct tokens distributed.
+/// - `released_at` is the ledger timestamp of the release.
+/// - `payouts` lists every planned beneficiary share as
+///   `(beneficiary, token, amount)`, one entry per non-zero share, so an audit
+///   trail can reconstruct exactly what each beneficiary was owed. Amounts are
+///   the planned payouts; any transfer that could not be sent is recorded
+///   separately for retry (see `retry_failed_payout`).
+pub fn inheritance_released(
+    env: &Env,
+    will_id: u64,
+    token_count: u32,
+    beneficiaries_count: u32,
+    released_at: u64,
+    payouts: &Vec<(Address, Address, i128)>,
+) {
     env.events().publish(
         (symbol_short!("released"), will_id),
-        (token_count, beneficiaries_count),
+        (token_count, beneficiaries_count, released_at, payouts.clone()),
     );
 }
 

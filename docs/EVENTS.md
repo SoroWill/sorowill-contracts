@@ -17,7 +17,7 @@ data, in order.
 | `batchchk` | `batch_check_in` (second topic is `owner`) | `(will_ids: Vec<u64>, count: u32)` |
 | `triggered` | `trigger_will` | `(grace_period_ends: u64, triggered_at: u64, caller: Option<Address>)` |
 | `emerg` | `emergency_checkin` | `(owner: Address, next_deadline: u64)` |
-| `released` | `release_inheritance`, `guardian_trigger` (on quorum) | `(token_count: u32, beneficiaries_count: u32)` |
+| `released` | `release_inheritance`, `guardian_trigger` (on quorum) | `(token_count: u32, beneficiaries_count: u32, released_at: u64, payouts: Vec<(Address, Address, i128)>)` where each payout is `(beneficiary, token, amount)` |
 | `bounty` | `release_inheritance`, `guardian_trigger` (keeper bounty paid) | `(keeper: Address, amount: i128)` |
 | `cancelled` | `cancel_will` | `(owner: Address, token_count: u32)` |
 | `closed` | `close_will` | `owner: Address` |

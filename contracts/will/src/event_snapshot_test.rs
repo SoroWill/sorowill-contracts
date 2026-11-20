@@ -220,7 +220,7 @@ fn test_inheritance_released_event_snapshot() {
     let beneficiaries_count = 3u32;
 
     env.as_contract(&contract_id, || {
-        events::inheritance_released(&env, will_id, token_count, beneficiaries_count);
+        events::inheritance_released(&env, will_id, token_count, beneficiaries_count, env.ledger().timestamp(), &soroban_sdk::Vec::new(&env));
     });
 
     // Verify inheritance_released event
@@ -703,7 +703,7 @@ fn test_event_ordering_lifecycle() {
         // 5. Will triggered again
         events::will_triggered(&env, will_id, env.ledger().timestamp() + 608400, env.ledger().timestamp(), &None);
         // 6. Inheritance released
-        events::inheritance_released(&env, will_id, 1, 1);
+        events::inheritance_released(&env, will_id, 1, 1, env.ledger().timestamp(), &soroban_sdk::Vec::new(&env));
     });
 
     // Verify all events are present and in correct order by checking the event stream
