@@ -247,4 +247,8 @@ pub enum WillError {
     /// would let the distribution logic process the same beneficiary twice,
     /// so both wills must be `Active` before a merge is accepted (#656).
     MergeWithReleasedWill = 57,
+    /// `release_inheritance` was called on a will that has already been
+    /// released (or settled). Funds are paid out exactly once; a repeat call
+    /// is rejected with this error rather than a generic status mismatch.
+    AlreadyReleased = 58,
 }

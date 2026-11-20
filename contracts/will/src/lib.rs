@@ -1355,6 +1355,12 @@ impl WillContract {
     pub fn release_inheritance(env: Env, will_id: u64, caller: Option<Address>) {
         release_lock::acquire(&env, will_id);
         let mut will = load_will(&env, will_id);
+        // Release at most once (#739): a will that has already been released
+        // (or later settled) has paid out its balance, so a repeat call must
+        // fail with a clear error instead of attempting a second distribution.
+        if will.status == WillStatus::Released || will.status == WillStatus::Settled {
+            panic_with_error!(&env, WillError::AlreadyReleased);
+        }
         assert_status(
             &env,
             &will,
