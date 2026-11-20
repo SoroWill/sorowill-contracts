@@ -15,7 +15,7 @@ data, in order.
 | `confirmed` | `confirm_will` | `owner: Address` |
 | `checkin` | `check_in` | `(owner: Address, next_deadline: u64)` |
 | `batchchk` | `batch_check_in` (second topic is `owner`) | `(will_ids: Vec<u64>, count: u32)` |
-| `triggered` | `trigger_will` | `grace_period_ends: u64` |
+| `triggered` | `trigger_will` | `(grace_period_ends: u64, triggered_at: u64, caller: Option<Address>)` |
 | `emerg` | `emergency_checkin` | `(owner: Address, next_deadline: u64)` |
 | `released` | `release_inheritance`, `guardian_trigger` (on quorum) | `(token_count: u32, beneficiaries_count: u32)` |
 | `bounty` | `release_inheritance`, `guardian_trigger` (keeper bounty paid) | `(keeper: Address, amount: i128)` |

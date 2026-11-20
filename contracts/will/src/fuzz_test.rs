@@ -214,7 +214,7 @@ proptest! {
             &0,
         );
         env.ledger().set_timestamp(1_700_000_000 + 91 * 86_400);
-        client.trigger_will(&will_id);
+        client.trigger_will(&will_id, &None);
         env.ledger().set_timestamp(1_700_000_000 + 99 * 86_400);
         client.release_inheritance(&will_id, &None);
 

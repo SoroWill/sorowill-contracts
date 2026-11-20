@@ -62,7 +62,7 @@ fn pending_confirmation_will_cannot_be_triggered_before_confirmation() {
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
 
     assert_eq!(
-        client.try_trigger_will(&will_id),
+        client.try_trigger_will(&will_id, &None),
         Err(Ok(WillError::WillNotActive.into()))
     );
 }

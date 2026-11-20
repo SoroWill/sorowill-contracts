@@ -103,7 +103,7 @@ fn test_close_will_rejects_already_settled() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id, &None);
     client.close_will(&will_id, &owner);

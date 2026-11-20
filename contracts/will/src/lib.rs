@@ -1161,6 +1161,9 @@ impl WillContract {
     /// the trigger is submitted. If the trigger arrives after that point the
     /// will is immediately releasable.
     ///
+    /// `caller` is the optional keeper address recorded in the `triggered`
+    /// event for audit purposes. It grants no privilege: anyone may trigger.
+    ///
     /// # Panics
     /// - [`WillError::WillNotActive`] if the will is not `Active`.
     /// - [`WillError::CheckinNotDue`] if the check-in deadline has not passed yet.
@@ -1173,11 +1176,11 @@ impl WillContract {
     /// env.ledger().with_mut(|l| l.timestamp += 91 * 86_400); // 91 days later
     ///
     /// // Anyone can call trigger_will once the deadline is missed.
-    /// client.trigger_will(&will_id);
+    /// client.trigger_will(&will_id, &None);
     ///
     /// assert_eq!(client.get_will(&will_id).status, WillStatus::Triggered);
     /// ```
-    pub fn trigger_will(env: Env, will_id: u64) {
+    pub fn trigger_will(env: Env, will_id: u64, caller: Option<Address>) {
         let mut will = load_will(&env, will_id);
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
 
@@ -1207,7 +1210,7 @@ impl WillContract {
             symbol_short!("trigger"),
         );
 
-        events::will_triggered(&env, will_id, grace_period_ends);
+        events::will_triggered(&env, will_id, grace_period_ends, now, &caller);
     }
 
     /// Cancels an in-progress trigger during the grace period, proving the

@@ -180,7 +180,7 @@ fn test_will_triggered_event_snapshot() {
     let grace_period_ends = env.ledger().timestamp() + (7 * 24 * 60 * 60); // 7 days
 
     env.as_contract(&contract_id, || {
-        events::will_triggered(&env, will_id, grace_period_ends);
+        events::will_triggered(&env, will_id, grace_period_ends, env.ledger().timestamp(), &None);
     });
 
     // Verify will_triggered event
@@ -697,11 +697,11 @@ fn test_event_ordering_lifecycle() {
         // 2. Check-in
         events::check_in(&env, will_id, &owner, env.ledger().timestamp() + 7200);
         // 3. Will triggered
-        events::will_triggered(&env, will_id, env.ledger().timestamp() + 604800);
+        events::will_triggered(&env, will_id, env.ledger().timestamp() + 604800, env.ledger().timestamp(), &None);
         // 4. Emergency check-in (cancels trigger)
         events::emergency_checkin(&env, will_id, &owner, env.ledger().timestamp() + 10800);
         // 5. Will triggered again
-        events::will_triggered(&env, will_id, env.ledger().timestamp() + 608400);
+        events::will_triggered(&env, will_id, env.ledger().timestamp() + 608400, env.ledger().timestamp(), &None);
         // 6. Inheritance released
         events::inheritance_released(&env, will_id, 1, 1);
     });

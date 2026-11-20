@@ -64,9 +64,21 @@ pub fn check_in(env: &Env, will_id: u64, owner: &Address, next_deadline: u64) {
 }
 
 /// Published when a will is triggered after a missed check-in.
-pub fn will_triggered(env: &Env, will_id: u64, grace_period_ends: u64) {
-    env.events()
-        .publish((symbol_short!("triggered"), will_id), grace_period_ends);
+///
+/// Data: `(grace_period_ends, triggered_at, caller)` where `triggered_at` is
+/// the ledger time of the `trigger_will` call and `caller` is the optional
+/// address of the keeper that submitted it (`None` if not supplied).
+pub fn will_triggered(
+    env: &Env,
+    will_id: u64,
+    grace_period_ends: u64,
+    triggered_at: u64,
+    caller: &Option<Address>,
+) {
+    env.events().publish(
+        (symbol_short!("triggered"), will_id),
+        (grace_period_ends, triggered_at, caller.clone()),
+    );
 }
 
 /// Published when the owner emergency-checks-in during the grace period,
