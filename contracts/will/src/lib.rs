@@ -412,6 +412,9 @@ mod issue_572_575_test;
 #[cfg(test)]
 mod issue_662_test;
 
+#[cfg(test)]
+mod issue_715_test;
+
 use soroban_sdk::{
     contract, contractimpl, log, panic_with_error, symbol_short, token, xdr::ToXdr, Address,
     Bytes, Env, Map, Vec,
@@ -1193,7 +1196,7 @@ impl WillContract {
         // delayed trigger can neither postpone nor accelerate the release.
         will.status = WillStatus::Triggered;
         will.trigger_time = Some(deadline);
-        let grace_period_ends = grace_deadline(&will);
+        let grace_period_ends = grace_deadline(&env, &will);
         storage::save_will(&env, &will);
 
         storage::index_triggered_will(&env, will_id);
@@ -1244,7 +1247,7 @@ impl WillContract {
         // `assert_status(.., Triggered, ..)` above doesn't already guarantee
         // (a `Triggered` will always has `trigger_time` set).
         let now = env.ledger().timestamp();
-        if now > grace_deadline(&will) {
+        if now > grace_deadline(&env, &will) {
             panic_with_error!(&env, WillError::GracePeriodExpired);
         }
 
@@ -1380,7 +1383,7 @@ impl WillContract {
         // none is made here. A payout that cannot be made panics and rolls the
         // whole release back, so no beneficiary is paid partially (#643).
         let now = env.ledger().timestamp();
-        if !grace_boundary::grace_elapsed(now, grace_deadline(&will)) {
+        if !grace_boundary::grace_elapsed(now, grace_deadline(&env, &will)) {
             panic_with_error!(&env, WillError::GracePeriodNotExpired);
         }
 
@@ -2472,8 +2475,7 @@ impl WillContract {
                 // future entry point ever saves a `Triggered` will without it,
                 // in which case it deliberately degrades to `last_checkin`
                 // (understating the elapsed grace period) rather than panicking.
-                let trigger_time = will.trigger_time.unwrap_or(will.last_checkin) as i64;
-                let deadline = trigger_time + (will.grace_period_days * SECONDS_PER_DAY) as i64;
+                let deadline = grace_deadline(&env, &will) as i64;
                 Some(deadline - now)
             }
             WillStatus::PendingConfirmation
@@ -3084,9 +3086,8 @@ impl WillContract {
         // cancel quorum must not be able to rewind the will to `Active` and
         // restart the check-in clock (#373) -- same rule `emergency_checkin`
         // enforces, so a guardian quorum and the owner are held to one deadline.
-        let trigger_time = will.trigger_time.unwrap_or(0);
-        let grace_deadline = trigger_time + will.grace_period_days * SECONDS_PER_DAY;
-        if now > grace_deadline {
+        let grace_end = grace_deadline(&env, &will);
+        if now > grace_end {
             panic_with_error!(&env, WillError::GracePeriodExpired);
         }
 
@@ -4714,7 +4715,10 @@ impl WillContract {
             WillError::WillNotReleased,
         );
 
-        if !grace_boundary::grace_elapsed(env.ledger().timestamp(), grace_deadline(&will)) {
+        if !grace_boundary::grace_elapsed(
+            env.ledger().timestamp(),
+            grace_deadline(&env, &will),
+        ) {
             panic_with_error!(&env, WillError::GracePeriodNotExpired);
         }
 
@@ -5417,11 +5421,32 @@ fn wills_by_owner_and_status_page(
 /// goes through this helper so they can never disagree. The fallback for a
 /// missing `trigger_time` uses the same anchor rather than `0`, which would
 /// otherwise make the grace period appear long expired.
-fn grace_deadline(will: &Will) -> u64 {
-    let start = will
-        .trigger_time
-        .unwrap_or(will.last_checkin + will.checkin_period_days * SECONDS_PER_DAY);
-    start + will.grace_period_days * SECONDS_PER_DAY
+///
+/// All arithmetic is checked. An overflow (which `assert_valid_periods` and
+/// [`MAX_PERIOD_DAYS`] are meant to make unreachable) panics with
+/// [`WillError::InvalidPeriod`] instead of wrapping or saturating: a wrapped
+/// deadline could release funds early, and a saturated one could lock them
+/// forever.
+fn grace_deadline(env: &Env, will: &Will) -> u64 {
+    let start = match will.trigger_time {
+        Some(t) => t,
+        None => match will
+            .checkin_period_days
+            .checked_mul(SECONDS_PER_DAY)
+            .and_then(|secs| will.last_checkin.checked_add(secs))
+        {
+            Some(t) => t,
+            None => panic_with_error!(env, WillError::InvalidPeriod),
+        },
+    };
+    match will
+        .grace_period_days
+        .checked_mul(SECONDS_PER_DAY)
+        .and_then(|secs| start.checked_add(secs))
+    {
+        Some(deadline) => deadline,
+        None => panic_with_error!(env, WillError::InvalidPeriod),
+    }
 }
 
 /// Counts the live votes on `will` and returns `(vote_count, vote_weight)`.
