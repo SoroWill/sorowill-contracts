@@ -404,6 +404,8 @@ mod issue_630_test;
 #[cfg(test)]
 mod issue_740_test;
 #[cfg(test)]
+mod property_invariants_test;
+#[cfg(test)]
 // mod issue_486_489_test; // TODO: ContractEvents API
 #[cfg(test)]
 mod issue_572_575_test;
