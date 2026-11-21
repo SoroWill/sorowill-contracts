@@ -292,7 +292,7 @@ fn renounce_during_grace_period_records_trigger_time_and_payout_matches_event() 
     );
 
     env.ledger().set_timestamp(START + 91 * DAY);
-    ctx.client.trigger_will(&will_id);
+    ctx.client.trigger_will(&will_id, &None);
     let will = ctx.client.get_will(&will_id);
     assert_eq!(will.status, WillStatus::Triggered);
     let stored_trigger_time = will.trigger_time;
@@ -354,7 +354,7 @@ fn guardian_update_cannot_wipe_accumulating_cancel_vote() {
     ctx.client.accept_guardian_role(&will_id, &gb);
 
     env.ledger().set_timestamp(START + 91 * DAY);
-    ctx.client.trigger_will(&will_id);
+    ctx.client.trigger_will(&will_id, &None);
 
     ctx.client.guardian_cancel_trigger(&will_id, &ga);
     assert_eq!(ctx.client.get_will(&will_id).guardian_cancel_votes, 1);

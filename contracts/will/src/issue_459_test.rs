@@ -142,7 +142,7 @@ fn setup<'a>() -> (
 
     env.ledger()
         .set_timestamp(env.ledger().timestamp() + 91 * DAY);
-    will_client.trigger_will(&will_id);
+    will_client.trigger_will(&will_id, &None);
     env.ledger()
         .set_timestamp(env.ledger().timestamp() + 8 * DAY);
 

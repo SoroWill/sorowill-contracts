@@ -1198,6 +1198,9 @@ impl WillContract {
     /// the trigger is submitted. If the trigger arrives after that point the
     /// will is immediately releasable.
     ///
+    /// `caller` is the optional keeper address recorded in the `triggered`
+    /// event for audit purposes. It grants no privilege: anyone may trigger.
+    ///
     /// # Panics
     /// - [`WillError::WillNotActive`] if the will is not `Active`.
     /// - [`WillError::CheckinNotDue`] if the check-in deadline has not passed yet.
@@ -1210,11 +1213,11 @@ impl WillContract {
     /// env.ledger().with_mut(|l| l.timestamp += 91 * 86_400); // 91 days later
     ///
     /// // Anyone can call trigger_will once the deadline is missed.
-    /// client.trigger_will(&will_id);
+    /// client.trigger_will(&will_id, &None);
     ///
     /// assert_eq!(client.get_will(&will_id).status, WillStatus::Triggered);
     /// ```
-    pub fn trigger_will(env: Env, will_id: u64) {
+    pub fn trigger_will(env: Env, will_id: u64, caller: Option<Address>) {
         let mut will = load_will(&env, will_id);
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
 
@@ -1244,7 +1247,7 @@ impl WillContract {
             symbol_short!("trigger"),
         );
 
-        events::will_triggered(&env, will_id, grace_period_ends);
+        events::will_triggered(&env, will_id, grace_period_ends, now, &caller);
     }
 
     /// Cancels an in-progress trigger during the grace period, proving the
@@ -1397,6 +1400,12 @@ impl WillContract {
     pub fn release_inheritance(env: Env, will_id: u64, caller: Option<Address>) {
         release_lock::acquire(&env, will_id);
         let mut will = load_will(&env, will_id);
+        // Release at most once (#739): a will that has already been released
+        // (or later settled) has paid out its balance, so a repeat call must
+        // fail with a clear error instead of attempting a second distribution.
+        if will.status == WillStatus::Released || will.status == WillStatus::Settled {
+            panic_with_error!(&env, WillError::AlreadyReleased);
+        }
         assert_status(
             &env,
             &will,
@@ -6135,7 +6144,25 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
         }
     }
 
-    events::inheritance_released(env, will.id, token_count, count);
+    // Audit trail (#738): record each planned beneficiary share alongside the
+    // release timestamp so indexers can reconstruct per-beneficiary amounts
+    // directly from the event.
+    let mut payouts: Vec<(Address, Address, i128)> = Vec::new(env);
+    for (token_addr, shares) in transfer_plan.iter() {
+        for (beneficiary_addr, share) in shares.iter() {
+            if share > 0 {
+                payouts.push_back((beneficiary_addr, token_addr.clone(), share));
+            }
+        }
+    }
+    events::inheritance_released(
+        env,
+        will.id,
+        token_count,
+        count,
+        env.ledger().timestamp(),
+        &payouts,
+    );
 }
 
 /// Validates that a check-in or timestamp-advancing operation does not move

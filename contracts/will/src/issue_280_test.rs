@@ -70,7 +70,7 @@ fn top_up_is_rejected_for_a_triggered_will_after_grace_expires() {
     let (env, client, owner, token_address, will_id) = setup();
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Grace deadline is 97 days; move one second past it.
     env.ledger().with_mut(|l| l.timestamp += 6 * DAY + 1);
@@ -98,7 +98,7 @@ fn top_up_is_rejected_for_a_released_will() {
     let (env, client, owner, token_address, will_id) = setup();
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
 

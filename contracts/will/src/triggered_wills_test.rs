@@ -80,7 +80,7 @@ fn trigger_will_adds_id_to_triggered_index() {
     assert!(client.get_triggered_wills(&None, &50).is_empty());
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     let triggered = client.get_triggered_wills(&None, &50);
     assert_eq!(triggered.len(), 1);
@@ -106,7 +106,7 @@ fn emergency_checkin_removes_id_from_triggered_index() {
     );
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     assert_eq!(client.get_triggered_wills(&None, &50).len(), 1);
 
     client.emergency_checkin(&will_id, &owner);
@@ -132,7 +132,7 @@ fn release_inheritance_removes_id_from_triggered_index() {
     );
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     assert_eq!(client.get_triggered_wills(&None, &50).len(), 1);
 
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
@@ -160,7 +160,7 @@ fn guardian_cancel_trigger_removes_id_from_triggered_index() {
     );
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     assert_eq!(client.get_triggered_wills(&None, &50).len(), 1);
 
     client.accept_guardian_role(&will_id, &guardian);
@@ -217,7 +217,7 @@ fn unindex_triggered_will_extends_ttl() {
 
     // Get the will into Triggered so the index entry exists at all.
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     assert_eq!(client.get_triggered_wills(&None, &50).len(), 1);
     let ttl_at_index = triggered_index_ttl(&env, &contract_id);
     assert!(ttl_at_index > 0, "indexing must give the entry a live TTL");
@@ -316,7 +316,7 @@ fn trigger_will_snapshots_beneficiary_order_and_clears_on_return_to_active() {
     );
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     assert_eq!(client.get_triggered_wills(&None, &50).len(), 1);
 
     // The snapshot mirrors the creation order exactly.
@@ -353,7 +353,7 @@ fn trigger_will_snapshots_beneficiary_order_and_clears_on_return_to_active() {
         1,
     );
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     assert!(client.get_beneficiary_snapshot(&will_id).is_some());
 
     client.accept_guardian_role(&will_id, &guardian);
@@ -395,7 +395,7 @@ fn unindex_triggered_will_leaves_ttl_untouched_when_id_is_absent() {
     );
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     assert_eq!(client.get_triggered_wills(&None, &50).len(), 1);
 
     env.ledger()

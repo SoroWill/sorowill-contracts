@@ -277,7 +277,7 @@ fn close_will_records_released_to_settled_transition() {
     );
 
     h.env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    h.client.trigger_will(&will_id);
+    h.client.trigger_will(&will_id, &None);
     h.env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     h.client.release_inheritance(&will_id, &None);
     h.client.close_will(&will_id, &h.owner);

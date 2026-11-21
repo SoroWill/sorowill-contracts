@@ -457,7 +457,7 @@ fn keeper_bounty_is_paid_from_the_token_it_was_computed_from() {
     assert_eq!(100_000 * MAX_BOUNTY_BPS as i128 / 10_000, 1_000);
 
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(&env, 8);
     client.release_inheritance(&will_id, &Some(keeper.clone()));
 
@@ -528,7 +528,7 @@ fn no_bounty_is_paid_when_every_token_rounds_to_zero() {
     );
 
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(&env, 8);
     client.release_inheritance(&will_id, &Some(keeper.clone()));
 
@@ -572,7 +572,7 @@ fn single_token_bounty_is_unchanged() {
     );
 
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(&env, 8);
     client.release_inheritance(&will_id, &Some(keeper.clone()));
 

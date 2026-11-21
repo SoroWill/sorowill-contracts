@@ -645,7 +645,7 @@ fn assert_full_release(scenario: &Scenario<'_>, input: &CreateWillInput, will_id
     let will = scenario.client.get_will(&will_id);
 
     scenario.advance_days(will.checkin_period_days.saturating_add(1));
-    match scenario.client.try_trigger_will(&will_id) {
+    match scenario.client.try_trigger_will(&will_id, &None) {
         Ok(Ok(())) => {}
         Ok(Err(_)) => violation(input, "trigger_will returned an undecodable value"),
         Err(Ok(_)) => violation(

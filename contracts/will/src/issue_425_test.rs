@@ -85,7 +85,7 @@ fn setup_after_cancel_quorum() -> (Env, Address, Address, Address, Address, u64)
 
     // Trigger the will by advancing past the check-in deadline.
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Reach the cancel quorum — both guardians vote to cancel.
     client.guardian_cancel_trigger(&will_id, &guardian_a);
@@ -121,7 +121,7 @@ fn non_guardian_trigger_rejected_after_cancel_quorum() {
 
     // Advance past check-in deadline again so the will is triggerable.
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     assert_eq!(
         client.try_guardian_cancel_trigger(&will_id, &stranger),
@@ -140,7 +140,7 @@ fn guardian_trigger_succeeds_after_cancel_quorum() {
 
     // Advance past the next check-in deadline and trigger again.
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Go back to Active via the cancel path one more time (partial quorum).
     client.guardian_cancel_trigger(&will_id, &guardian_a);

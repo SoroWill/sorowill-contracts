@@ -82,7 +82,7 @@ fn cycle(env: &Env, client: &WillContractClient<'_>, owner: &Address, will_id: u
         // check_in resets the deadline so the next trigger is due.
         client.check_in(&will_id, owner);
         advance(env, 91);
-        client.trigger_will(&will_id);
+        client.trigger_will(&will_id, &None);
         advance(env, 1);
         client.emergency_checkin(&will_id, owner);
     }
@@ -130,7 +130,7 @@ fn get_will_history_records_lifecycle_transition_sequence() {
     assert_eq!(create.action, symbol_short!("create"));
 
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     let history = client.get_will_history(&will_id);
     assert_eq!(
@@ -301,7 +301,7 @@ fn history_cap_does_not_disturb_the_lifecycle_it_records() {
     // must still be recorded and the will must still be releasable.
     cycle(&env, &client, &owner, will_id, MAX_HISTORY_ENTRIES);
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(&env, 8);
     client.release_inheritance(&will_id, &None);
 

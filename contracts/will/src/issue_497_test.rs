@@ -89,7 +89,7 @@ fn reveal_and_claim_pays_every_token_proportionally_not_just_the_primary() {
     client.add_hashed_beneficiary(&will_id, &owner, &commitment_bytes, &4_000);
 
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(&env, 8);
     client.release_inheritance(&will_id, &None);
 
@@ -189,7 +189,7 @@ fn reveal_and_claim_splits_a_token_proportionally_across_two_unclaimed_hashed_be
     );
 
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(&env, 8);
     client.release_inheritance(&will_id, &None);
 

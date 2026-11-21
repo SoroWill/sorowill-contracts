@@ -69,12 +69,12 @@ fn confirm_will_anchors_the_checkin_deadline_to_confirmation_time_not_creation_t
     env.ledger()
         .with_mut(|l| l.timestamp += checkin_period_days * DAY - 1);
     assert_eq!(
-        client.try_trigger_will(&will_id),
+        client.try_trigger_will(&will_id, &None),
         Err(Ok(WillError::CheckinNotDue.into()))
     );
 
     // One day later (i.e. exactly `checkin_period_days` after confirmation),
     // the deadline has passed and trigger_will succeeds.
     env.ledger().with_mut(|l| l.timestamp += DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 }
