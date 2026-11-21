@@ -519,6 +519,34 @@ const MAX_PERIOD_DAYS: u64 = 3_650;
 /// Maximum number of distinct tokens a single will may hold.
 const MAX_TOKENS: u32 = 10;
 
+/// Largest balance, in token base units, that a will may hold for a single
+/// token (#716).
+///
+/// Every deposit path (`create_will`, `clone_will`, `batch_create_wills`,
+/// `top_up`) and the merge path (`merge_wills`) rejects any balance above this
+/// cap with [`WillError::BalanceExceedsMax`]. The cap is 10^30 base units,
+/// which is far above any real supply but leaves headroom so that balance
+/// arithmetic, fixed-amount sums and distribution shares never approach
+/// `i128::MAX`.
+pub const MAX_BALANCE: i128 = 1_000_000_000_000_000_000_000_000_000_000;
+
+/// Returns `prev + amount` for a single token balance, panicking with
+/// [`WillError::BalanceExceedsMax`] if the sum overflows or exceeds
+/// [`MAX_BALANCE`].
+fn checked_balance_add(env: &Env, prev: i128, amount: i128) -> i128 {
+    match prev.checked_add(amount) {
+        Some(total) if total <= MAX_BALANCE => total,
+        _ => panic_with_error!(env, WillError::BalanceExceedsMax),
+    }
+}
+
+/// Asserts a single deposit amount does not on its own exceed [`MAX_BALANCE`].
+fn assert_deposit_within_max(env: &Env, amount: i128) {
+    if amount > MAX_BALANCE {
+        panic_with_error!(env, WillError::BalanceExceedsMax);
+    }
+}
+
 /// Upper bound on beneficiary transfers a single `release_inheritance` (or
 /// guardian-quorum release) performs (#491).
 ///
@@ -676,6 +704,7 @@ impl WillContract {
     ///
     /// # Panics
     /// - [`WillError::ZeroAmount`] if any token amount is not positive.
+    /// - [`WillError::BalanceExceedsMax`] if any token amount is above [`MAX_BALANCE`].
     /// - [`WillError::TooManyBeneficiaries`] if the beneficiary/guardian/token lists are
     ///   empty or exceed their respective caps (at most [`MAX_BENEFICIARIES`] = 10
     ///   beneficiaries).
@@ -848,6 +877,7 @@ impl WillContract {
             if amount <= 0 {
                 panic_with_error!(&env, WillError::ZeroAmount);
             }
+            assert_deposit_within_max(&env, amount);
             // Probe the token interface with a read-only `decimals()` call
             // before attempting any transfer (#703).
             assert_valid_token(&env, &token_addr);
@@ -862,7 +892,7 @@ impl WillContract {
             // Duplicates were rejected above, so this is a plain insert; the
             // additive accumulation is kept so the intent stays explicit.
             let prev = balances.get(token_addr.clone()).unwrap_or(0);
-            balances.set(token_addr, prev + amount);
+            balances.set(token_addr, checked_balance_add(&env, prev, amount));
         }
 
         // Fixed amounts are denominated in the will's primary token, which is
@@ -1233,7 +1263,7 @@ impl WillContract {
         // delayed trigger can neither postpone nor accelerate the release.
         will.status = WillStatus::Triggered;
         will.trigger_time = Some(deadline);
-        let grace_period_ends = grace_deadline(&will);
+        let grace_period_ends = grace_deadline(&env, &will);
         storage::save_will(&env, &will);
 
         storage::index_triggered_will(&env, will_id);
@@ -1434,7 +1464,7 @@ impl WillContract {
         // none is made here. A payout that cannot be made panics and rolls the
         // whole release back, so no beneficiary is paid partially (#643).
         let now = env.ledger().timestamp();
-        if !grace_boundary::grace_elapsed(now, grace_deadline(&will)) {
+        if !grace_boundary::grace_elapsed(now, grace_deadline(&env, &will)) {
             panic_with_error!(&env, WillError::GracePeriodNotExpired);
         }
 
@@ -1702,6 +1732,13 @@ impl WillContract {
             will_id,
             &owner,
             will.beneficiaries.len(),
+            &will.beneficiaries,
+        );
+        events::beneficiary_updated(
+            &env,
+            will_id,
+            &owner,
+            &old_beneficiaries,
             &will.beneficiaries,
         );
     }
@@ -2304,7 +2341,15 @@ impl WillContract {
                 }
             }
 
+            let old_beneficiaries = will.beneficiaries.clone();
             will.beneficiaries = new_beneficiaries;
+            events::beneficiary_updated(
+                &env,
+                will_id,
+                &owner,
+                &old_beneficiaries,
+                &will.beneficiaries,
+            );
             updated_fields.push_back(symbol_short!("benef"));
         }
 
@@ -2407,6 +2452,8 @@ impl WillContract {
     ///   grace deadline has already passed (#724). The grace deadline second
     ///   itself is still accepted, matching `emergency_checkin`.
     /// - [`WillError::ZeroAmount`] if `amount` is not positive.
+    /// - [`WillError::BalanceExceedsMax`] if the token's resulting balance would
+    ///   exceed [`MAX_BALANCE`].
     /// - [`WillError::InvalidTokenCount`] if `token` is not already in the
     ///   will's `balances` map and that map already holds [`MAX_TOKENS`]
     ///   distinct tokens (#358). Topping up a token the will already holds is
@@ -2444,7 +2491,7 @@ impl WillContract {
 
         // Snapshot values needed after state mutation (checks-effects-interactions).
         let prev = will.balances.get(token.clone()).unwrap_or(0);
-        let new_balance = prev + amount;
+        let new_balance = checked_balance_add(&env, prev, amount);
 
         // --- EFFECTS: update state and persist before the external transfer ---
         // `will.balance` is a legacy mirror of `will.balances[will.token]` kept
@@ -2576,8 +2623,7 @@ impl WillContract {
                 // future entry point ever saves a `Triggered` will without it,
                 // in which case it deliberately degrades to `last_checkin`
                 // (understating the elapsed grace period) rather than panicking.
-                let trigger_time = will.trigger_time.unwrap_or(will.last_checkin) as i64;
-                let deadline = trigger_time + (will.grace_period_days * SECONDS_PER_DAY) as i64;
+                let deadline = grace_deadline(&env, &will) as i64;
                 Some(deadline - now)
             }
             WillStatus::PendingConfirmation
@@ -3254,9 +3300,8 @@ impl WillContract {
         // cancel quorum must not be able to rewind the will to `Active` and
         // restart the check-in clock (#373) -- same rule `emergency_checkin`
         // enforces, so a guardian quorum and the owner are held to one deadline.
-        let trigger_time = will.trigger_time.unwrap_or(0);
-        let grace_deadline = trigger_time + will.grace_period_days * SECONDS_PER_DAY;
-        if now > grace_deadline {
+        let grace_end = grace_deadline(&env, &will);
+        if now > grace_end {
             panic_with_error!(&env, WillError::GracePeriodExpired);
         }
 
@@ -3582,7 +3627,7 @@ impl WillContract {
                 amount,
             );
             let prev = balances.get(token_addr.clone()).unwrap_or(0);
-            balances.set(token_addr, prev + amount);
+            balances.set(token_addr, checked_balance_add(&env, prev, amount));
         }
 
         // Re-validate `FixedAmount` beneficiaries against the clone's new
@@ -3831,7 +3876,7 @@ impl WillContract {
                     amount,
                 );
                 let prev = balances.get(token_addr.clone()).unwrap_or(0);
-                balances.set(token_addr, prev + amount);
+                balances.set(token_addr, checked_balance_add(&env, prev, amount));
             }
 
             // Fixed amounts are denominated in the primary token, the first
@@ -4193,7 +4238,7 @@ impl WillContract {
         let mut combined_balances = will_a.balances.clone();
         for (token_addr, amount) in will_b.balances.iter() {
             let prev = combined_balances.get(token_addr.clone()).unwrap_or(0);
-            combined_balances.set(token_addr, prev + amount);
+            combined_balances.set(token_addr, checked_balance_add(&env, prev, amount));
         }
         // The merged will holds the union of both token sets, so it must respect
         // the same token cap that `create_will` enforces (#637).
@@ -4954,7 +4999,10 @@ impl WillContract {
             WillError::WillNotReleased,
         );
 
-        if !grace_boundary::grace_elapsed(env.ledger().timestamp(), grace_deadline(&will)) {
+        if !grace_boundary::grace_elapsed(
+            env.ledger().timestamp(),
+            grace_deadline(&env, &will),
+        ) {
             panic_with_error!(&env, WillError::GracePeriodNotExpired);
         }
 
@@ -5696,11 +5744,32 @@ fn wills_by_owner_and_status_page(
 /// goes through this helper so they can never disagree. The fallback for a
 /// missing `trigger_time` uses the same anchor rather than `0`, which would
 /// otherwise make the grace period appear long expired.
-fn grace_deadline(will: &Will) -> u64 {
-    let start = will
-        .trigger_time
-        .unwrap_or(will.last_checkin + will.checkin_period_days * SECONDS_PER_DAY);
-    start + will.grace_period_days * SECONDS_PER_DAY
+///
+/// All arithmetic is checked. An overflow (which `assert_valid_periods` and
+/// [`MAX_PERIOD_DAYS`] are meant to make unreachable) panics with
+/// [`WillError::InvalidPeriod`] instead of wrapping or saturating: a wrapped
+/// deadline could release funds early, and a saturated one could lock them
+/// forever.
+fn grace_deadline(env: &Env, will: &Will) -> u64 {
+    let start = match will.trigger_time {
+        Some(t) => t,
+        None => match will
+            .checkin_period_days
+            .checked_mul(SECONDS_PER_DAY)
+            .and_then(|secs| will.last_checkin.checked_add(secs))
+        {
+            Some(t) => t,
+            None => panic_with_error!(env, WillError::InvalidPeriod),
+        },
+    };
+    match will
+        .grace_period_days
+        .checked_mul(SECONDS_PER_DAY)
+        .and_then(|secs| start.checked_add(secs))
+    {
+        Some(deadline) => deadline,
+        None => panic_with_error!(env, WillError::InvalidPeriod),
+    }
 }
 
 /// Counts the live votes on `will` and returns `(vote_count, vote_weight)`.

@@ -156,6 +156,38 @@ pub fn beneficiaries_updated(
     );
 }
 
+/// Published whenever a will's beneficiary list is replaced, by
+/// [`crate::WillContract::update_beneficiaries`] or the beneficiary branch of
+/// [`crate::WillContract::update_will_settings`] (#718).
+///
+/// Topics: `("beneficiary_updated", will_id)`.
+/// Data: `(will_id, owner, timestamp, old_beneficiaries, new_beneficiaries)`,
+/// where `timestamp` is the ledger time of the change and both lists are full
+/// `(Address, Allocation)` lists, so an indexer can see exactly what changed
+/// without a follow-up `get_will` call. Each list is bounded by
+/// `MAX_BENEFICIARIES`.
+///
+/// Distinct from [`beneficiaries_updated`] (`benefup`), which carries only the
+/// new list and no history.
+pub fn beneficiary_updated(
+    env: &Env,
+    will_id: u64,
+    owner: &Address,
+    old_beneficiaries: &Vec<Beneficiary>,
+    new_beneficiaries: &Vec<Beneficiary>,
+) {
+    env.events().publish(
+        (Symbol::new(env, "beneficiary_updated"), will_id),
+        (
+            will_id,
+            owner.clone(),
+            env.ledger().timestamp(),
+            old_beneficiaries.clone(),
+            new_beneficiaries.clone(),
+        ),
+    );
+}
+
 /// Published when the owner updates the guardian list.
 ///
 /// `guardians` is the full new guardian list (address + weight pairs), so
