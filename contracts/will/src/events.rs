@@ -3,9 +3,10 @@
 //! Every state-changing entry point publishes exactly one event so that
 //! off-chain indexers (such as the SoroWill SDK/app) can reconstruct will
 //! history without re-simulating transactions. That includes the guardian
-//! consent transitions: [`guardian_accepted_role`] and
-//! [`guardian_rejected_role`] report when a named guardian becomes eligible to
-//! vote in `guardian_trigger`, or loses that eligibility.
+//! consent transitions ([`guardian_accepted_role`] and
+//! [`guardian_rejected_role`]) and guardian voting activity
+//! ([`guardian_voted`] for trigger votes and [`guardian_cancel_voted`] for
+//! cancel-trigger votes).
 
 use soroban_sdk::{symbol_short, Address, Bytes, Env, Symbol, Vec};
 
@@ -88,6 +89,21 @@ pub fn inheritance_released(env: &Env, will_id: u64, token_count: u32, beneficia
     );
 }
 
+/// Published when a token share is distributed to a beneficiary during
+/// `release_inheritance` / `distribute` (#698).
+pub fn tokens_distributed(
+    env: &Env,
+    will_id: u64,
+    token: &Address,
+    beneficiary: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (symbol_short!("distrib"), will_id),
+        (token.clone(), beneficiary.clone(), amount),
+    );
+}
+
 /// Published when the owner cancels the will and withdraws all token balances.
 ///
 /// `token_count` is the number of distinct tokens refunded.
@@ -151,7 +167,12 @@ pub fn top_up(
     );
 }
 
-/// Published each time a guardian votes to trigger an early release.
+/// Published each time a guardian votes to trigger an early release (#699).
+///
+/// Topics: `("gvote", will_id)`.
+/// Data: `(guardian, weight, total_weight)` where `weight` is the voting
+/// guardian's weight and `total_weight` is the accumulated live vote weight
+/// after recording this vote.
 pub fn guardian_voted(env: &Env, will_id: u64, guardian: &Address, weight: u32, total_weight: u32) {
     env.events().publish(
         (symbol_short!("gvote"), will_id),
@@ -159,7 +180,10 @@ pub fn guardian_voted(env: &Env, will_id: u64, guardian: &Address, weight: u32, 
     );
 }
 
-/// Published each time a guardian votes to cancel a trigger (return to Active).
+/// Published each time a guardian votes to cancel a trigger (return to Active) (#699).
+///
+/// Topics: `("gcvote", will_id)`.
+/// Data: `(guardian, weight, total_weight)`.
 pub fn guardian_cancel_voted(
     env: &Env,
     will_id: u64,
