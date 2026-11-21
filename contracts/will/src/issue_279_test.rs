@@ -51,7 +51,7 @@ fn cancel_will_is_rejected_for_a_triggered_will() {
 
     // Miss the check-in deadline and trigger the will.
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Cancelling a Triggered will must be rejected: the owner has to prove
     // they're alive via `emergency_checkin` first, not cancel directly.

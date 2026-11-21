@@ -7,6 +7,31 @@
 //! available (or desirable) in the fast unit-test CI job. It is run
 //! separately via `scripts/integration_test.sh` and a dedicated CI job.
 //! See CONTRIBUTING.md for how to run it locally.
+//!
+//! # Network and blockchain failure handling (#727)
+//!
+//! The end-to-end run must tolerate, and the contract must handle, these
+//! failure classes:
+//!
+//! - **RPC failures**: a submission that fails at simulation or send time
+//!   never reaches the ledger, so no state changes. The client should re-read
+//!   the will before retrying. Modelled in-process by
+//!   `src/network_failure_test.rs` (`failed_*` tests).
+//! - **Transaction timeouts**: a transaction whose validity window closes
+//!   before inclusion is dropped. Time-gated entrypoints (`check_in`,
+//!   `emergency_checkin`, `release_inheritance`) re-check the ledger time, so
+//!   a late submission is refused rather than applied. Modelled by the
+//!   `*_after_deadline*` / `*_after_grace_expiry` tests.
+//! - **Resubmission**: a retry of a transaction that already landed is
+//!   refused (`trigger_will` on a triggered will, `release_inheritance` on a
+//!   settled will), so retries cannot double-apply.
+//! - **Reorgs**: deadlines are stored on the will when it is triggered, so a
+//!   ledger rewound to an earlier timestamp cannot unlock an early release.
+//!   Modelled by `rewound_clock_does_not_unlock_early_release`.
+//!
+//! Clients should treat any error from a state-changing call as "not applied"
+//! unless the ledger confirms otherwise, and re-read `get_will` before
+//! resubmitting.
 
 use std::path::PathBuf;
 use std::process::Command;

@@ -288,7 +288,7 @@ fn profile_lifecycle(report: &mut Report) {
     report.record(&f.env, "top_up");
 
     f.advance(91 * DAY);
-    f.client.trigger_will(&will_id);
+    f.client.trigger_will(&will_id, &None);
     report.record(&f.env, "trigger_will");
 
     // No guardian has voted, so the vote-clearing loop has nothing to remove.
@@ -296,7 +296,7 @@ fn profile_lifecycle(report: &mut Report) {
     report.record(&f.env, "emergency_checkin (no votes cast)");
 
     f.advance(91 * DAY);
-    f.client.trigger_will(&will_id);
+    f.client.trigger_will(&will_id, &None);
     f.advance(8 * DAY);
     f.client.release_inheritance(&will_id, &None);
     report.record(&f.env, "release_inheritance");

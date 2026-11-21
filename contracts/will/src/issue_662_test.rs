@@ -77,7 +77,7 @@ fn contract_address_as_keeper_receives_no_bounty() {
     );
 
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(&env, 8);
 
     // Pass the contract's own address as the keeper.
@@ -134,7 +134,7 @@ fn valid_keeper_still_receives_bounty() {
     );
 
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(&env, 8);
     client.release_inheritance(&will_id, &Some(keeper.clone()));
 

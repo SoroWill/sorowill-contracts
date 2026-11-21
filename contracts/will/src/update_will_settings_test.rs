@@ -390,7 +390,7 @@ fn update_will_settings_guardian_change_clears_cancel_vote_state() {
     // Advance past the 7-day guardian-list cooldown and the 90-day check-in
     // deadline, then trigger the will.
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Guardian A casts one cancel vote (quorum = 2, so not reached yet).
     client.guardian_cancel_trigger(&will_id, &guardian_a);
@@ -459,7 +459,7 @@ fn update_will_settings_guardian_change_clears_cancel_vote_state() {
     // (the new guardian starts from a clean slate, not inheriting stale state).
     client.accept_guardian_role(&will_id, &new_guardian);
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     client.guardian_cancel_trigger(&will_id, &new_guardian);
     let after_new_vote = client.get_will(&will_id);

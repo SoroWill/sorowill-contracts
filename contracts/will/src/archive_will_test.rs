@@ -62,7 +62,7 @@ fn archive_will_removes_released_will_from_owner_and_beneficiary_indexes() {
     );
 
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(&env, 8);
     client.release_inheritance(&will_id, &None);
 
@@ -153,7 +153,7 @@ fn archive_triggered_will_removes_id_from_triggered_index() {
 
     // Advance past the check-in deadline and trigger the will.
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // The will's id must now appear in the triggered-wills index.
     assert_eq!(
@@ -281,7 +281,7 @@ fn archive_will_removes_history_and_guardian_vote_entries() {
 
     // The will then goes through the normal missed-check-in path to Triggered.
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Guardian B casts a cancel vote. Alone, it is short of quorum too, so the
     // will stays Triggered and the `GuardianCancelVote` entry survives.
@@ -388,7 +388,7 @@ fn archive_will_emits_archived_event_with_owner_and_timestamp() {
     );
 
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(&env, 8);
     client.release_inheritance(&will_id, &None);
 

@@ -137,7 +137,7 @@ fn test_get_time_until_deadline_triggered_will_counts_grace_period() {
     env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
 
     // Trigger the will
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     let time_until_deadline = client.get_time_until_deadline(&will_id);
     assert!(time_until_deadline.is_some());
@@ -172,7 +172,7 @@ fn test_get_time_until_deadline_triggered_will_negative_after_grace_expires() {
     env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
 
     // Trigger the will
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Advance past grace period
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
@@ -242,7 +242,7 @@ fn test_get_time_until_deadline_released_returns_none() {
     env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
 
     // Trigger and release
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
 
