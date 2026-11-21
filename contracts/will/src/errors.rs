@@ -247,4 +247,8 @@ pub enum WillError {
     /// would let the distribution logic process the same beneficiary twice,
     /// so both wills must be `Active` before a merge is accepted (#656).
     MergeWithReleasedWill = 57,
+    /// A beneficiary (or hashed-beneficiary claimant) address is invalid for
+    /// receiving payouts — for example, the contract's own address, which would
+    /// lock distributed funds inside the contract with no withdrawal path (#711).
+    InvalidBeneficiaryAddress = 58,
 }
