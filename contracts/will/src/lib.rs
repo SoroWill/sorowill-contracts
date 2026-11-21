@@ -2575,11 +2575,35 @@ impl WillContract {
         let will = load_will(&env, will_id);
         let record = storage::get_guardian_vote(&env, will_id, &guardian)?;
         let now = env.ledger().timestamp();
-        if storage::vote_is_live(now, record.timestamp, will.grace_period_days) {
+        let expiry_days = storage::get_guardian_vote_expiry_days(&env, &will);
+        if storage::vote_is_live(now, record.timestamp, expiry_days) {
             Some(record)
         } else {
             None
         }
+    }
+
+    /// Configures a custom guardian vote expiry window (in days) for `will_id` (#692).
+    pub fn set_guardian_vote_expiry(
+        env: Env,
+        will_id: u64,
+        owner: Address,
+        expiry_days: u64,
+    ) {
+        owner.require_auth();
+        let will = load_owned(&env, will_id, &owner);
+        assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
+        if !(1..=MAX_PERIOD_DAYS).contains(&expiry_days) {
+            panic_with_error!(&env, WillError::InvalidPeriod);
+        }
+        storage::set_guardian_vote_expiry_days(&env, will_id, expiry_days);
+    }
+
+    /// Returns the guardian vote expiry window (in days) for `will_id` (#692).
+    /// Defaults to `will.grace_period_days` if no custom window has been set.
+    pub fn get_guardian_vote_expiry(env: Env, will_id: u64) -> u64 {
+        let will = load_will(&env, will_id);
+        storage::get_guardian_vote_expiry_days(&env, &will)
     }
 
     /// Returns aggregate protocol statistics for all wills currently tracked on-chain.
@@ -3053,7 +3077,7 @@ impl WillContract {
         // A vote lapses by comparing its timestamp with the current ledger time on
         // each call. No event fires when it lapses, so the audit trail records a
         // vote when it is cast, not when it expires (#649).
-        let expiry_days = will.grace_period_days;
+        let expiry_days = storage::get_guardian_vote_expiry_days(&env, &will);
         if storage::has_guardian_voted(&env, will_id, &guardian, now, expiry_days) {
             panic_with_error!(&env, WillError::AlreadyVoted);
         }
@@ -3080,9 +3104,9 @@ impl WillContract {
         // docs/EVENT_ATOMICITY.md, #594).
         events::guardian_voted(&env, will_id, &guardian, weight, will.guardian_vote_weight);
 
-        if will.guardian_vote_weight >= will.guardian_threshold
+        if (will.guardian_vote_weight as u64) >= (will.guardian_threshold as u64)
             && guardian_vote_freshness::live_guardian_vote_weight(&env, will_id, &will, now)
-                >= will.guardian_threshold
+                >= (will.guardian_threshold as u64)
         {
             record_transition(
                 &env,
@@ -3177,7 +3201,7 @@ impl WillContract {
         };
 
         // Deduplicate within the cancel-vote namespace only.
-        let expiry_days = will.grace_period_days;
+        let expiry_days = storage::get_guardian_vote_expiry_days(&env, &will);
         if storage::has_guardian_cancel_voted(&env, will_id, &guardian, now, expiry_days) {
             panic_with_error!(&env, WillError::AlreadyVoted);
         }
@@ -3977,6 +4001,14 @@ impl WillContract {
         if will_a.token != will_b.token {
             panic_with_error!(&env, WillError::PrimaryTokenMismatch);
         }
+        let has_overlapping_token = will_a
+            .balances
+            .keys()
+            .iter()
+            .any(|t| will_b.balances.contains_key(t));
+        if !has_overlapping_token {
+            panic_with_error!(&env, WillError::PrimaryTokenMismatch);
+        }
 
         // A merge cannot carry hashed beneficiaries across. `merge_beneficiaries`
         // only merges *visible* beneficiaries, so the consumed will's
@@ -4099,6 +4131,7 @@ impl WillContract {
         storage::reset_guardian_cancel_votes(&env, &will_a);
         storage::reset_guardian_votes(&env, &will_b);
         storage::reset_guardian_cancel_votes(&env, &will_b);
+        storage::clear_guardian_vote_expiry_days(&env, will_id_b);
 
         // Update will_a with merged state
         will_a.beneficiaries = merged_beneficiaries;
@@ -5610,17 +5643,19 @@ fn tally_guardian_votes(
     now: u64,
     has_voted: fn(&Env, u64, &Address, u64, u64) -> bool,
 ) -> (u32, u32) {
+    let expiry_days = storage::get_guardian_vote_expiry_days(env, will);
     let mut votes: u32 = 0;
-    let mut weight: u32 = 0;
+    let mut weight: u64 = 0;
     for g in will.guardians.iter() {
         if g.consent == GuardianConsent::Accepted
-            && has_voted(env, will.id, &g.address, now, will.grace_period_days)
+            && has_voted(env, will.id, &g.address, now, expiry_days)
         {
             votes += 1;
-            weight = weight.saturating_add(g.weight);
+            weight += g.weight as u64;
         }
     }
-    (votes, weight)
+    let clamped_weight = weight.min(u32::MAX as u64) as u32;
+    (votes, clamped_weight)
 }
 
 /// Asserts both periods are at least one day and at most [`MAX_PERIOD_DAYS`].
@@ -6388,7 +6423,6 @@ fn purge_removed_guardian_votes(
     // Recompute every counter from the surviving guardian set. The tally
     // helpers walk `will.guardians`, so assign the new list first.
     will.guardians = new_guardians.clone();
-    let expiry_days = will.grace_period_days;
     let (votes, vote_weight) =
         tally_guardian_votes(env, will, now, storage::has_guardian_voted);
     will.guardian_votes = votes;
