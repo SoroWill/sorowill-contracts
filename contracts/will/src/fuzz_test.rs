@@ -20,8 +20,9 @@ use soroban_sdk::{
 };
 
 use crate::fuzz_harness::{
-    run_create_will, run_update_beneficiaries, sanitize_specs, BeneficiarySpec, CreateWillInput,
-    Outcome, UpdateBeneficiariesInput, MAX_FUZZ_UPDATES,
+    run_create_will, run_guardian_quorum, run_update_beneficiaries, sanitize_specs,
+    BeneficiarySpec, CreateWillInput, GuardianQuorumAction, GuardianQuorumInput, Outcome,
+    UpdateBeneficiariesInput, MAX_FUZZ_UPDATES,
 };
 use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillError};
 
@@ -147,6 +148,43 @@ fn update_beneficiaries_input_strategy() -> impl Strategy<Value = UpdateBenefici
                 probe_non_owner,
             },
         )
+}
+
+fn guardian_quorum_action_strategy() -> impl Strategy<Value = GuardianQuorumAction> {
+    prop_oneof![
+        any::<u8>().prop_map(|guardian_slot| GuardianQuorumAction::AcceptRole { guardian_slot }),
+        any::<u8>().prop_map(|guardian_slot| GuardianQuorumAction::RejectRole { guardian_slot }),
+        (any::<u8>(), any::<u8>()).prop_map(|(guardian_slot, reason_idx)| {
+            GuardianQuorumAction::TriggerVote {
+                guardian_slot,
+                reason_idx,
+            }
+        }),
+        any::<u8>().prop_map(|guardian_slot| GuardianQuorumAction::CancelVote { guardian_slot }),
+        Just(GuardianQuorumAction::TriggerByDeadline),
+        Just(GuardianQuorumAction::EmergencyCheckin),
+        any::<u8>().prop_map(|days| GuardianQuorumAction::AdvanceDays { days }),
+        (
+            prop::collection::vec(any::<u8>(), 0..6),
+            prop::collection::vec(0u32..=5, 0..6),
+            proptest::option::of(0u32..=15),
+        )
+            .prop_map(|(guardian_slots, weights, threshold)| {
+                GuardianQuorumAction::UpdateWeighted {
+                    guardian_slots,
+                    weights,
+                    threshold,
+                }
+            }),
+    ]
+}
+
+fn guardian_quorum_input_strategy() -> impl Strategy<Value = GuardianQuorumInput> {
+    (
+        create_will_input_strategy(),
+        prop::collection::vec(guardian_quorum_action_strategy(), 0..16),
+    )
+        .prop_map(|(create, actions)| GuardianQuorumInput { create, actions })
 }
 
 // Each case registers a fresh Soroban env plus two contracts, so the case
@@ -277,6 +315,15 @@ proptest! {
                 outcome,
             );
         }
+    }
+
+    /// Guardian quorum voting, cancellation, consent transitions, and weighted
+    /// guardian-list updates must never abort and must preserve vote/status
+    /// invariants across arbitrary combinations (#705).
+    #[test]
+    fn guardian_quorum_upholds_invariants(input in guardian_quorum_input_strategy()) {
+        let outcome = run_guardian_quorum(&input);
+        prop_assert!(matches!(outcome, Outcome::Accepted(_)));
     }
 }
 

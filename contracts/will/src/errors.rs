@@ -1,4 +1,17 @@
-use soroban_sdk::contracterror;
+use soroban_sdk::{contracterror, contracttype};
+
+/// High-level classification of a [`WillError`] (#709).
+///
+/// Allows callers, indexers, and client SDKs to distinguish expected
+/// caller/validation errors from internal or system-level failures.
+#[contracttype]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ErrorCategory {
+    /// Caller, input, authorization, or will-state precondition failure.
+    User,
+    /// Internal invariant, storage/schema, or resource-limit failure.
+    System,
+}
 
 /// Errors returned by the SoroWill contract.
 ///
@@ -247,8 +260,87 @@ pub enum WillError {
     /// would let the distribution logic process the same beneficiary twice,
     /// so both wills must be `Active` before a merge is accepted (#656).
     MergeWithReleasedWill = 57,
-    /// `release_inheritance` was called on a will that has already been
-    /// released (or settled). Funds are paid out exactly once; a repeat call
-    /// is rejected with this error rather than a generic status mismatch.
-    AlreadyReleased = 58,
+    /// A beneficiary (or hashed-beneficiary claimant) address is invalid for
+    /// receiving payouts — for example, the contract's own address, which would
+    /// lock distributed funds inside the contract with no withdrawal path (#711).
+    InvalidBeneficiaryAddress = 58,
+}
+
+impl WillError {
+    /// Classifies this error as either a [`ErrorCategory::User`] (validation,
+    /// authorization, or state precondition) or [`ErrorCategory::System`]
+    /// (internal invariant, storage/schema, or resource-budget failure) (#709).
+    pub const fn category(&self) -> ErrorCategory {
+        match self {
+            Self::DistributionMismatch
+            | Self::UnsupportedSchemaVersion
+            | Self::MigrationInvariantViolation
+            | Self::DistributionTooLarge => ErrorCategory::System,
+
+            Self::WillNotFound
+            | Self::NotOwner
+            | Self::WillNotActive
+            | Self::WillNotTriggered
+            | Self::GracePeriodNotExpired
+            | Self::GracePeriodExpired
+            | Self::InvalidPercentages
+            | Self::AlreadyVoted
+            | Self::NotGuardian
+            | Self::CheckinNotDue
+            | Self::ZeroAmount
+            | Self::TooManyBeneficiaries
+            | Self::WillNotSettled
+            | Self::WillNotReleased
+            | Self::NotSameOwner
+            | Self::WillNotBothActive
+            | Self::SameWillId
+            | Self::MergeWouldExceedLimits
+            | Self::InvalidPeriod
+            | Self::DuplicateGuardian
+            | Self::GuardianCooldownActive
+            | Self::OwnerCannotBeGuardian
+            | Self::BeneficiaryNotFound
+            | Self::KeeperBountyExceedsMax
+            | Self::InvalidGuardianThreshold
+            | Self::FixedAmountExceedsBalance
+            | Self::InvalidToken
+            | Self::DuplicateBeneficiary
+            | Self::WillNotConfirmed
+            | Self::ConfirmationWindowExpired
+            | Self::TooManyIds
+            | Self::InsufficientBalance
+            | Self::InvalidSplit
+            | Self::InvalidPreimage
+            | Self::AlreadyClaimed
+            | Self::TooManyWills
+            | Self::GuardianNotConsented
+            | Self::PrimaryTokenMismatch
+            | Self::DuplicateToken
+            | Self::BatchTooLarge
+            | Self::InvalidTokenCount
+            | Self::InvalidPreimageLength
+            | Self::InvalidCommitmentLength
+            | Self::DuplicateCommitment
+            | Self::PreimageAddressMismatch
+            | Self::MergeWithHashedBeneficiaries
+            | Self::DuplicateWillId
+            | Self::InvalidConsentTransition
+            | Self::NoFailedPayout
+            | Self::GuardianCancelInProgress
+            | Self::InvalidCursor
+            | Self::MergeWithReleasedWill => ErrorCategory::User,
+        }
+    }
+
+    /// Returns `true` if this error represents a user/caller validation,
+    /// authorization, or precondition failure.
+    pub const fn is_user_error(&self) -> bool {
+        matches!(self.category(), ErrorCategory::User)
+    }
+
+    /// Returns `true` if this error represents an internal invariant,
+    /// storage/schema, or system-level failure.
+    pub const fn is_system_error(&self) -> bool {
+        matches!(self.category(), ErrorCategory::System)
+    }
 }

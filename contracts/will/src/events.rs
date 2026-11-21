@@ -3,9 +3,10 @@
 //! Every state-changing entry point publishes exactly one event so that
 //! off-chain indexers (such as the SoroWill SDK/app) can reconstruct will
 //! history without re-simulating transactions. That includes the guardian
-//! consent transitions: [`guardian_accepted_role`] and
-//! [`guardian_rejected_role`] report when a named guardian becomes eligible to
-//! vote in `guardian_trigger`, or loses that eligibility.
+//! consent transitions ([`guardian_accepted_role`] and
+//! [`guardian_rejected_role`]) and guardian voting activity
+//! ([`guardian_voted`] for trigger votes and [`guardian_cancel_voted`] for
+//! cancel-trigger votes).
 
 use soroban_sdk::{symbol_short, Address, Bytes, Env, Symbol, Vec};
 
@@ -14,6 +15,10 @@ use crate::types::{Beneficiary, Guardian};
 /// Published when a new will is created.
 ///
 /// `token_count` is the number of distinct tokens locked at creation time.
+///
+/// The final tuple element is the creation timestamp (ledger Unix seconds)
+/// (#726), so the audit trail records when each will was created without a
+/// follow-up `get_will` call.
 ///
 /// `beneficiaries` is the *full* beneficiary list (address + allocation
 /// pairs), not just a count, so an off-chain indexer can reconstruct who a
@@ -45,6 +50,7 @@ pub fn will_created(
             token_count,
             beneficiaries.clone(),
             checkin_deadline,
+            env.ledger().timestamp(),
         ),
     );
 }
@@ -63,22 +69,13 @@ pub fn check_in(env: &Env, will_id: u64, owner: &Address, next_deadline: u64) {
     );
 }
 
-/// Published when a will is triggered after a missed check-in.
+/// Published when a will is triggered after a missed check-in (#697).
 ///
-/// Data: `(grace_period_ends, triggered_at, caller)` where `triggered_at` is
-/// the ledger time of the `trigger_will` call and `caller` is the optional
-/// address of the keeper that submitted it (`None` if not supplied).
-pub fn will_triggered(
-    env: &Env,
-    will_id: u64,
-    grace_period_ends: u64,
-    triggered_at: u64,
-    caller: &Option<Address>,
-) {
-    env.events().publish(
-        (symbol_short!("triggered"), will_id),
-        (grace_period_ends, triggered_at, caller.clone()),
-    );
+/// Emits `("triggered", will_id)` with `grace_period_ends` so off-chain
+/// monitors and indexers can track trigger transitions without polling.
+pub fn will_triggered(env: &Env, will_id: u64, grace_period_ends: u64) {
+    env.events()
+        .publish((symbol_short!("triggered"), will_id), grace_period_ends);
 }
 
 /// Published when the owner emergency-checks-in during the grace period,
@@ -111,6 +108,21 @@ pub fn inheritance_released(
     env.events().publish(
         (symbol_short!("released"), will_id),
         (token_count, beneficiaries_count, released_at, payouts.clone()),
+    );
+}
+
+/// Published when a token share is distributed to a beneficiary during
+/// `release_inheritance` / `distribute` (#698).
+pub fn tokens_distributed(
+    env: &Env,
+    will_id: u64,
+    token: &Address,
+    beneficiary: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (symbol_short!("distrib"), will_id),
+        (token.clone(), beneficiary.clone(), amount),
     );
 }
 
@@ -177,7 +189,12 @@ pub fn top_up(
     );
 }
 
-/// Published each time a guardian votes to trigger an early release.
+/// Published each time a guardian votes to trigger an early release (#699).
+///
+/// Topics: `("gvote", will_id)`.
+/// Data: `(guardian, weight, total_weight)` where `weight` is the voting
+/// guardian's weight and `total_weight` is the accumulated live vote weight
+/// after recording this vote.
 pub fn guardian_voted(env: &Env, will_id: u64, guardian: &Address, weight: u32, total_weight: u32) {
     env.events().publish(
         (symbol_short!("gvote"), will_id),
@@ -185,7 +202,10 @@ pub fn guardian_voted(env: &Env, will_id: u64, guardian: &Address, weight: u32, 
     );
 }
 
-/// Published each time a guardian votes to cancel a trigger (return to Active).
+/// Published each time a guardian votes to cancel a trigger (return to Active) (#699).
+///
+/// Topics: `("gcvote", will_id)`.
+/// Data: `(guardian, weight, total_weight)`.
 pub fn guardian_cancel_voted(
     env: &Env,
     will_id: u64,
