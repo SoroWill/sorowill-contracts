@@ -2390,6 +2390,7 @@ impl WillContract {
         storage::adjust_locked_value(&env, &token, amount);
 
         // --- INTERACTIONS: external token transfer after state is committed ---
+        assert_owner_min_balance(&env, &owner, &token, amount);
         token::Client::new(&env, &token).transfer(&owner, &env.current_contract_address(), &amount);
 
         events::top_up(&env, will_id, &owner, &token, amount, new_balance);
@@ -3575,6 +3576,63 @@ impl WillContract {
 
         if will_specs.is_empty() || will_specs.len() > BATCH_MAX {
             panic_with_error!(&env, WillError::TooManyBeneficiaries);
+        }
+
+        // Pre-validate every spec in a read-only pass before any token transfer
+        // or storage write so the batch is strictly atomic (#694).
+        let mut total_required_by_token: Map<Address, i128> = Map::new(&env);
+        for spec in will_specs.iter() {
+            let (
+                tokens,
+                beneficiaries,
+                checkin_period_days,
+                grace_period_days,
+                guardians,
+                guardian_threshold,
+            ) = spec;
+
+            if tokens.is_empty() || tokens.len() > MAX_TOKENS {
+                panic_with_error!(&env, WillError::InvalidTokenCount);
+            }
+            let mut seen_tokens: Vec<Address> = Vec::new(&env);
+            let mut spec_balances: Map<Address, i128> = Map::new(&env);
+            for (token_addr, amount) in tokens.iter() {
+                if seen_tokens.contains(&token_addr) {
+                    panic_with_error!(&env, WillError::DuplicateToken);
+                }
+                seen_tokens.push_back(token_addr.clone());
+                if amount <= 0 {
+                    panic_with_error!(&env, WillError::ZeroAmount);
+                }
+                if token::Client::new(&env, &token_addr)
+                    .try_decimals()
+                    .is_err()
+                {
+                    panic_with_error!(&env, WillError::InvalidToken);
+                }
+                let prev_spec = spec_balances.get(token_addr.clone()).unwrap_or(0);
+                spec_balances.set(token_addr.clone(), prev_spec + amount);
+                let prev_total = total_required_by_token.get(token_addr.clone()).unwrap_or(0);
+                total_required_by_token.set(token_addr, prev_total + amount);
+            }
+
+            assert_beneficiary_count(&env, &beneficiaries);
+            assert_valid_guardians(&env, &owner, &guardians);
+            assert_valid_periods(&env, checkin_period_days, grace_period_days);
+            if !guardians.is_empty() && !(1..=guardians.len()).contains(&guardian_threshold) {
+                panic_with_error!(&env, WillError::InvalidGuardianThreshold);
+            }
+            storage::assert_index_capacity(&env, &owner, &beneficiaries);
+
+            let (primary_token, _) = tokens.get_unchecked(0);
+            assert_valid_allocations(
+                &env,
+                &beneficiaries,
+                primary_token_balance(&spec_balances, &primary_token),
+            );
+        }
+        for (token_addr, total_required) in total_required_by_token.iter() {
+            assert_owner_min_balance(&env, &owner, &token_addr, total_required);
         }
 
         let mut ids = Vec::new(&env);
@@ -5021,6 +5079,26 @@ fn assert_owner_or_delegate(env: &Env, will: &Will, caller: &Address) {
     }
 }
 
+/// Minimum token balance required on an owner's account when creating or
+/// funding a will (#695).
+const MIN_OWNER_BALANCE: i128 = 1;
+
+/// Validates that `owner` holds at least `required_amount` (and at least
+/// [`MIN_OWNER_BALANCE`]) of `token_addr` before attempting a transfer (#695).
+fn assert_owner_min_balance(
+    env: &Env,
+    owner: &Address,
+    token_addr: &Address,
+    required_amount: i128,
+) {
+    let min_required = required_amount.max(MIN_OWNER_BALANCE);
+    if let Ok(Ok(balance)) = token::Client::new(env, token_addr).try_balance(owner) {
+        if balance < min_required {
+            panic_with_error!(env, WillError::InsufficientBalance);
+        }
+    }
+}
+
 /// Returns whether `beneficiaries` names `address`.
 ///
 /// Operates on an in-memory list, so callers can decide reverse-index
@@ -5924,15 +6002,17 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
 
     for (token_addr, shares) in transfer_plan.iter() {
         for (beneficiary_addr, share) in shares.iter() {
-            if share > 0 {
-                pay_or_record_failure(
+            if share > 0
+                && pay_or_record_failure(
                     env,
                     &token_addr,
                     &contract_address,
                     &beneficiary_addr,
                     share,
                     will.id,
-                );
+                )
+            {
+                events::tokens_distributed(env, will.id, &token_addr, &beneficiary_addr, share);
             }
         }
 

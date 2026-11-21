@@ -89,6 +89,21 @@ pub fn inheritance_released(env: &Env, will_id: u64, token_count: u32, beneficia
     );
 }
 
+/// Published when a token share is distributed to a beneficiary during
+/// `release_inheritance` / `distribute` (#698).
+pub fn tokens_distributed(
+    env: &Env,
+    will_id: u64,
+    token: &Address,
+    beneficiary: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (symbol_short!("distrib"), will_id),
+        (token.clone(), beneficiary.clone(), amount),
+    );
+}
+
 /// Published when the owner cancels the will and withdraws all token balances.
 ///
 /// `token_count` is the number of distinct tokens refunded.
