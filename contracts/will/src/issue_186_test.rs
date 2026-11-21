@@ -103,7 +103,7 @@ fn hashed_beneficiary_percentage_basis_points_payout() {
 
     // Trigger will and wait for grace period
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(&env, 8);
 
     // Record initial balances

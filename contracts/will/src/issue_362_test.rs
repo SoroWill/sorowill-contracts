@@ -89,7 +89,7 @@ fn setup_mixed_will<'a>() -> (
     // Miss the check-in deadline, then let the grace period elapse so the will
     // is `Triggered` and releasable.
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
 
     let token_client = TokenClient::new(&env, &token_address);

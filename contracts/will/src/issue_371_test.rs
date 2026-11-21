@@ -184,7 +184,7 @@ fn owner_and_status_checks_still_take_precedence() {
 
     // Release the will, then confirm the status error wins over the length one.
     env.ledger().with_mut(|l| l.timestamp += 91 * 86_400);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * 86_400);
     client.release_inheritance(&will_id, &None);
 

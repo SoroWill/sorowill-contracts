@@ -14,8 +14,10 @@ use crate::{assert_status, load_owned, WillError, WillStatus};
 /// ([`WillError::WillNotFound`]), be owned by `owner` ([`WillError::NotOwner`])
 /// and be `Active` ([`WillError::WillNotActive`]). Performs no writes.
 pub fn prevalidate_check_in(env: &Env, ids: &Vec<u64>, owner: &Address) {
+    let now = env.ledger().timestamp();
     for will_id in ids.iter() {
         let will = load_owned(env, will_id, owner);
         assert_status(env, &will, WillStatus::Active, WillError::WillNotActive);
+        crate::assert_timestamp_progression(env, &will, now);
     }
 }

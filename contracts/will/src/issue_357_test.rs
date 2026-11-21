@@ -95,7 +95,7 @@ fn periods_updated_event_reports_deadline_from_last_checkin() {
     // The event value equals what `trigger_will` enforces, and it is strictly less
     // than the old `now`-based value that used to be published.
     assert!(expected < env.ledger().timestamp());
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     assert_eq!(client.get_will(&will_id).status, WillStatus::Triggered);
 }
 
@@ -131,10 +131,10 @@ fn emitted_deadline_matches_the_instant_trigger_will_becomes_available() {
     assert_eq!(deadline, created_at + 10 * DAY);
 
     env.ledger().set_timestamp(deadline - 1);
-    let err = client.try_trigger_will(&will_id).unwrap_err().unwrap();
+    let err = client.try_trigger_will(&will_id, &None).unwrap_err().unwrap();
     assert_eq!(err, WillError::CheckinNotDue.into());
 
     env.ledger().set_timestamp(deadline);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     assert_eq!(client.get_will(&will_id).status, WillStatus::Triggered);
 }
