@@ -200,6 +200,35 @@ pub fn guardians_updated(env: &Env, will_id: u64, owner: &Address, guardians: &V
     );
 }
 
+/// Audit-trail event published alongside every guardian-list replacement
+/// (`update_guardians`, `update_guardians_weighted`, and the guardian branch of
+/// `update_will_settings`) (#719).
+///
+/// Unlike [`guardians_updated`], which only carries the new list, this event
+/// records the `old_guardians` that were removed as well as the `new_guardians`
+/// that replaced them, so an auditor can reconstruct the change without
+/// replaying history. The ledger timestamp is included so each change is
+/// time-stamped on-chain.
+pub fn guardian_updated(
+    env: &Env,
+    will_id: u64,
+    owner: &Address,
+    old_guardians: &Vec<Guardian>,
+    new_guardians: &Vec<Guardian>,
+) {
+    let timestamp = env.ledger().timestamp();
+    env.events().publish(
+        (Symbol::new(env, "guardian_updated"), will_id),
+        (
+            will_id,
+            owner.clone(),
+            old_guardians.clone(),
+            new_guardians.clone(),
+            timestamp,
+        ),
+    );
+}
+
 /// Published when the owner closes a Released will, marking it Settled.
 pub fn will_closed(env: &Env, will_id: u64, owner: &Address) {
     env.events()

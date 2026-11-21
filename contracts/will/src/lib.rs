@@ -823,6 +823,7 @@ impl WillContract {
             seen_tokens.push_back(token_addr);
         }
         assert_beneficiary_count(&env, &beneficiaries);
+        assert_owner_not_beneficiary(&env, &owner, &beneficiaries);
         assert_valid_guardians(&env, &owner, &guardians);
         assert_valid_periods(&env, checkin_period_days, grace_period_days);
 
@@ -1685,6 +1686,7 @@ impl WillContract {
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
 
         assert_beneficiary_count(&env, &beneficiaries);
+        assert_owner_not_beneficiary(&env, &owner, &beneficiaries);
         assert_valid_allocations(&env, &beneficiaries, total_balance(&will.balances));
         if beneficiaries.is_empty() || beneficiaries.len() > MAX_BENEFICIARIES {
             panic_with_error!(&env, WillError::TooManyBeneficiaries);
@@ -2072,6 +2074,7 @@ impl WillContract {
                 consent: GuardianConsent::Pending,
             });
         }
+        let old_guardians = will.guardians.clone();
         will.guardians = guardian_structs;
         will.guardian_votes = 0;
         will.guardian_cancel_vote_weight = 0;
@@ -2081,6 +2084,7 @@ impl WillContract {
         storage::save_will(&env, &will);
 
         events::guardians_updated(&env, will_id, &owner, &will.guardians);
+        events::guardian_updated(&env, will_id, &owner, &old_guardians, &will.guardians);
     }
 
     /// Updates the guardian list with custom per-guardian vote weights.
@@ -2179,6 +2183,7 @@ impl WillContract {
                 consent: GuardianConsent::Pending,
             });
         }
+        let old_guardians = will.guardians.clone();
         will.guardians = guardian_structs;
         will.guardian_threshold = threshold;
         will.guardian_votes = 0;
@@ -2189,6 +2194,39 @@ impl WillContract {
         storage::save_will(&env, &will);
 
         events::guardians_updated(&env, will_id, &owner, &will.guardians);
+        events::guardian_updated(&env, will_id, &owner, &old_guardians, &will.guardians);
+    }
+
+    /// Sets the guardian-list cooldown, in days, for an active will (#721).
+    ///
+    /// The cooldown is the delay after a guardian-list change before a guardian
+    /// may vote in `guardian_trigger` or `guardian_cancel_trigger`. It defaults
+    /// to `GUARDIAN_COOLDOWN_DAYS` and can be raised here for a longer window.
+    ///
+    /// The cooldown can only be increased. Shortening it would let a compromised
+    /// owner shrink the delay and swap guardians after a short wait.
+    ///
+    /// # Errors
+    ///
+    /// - [`WillError::NotOwner`] if `owner` is not the will's owner.
+    /// - [`WillError::WillNotActive`] if the will is not `Active`.
+    /// - [`WillError::InvalidPeriod`] if `days` is `0` or above `MAX_PERIOD_DAYS`.
+    /// - [`WillError::GuardianCooldownCannotDecrease`] if `days` is below the
+    ///   cooldown currently in effect.
+    pub fn set_guardian_cooldown(env: Env, will_id: u64, owner: Address, days: u64) {
+        owner.require_auth();
+        let will = load_owned(&env, will_id, &owner);
+        assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
+
+        if days == 0 || days > MAX_PERIOD_DAYS {
+            panic_with_error!(&env, WillError::InvalidPeriod);
+        }
+        let current_days = storage::get_guardian_cooldown_days(&env, will_id)
+            .unwrap_or(GUARDIAN_COOLDOWN_DAYS);
+        if days < current_days {
+            panic_with_error!(&env, WillError::GuardianCooldownCannotDecrease);
+        }
+        storage::set_guardian_cooldown_days(&env, will_id, days);
     }
 
     /// Updates the check-in and/or grace period for an active will.
@@ -2319,6 +2357,7 @@ impl WillContract {
         // Update beneficiaries if provided
         if let Some(new_beneficiaries) = beneficiaries {
             assert_beneficiary_count(&env, &new_beneficiaries);
+            assert_owner_not_beneficiary(&env, &owner, &new_beneficiaries);
             assert_valid_allocations(&env, &new_beneficiaries, total_balance(&will.balances));
             if new_beneficiaries.is_empty() || new_beneficiaries.len() > MAX_BENEFICIARIES {
                 panic_with_error!(&env, WillError::TooManyBeneficiaries);
@@ -2354,6 +2393,7 @@ impl WillContract {
         }
 
         // Update guardians if provided
+        let old_guardians = will.guardians.clone();
         let guardians_changed = if let Some(new_guardians) = guardians {
             assert_valid_guardians(&env, &owner, &new_guardians);
             assert_no_guardian_cancel_in_flight(&env, &will);
@@ -2424,6 +2464,7 @@ impl WillContract {
         // through this composite entry point.
         if guardians_changed {
             events::guardians_updated(&env, will_id, &owner, &will.guardians);
+            events::guardian_updated(&env, will_id, &owner, &old_guardians, &will.guardians);
         }
     }
 
@@ -3182,7 +3223,7 @@ impl WillContract {
         // stretch or shorten it (#636).
         // Enforce guardian-list cooldown.
         let now = env.ledger().timestamp();
-        let cooldown_seconds = GUARDIAN_COOLDOWN_DAYS * SECONDS_PER_DAY;
+        let cooldown_seconds = guardian_cooldown_seconds(&env, will_id);
         let cooldown_ends = will.guardian_list_updated_at + cooldown_seconds;
         if now < cooldown_ends {
             panic_with_error!(&env, WillError::GuardianCooldownActive);
@@ -3306,7 +3347,7 @@ impl WillContract {
         }
 
         // Enforce guardian-list cooldown (same rule as guardian_trigger).
-        let cooldown_seconds = GUARDIAN_COOLDOWN_DAYS * SECONDS_PER_DAY;
+        let cooldown_seconds = guardian_cooldown_seconds(&env, will_id);
         let cooldown_ends = will.guardian_list_updated_at + cooldown_seconds;
         if now < cooldown_ends {
             panic_with_error!(&env, WillError::GuardianCooldownActive);
@@ -3847,6 +3888,7 @@ impl WillContract {
                 seen_tokens.push_back(token_addr);
             }
             assert_beneficiary_count(&env, &beneficiaries);
+            assert_owner_not_beneficiary(&env, &owner, &beneficiaries);
             assert_valid_guardians(&env, &owner, &guardians);
             assert_valid_periods(&env, checkin_period_days, grace_period_days);
             // Mirror the `create_will` normalisation: an empty guardian list
@@ -4988,6 +5030,15 @@ impl WillContract {
         claimant.require_auth();
         assert_valid_beneficiary_address(&env, &claimant);
         let mut will = load_will(&env, will_id);
+        // A claim attempted while the grace period is still running gets the
+        // grace-period error, not the generic status error, so the caller can
+        // tell "wait for grace to end" apart from "not released yet" (#722).
+        if will.status == WillStatus::Triggered
+            && !grace_boundary::grace_elapsed(env.ledger().timestamp(), grace_deadline(&will))
+        {
+            panic_with_error!(&env, WillError::GracePeriodNotExpired);
+        }
+
         // A hashed beneficiary's reserved share is only carved out of the
         // will's balances once `distribute()` runs (see #181), so claiming
         // is only meaningful -- and only has funds behind it -- once the
@@ -5206,6 +5257,18 @@ fn load_will(env: &Env, will_id: u64) -> Will {
 /// Contract errors carry only a numeric code, so the actual count and the
 /// limit are also written to the diagnostic log, which surfaces in simulation
 /// and in the test host.
+/// Rejects any beneficiary entry whose address is the will's owner (#720).
+///
+/// An owner listed as a beneficiary would be able to claim the will's funds
+/// from the very address that controls it, creating a circular claim.
+fn assert_owner_not_beneficiary(env: &Env, owner: &Address, beneficiaries: &Vec<Beneficiary>) {
+    for b in beneficiaries.iter() {
+        if &b.address == owner {
+            panic_with_error!(env, WillError::OwnerCannotBeBeneficiary);
+        }
+    }
+}
+
 fn assert_beneficiary_count(env: &Env, beneficiaries: &Vec<Beneficiary>) {
     let count = beneficiaries.len();
     if count == 0 {
@@ -5668,6 +5731,14 @@ fn primary_token_balance(balances: &Map<Address, i128>, primary_token: &Address)
 ///
 /// The owner cannot be a guardian since guardians are meant to act when the
 /// owner is incapacitated or known to be dead.
+/// Returns the guardian-list cooldown for `will_id` in seconds: the
+/// owner-configured value if set, otherwise `GUARDIAN_COOLDOWN_DAYS` (#721).
+fn guardian_cooldown_seconds(env: &Env, will_id: u64) -> u64 {
+    let days =
+        storage::get_guardian_cooldown_days(env, will_id).unwrap_or(GUARDIAN_COOLDOWN_DAYS);
+    days * SECONDS_PER_DAY
+}
+
 fn assert_valid_guardians(env: &Env, owner: &Address, guardians: &Vec<Address>) {
     if guardians.len() > MAX_GUARDIANS {
         panic_with_error!(env, WillError::TooManyBeneficiaries);
