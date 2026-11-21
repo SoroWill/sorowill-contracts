@@ -51,7 +51,7 @@ pub(crate) fn live_guardian_vote_weight(env: &Env, will_id: u64, will: &Will, no
     let grace_seconds = (will.grace_period_days as u64).saturating_mul(SECONDS_PER_DAY);
     let mut total: u32 = 0;
     for g in will.guardians.iter() {
-        if storage::has_guardian_voted(env, will_id, &g.address, now, will.grace_period_days) {
+        if storage::has_guardian_voted(env, will_id, &g.address, now, storage::guardian_vote_expiry_days(env, will)) {
             total = add_guardian_weight(env, total, g.weight);
         }
     }

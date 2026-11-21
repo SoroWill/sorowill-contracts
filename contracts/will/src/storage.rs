@@ -119,6 +119,11 @@ pub(crate) enum DataKey {
     /// re-reads or re-validates the will, so it still succeeds even if the
     /// will has since been archived.
     FailedPayout(u64, Address, Address),
+    /// Optional per-will guardian vote-expiry window, in days (#740). Absent
+    /// means the will uses its `grace_period_days` as the window. Stored
+    /// separately from the `Will` record so existing wills keep their
+    /// encoding and need no migration.
+    GuardianVoteExpiry(u64),
 }
 
 /// The data stored for each guardian vote: the Unix timestamp when the vote
@@ -657,6 +662,34 @@ pub fn get_guardian_vote(
 ) -> Option<GuardianVoteRecord> {
     let key = DataKey::GuardianVote(will_id, guardian.clone());
     env.storage().persistent().get(&key)
+}
+
+/// Returns the guardian vote-expiry window, in days, that applies to `will`.
+///
+/// This is the per-will override set by `set_guardian_vote_expiry` (#740) when
+/// one exists, and otherwise the will's `grace_period_days`. Every guardian-vote
+/// reader goes through this helper so the window is decided in one place.
+pub fn guardian_vote_expiry_days(env: &Env, will: &Will) -> u64 {
+    env.storage()
+        .persistent()
+        .get::<_, u64>(&DataKey::GuardianVoteExpiry(will.id))
+        .unwrap_or(will.grace_period_days)
+}
+
+/// Stores (`Some(days)`) or clears (`None`) the per-will vote-expiry override
+/// for `will_id` (#740). Clearing it restores the default of using the will's
+/// grace period.
+pub fn set_guardian_vote_expiry(env: &Env, will_id: u64, days: Option<u64>) {
+    let key = DataKey::GuardianVoteExpiry(will_id);
+    match days {
+        Some(days) => {
+            env.storage().persistent().set(&key, &days);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+        }
+        None => env.storage().persistent().remove(&key),
+    }
 }
 
 /// Returns whether a vote recorded at `vote_timestamp` is still inside its

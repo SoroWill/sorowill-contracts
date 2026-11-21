@@ -402,6 +402,8 @@ mod issue_628_test;
 #[cfg(test)]
 mod issue_630_test;
 #[cfg(test)]
+mod issue_740_test;
+#[cfg(test)]
 // mod issue_486_489_test; // TODO: ContractEvents API
 #[cfg(test)]
 mod issue_572_575_test;
@@ -2297,6 +2299,68 @@ impl WillContract {
         }
     }
 
+    /// Sets or clears the guardian vote-expiry window for one will (#740).
+    ///
+    /// A guardian's release or cancel vote counts toward quorum only while it is
+    /// younger than the window. By default the window equals the will's
+    /// `grace_period_days`, which is the behaviour before this setting existed.
+    /// Passing `Some(days)` overrides that default for this will only; passing
+    /// `None` removes the override so the will follows its grace period again.
+    ///
+    /// Only allowed while the will is `Active`. Changing the window during a
+    /// trigger cycle would retroactively revalidate votes already cast, so the
+    /// setting is frozen once the will is `Triggered`.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to configure.
+    /// - `owner`: must be the will's owner and must authorize the call.
+    /// - `days`: the new window in days, or `None` to restore the default. A
+    ///   `Some` value must be between 1 and [`MAX_PERIOD_DAYS`] inclusive.
+    ///
+    /// # Panics
+    /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
+    /// - [`WillError::WillNotActive`] if the will is not `Active`.
+    /// - [`WillError::InvalidPeriod`] if `days` is `Some(0)` or above
+    ///   [`MAX_PERIOD_DAYS`].
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Votes lapse after 3 days, even if the grace period is 7.
+    /// client.set_guardian_vote_expiry(&will_id, &owner, &Some(3));
+    /// // Go back to following the grace period.
+    /// client.set_guardian_vote_expiry(&will_id, &owner, &None);
+    /// ```
+    pub fn set_guardian_vote_expiry(env: Env, will_id: u64, owner: Address, days: Option<u64>) {
+        owner.require_auth();
+        let will = load_owned(&env, will_id, &owner);
+        assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
+        if let Some(days) = days {
+            if !(1..=MAX_PERIOD_DAYS).contains(&days) {
+                panic_with_error!(&env, WillError::InvalidPeriod);
+            }
+        }
+        storage::set_guardian_vote_expiry(&env, will_id, days);
+    }
+
+    /// Returns the guardian vote-expiry window, in days, currently in effect
+    /// for `will_id` (#740).
+    ///
+    /// This is the override set by [`Self::set_guardian_vote_expiry`] when one
+    /// exists, and otherwise the will's `grace_period_days`.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to query.
+    ///
+    /// # Returns
+    /// The window in days.
+    ///
+    /// # Panics
+    /// - If `will_id` does not exist.
+    pub fn get_guardian_vote_expiry(env: Env, will_id: u64) -> u64 {
+        let will = load_will(&env, will_id);
+        storage::guardian_vote_expiry_days(&env, &will)
+    }
+
     /// Adds `amount` of a specific `token` to an existing will's locked
     /// balance. Only possible while the will is `Active`. The token does not
     /// need to have been part of the original `create_will` call — new tokens
@@ -2507,7 +2571,8 @@ impl WillContract {
         let will = load_will(&env, will_id);
         let record = storage::get_guardian_vote(&env, will_id, &guardian)?;
         let now = env.ledger().timestamp();
-        if storage::vote_is_live(now, record.timestamp, will.grace_period_days) {
+        let expiry_days = storage::guardian_vote_expiry_days(&env, &will);
+        if storage::vote_is_live(now, record.timestamp, expiry_days) {
             Some(record)
         } else {
             None
@@ -2985,7 +3050,7 @@ impl WillContract {
         // A vote lapses by comparing its timestamp with the current ledger time on
         // each call. No event fires when it lapses, so the audit trail records a
         // vote when it is cast, not when it expires (#649).
-        let expiry_days = will.grace_period_days;
+        let expiry_days = storage::guardian_vote_expiry_days(&env, &will);
         if storage::has_guardian_voted(&env, will_id, &guardian, now, expiry_days) {
             panic_with_error!(&env, WillError::AlreadyVoted);
         }
@@ -3109,7 +3174,7 @@ impl WillContract {
         };
 
         // Deduplicate within the cancel-vote namespace only.
-        let expiry_days = will.grace_period_days;
+        let expiry_days = storage::guardian_vote_expiry_days(&env, &will);
         if storage::has_guardian_cancel_voted(&env, will_id, &guardian, now, expiry_days) {
             panic_with_error!(&env, WillError::AlreadyVoted);
         }
@@ -3299,12 +3364,13 @@ impl WillContract {
         // Withdraw any vote the guardian had already cast in this cycle, so a
         // rejected guardian stops contributing weight toward quorum (#374).
         let weight = g_weight(&will, &guardian);
-        if storage::has_guardian_voted(&env, will_id, &guardian, now, will.grace_period_days) {
+        let expiry_days = storage::guardian_vote_expiry_days(&env, &will);
+        if storage::has_guardian_voted(&env, will_id, &guardian, now, expiry_days) {
             storage::clear_guardian_vote(&env, will_id, &guardian);
             will.guardian_vote_weight = will.guardian_vote_weight.saturating_sub(weight);
             will.guardian_votes = will.guardian_votes.saturating_sub(1);
         }
-        if storage::has_guardian_cancel_voted(&env, will_id, &guardian, now, will.grace_period_days)
+        if storage::has_guardian_cancel_voted(&env, will_id, &guardian, now, expiry_days)
         {
             storage::clear_guardian_cancel_vote(&env, will_id, &guardian);
             will.guardian_cancel_vote_weight =
@@ -5444,9 +5510,10 @@ fn tally_guardian_votes(
 ) -> (u32, u32) {
     let mut votes: u32 = 0;
     let mut weight: u32 = 0;
+    let expiry_days = storage::guardian_vote_expiry_days(env, will);
     for g in will.guardians.iter() {
         if g.consent == GuardianConsent::Accepted
-            && has_voted(env, will.id, &g.address, now, will.grace_period_days)
+            && has_voted(env, will.id, &g.address, now, expiry_days)
         {
             votes += 1;
             weight = weight.saturating_add(g.weight);
@@ -6164,7 +6231,6 @@ fn purge_removed_guardian_votes(
     // Recompute every counter from the surviving guardian set. The tally
     // helpers walk `will.guardians`, so assign the new list first.
     will.guardians = new_guardians.clone();
-    let expiry_days = will.grace_period_days;
     let (votes, vote_weight) =
         tally_guardian_votes(env, will, now, storage::has_guardian_voted);
     will.guardian_votes = votes;
