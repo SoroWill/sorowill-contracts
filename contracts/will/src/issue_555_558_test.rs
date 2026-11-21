@@ -68,7 +68,7 @@ fn test_percentage_dust_not_retained_in_contract() {
     );
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
@@ -123,7 +123,7 @@ fn test_fixed_amount_dust_refunded_to_owner_not_retained() {
     );
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);

@@ -241,7 +241,7 @@ fn merge_wills_rejects_released_will() {
     );
 
     // Trigger will_b and advance past the grace period so it can be released.
-    client.trigger_will(&will_id_b);
+    client.trigger_will(&will_id_b, &None);
     env.ledger().set_timestamp(1_700_000_000 + 90 * 86_400 + 7 * 86_400 + 1);
     client.release_inheritance(&will_id_b);
 

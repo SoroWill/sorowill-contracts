@@ -86,7 +86,7 @@ fn setup_triggered(checkin_period_days: u64) -> (Env, Address, Address, Address,
     let (env, contract_id, guardian_a, guardian_b, will_id) = setup(checkin_period_days);
     env.ledger()
         .with_mut(|l| l.timestamp += (checkin_period_days + 1) * DAY);
-    WillContractClient::new(&env, &contract_id).trigger_will(&will_id);
+    WillContractClient::new(&env, &contract_id).trigger_will(&will_id, &None);
     (env, contract_id, guardian_a, guardian_b, will_id)
 }
 
@@ -131,7 +131,7 @@ fn release_vote_and_cancel_vote_from_same_guardian_are_independent() {
     assert_eq!(client.get_will(&will_id).guardian_votes, 1);
 
     env.ledger().with_mut(|l| l.timestamp += 83 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // The same guardian may still cast a cancel vote: the two namespaces are
     // deduplicated independently.

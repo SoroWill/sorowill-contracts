@@ -223,7 +223,7 @@ fn test_protocol_stats_track_create_cancel_and_release() {
     );
 
     advance_time(&env, 31 * DAY);
-    client.trigger_will(&will_id_2);
+    client.trigger_will(&will_id_2, &None);
     advance_time(&env, 4 * DAY);
     client.release_inheritance(&will_id_2);
 
@@ -320,7 +320,7 @@ fn test_trigger_after_missed_checkin() {
         &None,
     );
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     let will = client.get_will(&will_id);
     assert_eq!(will.status, WillStatus::Triggered);
     assert!(will.trigger_time.is_some());
@@ -349,7 +349,7 @@ fn test_cannot_trigger_before_deadline() {
         &None,
     );
     advance_time(&env, 10 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 }
 
 // ── get_will_status / get_time_until_deadline ────────────────────────────────
@@ -400,7 +400,7 @@ fn test_get_will_status_triggered() {
         &None,
     );
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     assert_eq!(client.get_will_status(&will_id), WillStatus::Triggered);
 }
 
@@ -460,7 +460,7 @@ fn test_get_time_until_deadline_triggered() {
         &None,
     );
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Just triggered: the full 7-day grace period remains.
     let remaining = client.get_time_until_deadline(&will_id);
@@ -525,7 +525,7 @@ fn test_emergency_checkin_cancels_trigger() {
         &None,
     );
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 2 * DAY);
     client.emergency_checkin(&will_id, &owner);
     let will = client.get_will(&will_id);
@@ -562,7 +562,7 @@ fn test_release_inheritance_splits_correctly() {
         &None,
     );
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
     assert_eq!(token.balance(&a), 600_000);
@@ -587,7 +587,7 @@ fn test_cannot_release_during_grace_period() {
         &None,
     );
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 2 * DAY);
     client.release_inheritance(&will_id);
 }
@@ -615,7 +615,7 @@ fn test_fractional_three_way_split() {
         &None,
     );
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
     assert_eq!(token.balance(&a), 500_000);
@@ -641,7 +641,7 @@ fn test_release_inheritance_rounding_remainder() {
         &None,
     );
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
     let s1 = token.balance(&b1);
@@ -674,7 +674,7 @@ fn test_release_inheritance_rolls_back_when_one_beneficiary_rejects_transfer() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
 
     // The first transfer would succeed, but the second beneficiary is frozen
@@ -723,7 +723,7 @@ fn test_release_inheritance_handles_near_maximum_balance_without_overflow() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id, &None);
 
@@ -750,7 +750,7 @@ fn test_release_multi_token_proportionally() {
         &None,
     );
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
     assert_eq!(token_a.balance(&a), 600_000);
@@ -914,7 +914,7 @@ fn test_update_beneficiaries_fractional_split() {
     );
     client.update_beneficiaries(&will_id, &owner, &vec![&env, bp(&a, 2_500), bp(&b, 7_500)]);
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
     assert_eq!(token.balance(&a), 250_000);
@@ -1161,7 +1161,7 @@ fn test_update_guardians_rejected_while_triggered() {
         &None,
     );
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     client.update_guardians(&will_id, &owner, &vec![&env]);
 }
 
@@ -1808,7 +1808,7 @@ fn test_native_emergency_checkin() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     advance_time(&env, 2 * DAY);
     client.emergency_checkin(&will_id, &owner);
@@ -2205,7 +2205,7 @@ fn test_update_beneficiaries_rejects_invalid_basis_points() {
     );
 
     advance_time(&env, 10 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 }
 
 #[test]
@@ -2231,7 +2231,7 @@ fn test_native_cannot_release_during_grace_period() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 2 * DAY);
     // Grace period is 7 days, so 2 days is still within it
     client.release_inheritance(&will_id);
@@ -2481,7 +2481,7 @@ fn test_migrate_will_while_triggered() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Migration should succeed even while triggered
     client.migrate_will(&will_id, &owner);
@@ -2514,7 +2514,7 @@ fn test_migrate_will_after_emergency_checkin() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     advance_time(&env, 2 * DAY);
     client.emergency_checkin(&will_id, &owner);
@@ -3011,7 +3011,7 @@ fn test_merge_wills_recalculates_percentages() {
     assert_eq!(active_wills.len(), 2);
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id_1);
+    client.trigger_will(&will_id_1, &None);
 
     let active_wills = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &None, &100);
     assert_eq!(active_wills.len(), 1);
@@ -3042,7 +3042,7 @@ fn test_close_will_marks_settled() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -3084,7 +3084,7 @@ fn test_merge_wills_complex_beneficiaries() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -3285,7 +3285,7 @@ fn test_merge_wills_preserves_token_address() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -3354,7 +3354,7 @@ fn test_merge_wills_updates_beneficiary_index() {
 }
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -3493,7 +3493,7 @@ fn test_will_history_full_lifecycle_release() {
 
     // Trigger
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     let history = client.get_will_history(&will_id);
     assert_eq!(history.len(), 2);
@@ -3569,7 +3569,7 @@ fn test_will_history_emergency_checkin() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     advance_time(&env, 2 * DAY);
     client.emergency_checkin(&will_id, &owner);
@@ -3670,7 +3670,7 @@ fn test_archive_released_will() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -3765,7 +3765,7 @@ fn test_archive_triggered_will_rejected() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Trying to archive a Triggered will should fail
     client.archive_will(&will_id);
@@ -3837,7 +3837,7 @@ fn test_guardian_vote_expiry_custom_value() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -3973,7 +3973,7 @@ fn test_same_guardian_can_revote_after_expiry() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -4036,7 +4036,7 @@ fn test_guardian_vote_reason_stored_and_emitted() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -4104,7 +4104,7 @@ fn test_all_guardian_reason_codes() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -4179,7 +4179,7 @@ fn test_release_tier_first_milestone() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -4189,7 +4189,7 @@ fn test_release_tier_first_milestone() {
 }
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -4302,7 +4302,7 @@ fn test_set_fallback_beneficiary() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     advance_time(&env, 8 * DAY);
     client.release_tier(&will_id, &0);
@@ -4373,7 +4373,7 @@ fn test_create_will_with_fallback() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     advance_time(&env, 3 * DAY);
     client.release_tier(&will_id, &0);
@@ -4434,7 +4434,7 @@ fn test_guardian_must_accept_before_voting() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_tier(&will_id, &0);
     client.release_tier(&will_id, &0);
@@ -4497,7 +4497,7 @@ fn test_accept_guardian_role() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_tier(&will_id, &5);
 }
@@ -4548,7 +4548,7 @@ fn test_guardian_trigger_rejects_unaccepted() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_tier(&will_id, &0);
 }
@@ -4774,7 +4774,7 @@ fn test_release_inheritance_still_works_with_empty_tiers() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -4811,7 +4811,7 @@ fn test_grace_tiers_three_way_split() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     advance_time(&env, 11 * DAY);
     client.release_tier(&will_id, &0);
@@ -4986,7 +4986,7 @@ fn test_batch_checkin_rejects_non_active_will() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     client.request_guardian_replacement(&will_id, &guardian);
         &vec![&env],
@@ -5012,7 +5012,7 @@ fn test_batch_checkin_rejects_non_active_will() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id_2);
+    client.trigger_will(&will_id_2, &None);
 
     advance_time(&env, 1 * DAY);
     client.batch_check_in(&vec![&env, will_id_1, will_id_2], &owner);
@@ -5470,7 +5470,7 @@ fn test_release_inheritance_removes_indexes() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 
@@ -5581,7 +5581,7 @@ fn test_release_inheritance_status_committed_before_transfer() {
     );
 
     advance_time(&env, 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance_time(&env, 8 * DAY);
     client.release_inheritance(&will_id);
 

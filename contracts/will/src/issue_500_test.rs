@@ -134,7 +134,7 @@ fn seq_continues_monotonically_across_a_status_change() {
     // call sites, which must now share the same continuous sequence as the
     // checkin entries rather than a separate or restarted one.
     env.ledger().with_mut(|l| l.timestamp += 91 * 86_400);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     client.emergency_checkin(&will_id, &owner);
 
     let history = client.get_will_history(&will_id);

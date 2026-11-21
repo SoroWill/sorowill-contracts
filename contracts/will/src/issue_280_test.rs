@@ -52,15 +52,32 @@ fn setup<'a>() -> (Env, WillContractClient<'a>, Address, Address, u64) {
 }
 
 #[test]
-fn top_up_is_rejected_for_a_triggered_will() {
+fn top_up_is_accepted_for_a_triggered_will_within_grace() {
     let (env, client, owner, token_address, will_id) = setup();
 
+    // Missed check-in at 90 days -> triggered at 91 days; grace runs to 97 days.
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
     client.trigger_will(&will_id);
 
+    client.top_up(&will_id, &owner, &token_address, &1_000);
+
+    let will = client.get_will(&will_id);
+    assert_eq!(will.balances.get(token_address.clone()), Some(1_000_000 + 1_000));
+}
+
+#[test]
+fn top_up_is_rejected_for_a_triggered_will_after_grace_expires() {
+    let (env, client, owner, token_address, will_id) = setup();
+
+    env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
+    client.trigger_will(&will_id, &None);
+
+    // Grace deadline is 97 days; move one second past it.
+    env.ledger().with_mut(|l| l.timestamp += 6 * DAY + 1);
+
     assert_eq!(
         client.try_top_up(&will_id, &owner, &token_address, &1_000),
-        Err(Ok(WillError::WillNotActive.into()))
+        Err(Ok(WillError::GracePeriodExpired.into()))
     );
 }
 
@@ -81,7 +98,7 @@ fn top_up_is_rejected_for_a_released_will() {
     let (env, client, owner, token_address, will_id) = setup();
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
 

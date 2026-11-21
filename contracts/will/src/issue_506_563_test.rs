@@ -82,7 +82,7 @@ fn test_distribution_floor_rounding_and_remainder_absorption() {
 
     // Advance past check-in and trigger deadline
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Advance past grace period
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);

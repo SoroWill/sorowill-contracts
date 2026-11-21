@@ -40,6 +40,7 @@ use soroban_sdk::{
     Address, Env, Vec as SorobanVec,
 };
 
+use crate::types::{GuardianSpec, GuardianVoteReason};
 use crate::{
     Allocation, Beneficiary, Will, WillContract, WillContractClient, WillStatus, MAX_BENEFICIARIES,
     MAX_GUARDIANS, MAX_PERIOD_DAYS, SECONDS_PER_DAY,
@@ -113,6 +114,37 @@ pub struct UpdateBeneficiariesInput {
     /// When set, one update is additionally attempted by a non-owner, which
     /// must always be rejected.
     pub probe_non_owner: bool,
+}
+
+/// How many successive guardian quorum actions a single `guardian_quorum`
+/// scenario replays against one will.
+pub const MAX_FUZZ_QUORUM_ACTIONS: usize = 16;
+
+/// One step in a fuzzed guardian quorum scenario (#705).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+pub enum GuardianQuorumAction {
+    AcceptRole { guardian_slot: u8 },
+    RejectRole { guardian_slot: u8 },
+    TriggerVote { guardian_slot: u8, reason_idx: u8 },
+    CancelVote { guardian_slot: u8 },
+    TriggerByDeadline,
+    EmergencyCheckin,
+    AdvanceDays { days: u8 },
+    UpdateWeighted {
+        guardian_slots: Vec<u8>,
+        weights: Vec<u32>,
+        threshold: Option<u32>,
+    },
+}
+
+/// A `create_will` that is forced to succeed, followed by an arbitrary sequence
+/// of guardian consent, voting, cancellation, and weight-update actions (#705).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "fuzzing", derive(arbitrary::Arbitrary))]
+pub struct GuardianQuorumInput {
+    pub create: CreateWillInput,
+    pub actions: Vec<GuardianQuorumAction>,
 }
 
 /// What a fuzzed invocation did, for front-ends that want to assert coverage
@@ -613,7 +645,7 @@ fn assert_full_release(scenario: &Scenario<'_>, input: &CreateWillInput, will_id
     let will = scenario.client.get_will(&will_id);
 
     scenario.advance_days(will.checkin_period_days.saturating_add(1));
-    match scenario.client.try_trigger_will(&will_id) {
+    match scenario.client.try_trigger_will(&will_id, &None) {
         Ok(Ok(())) => {}
         Ok(Err(_)) => violation(input, "trigger_will returned an undecodable value"),
         Err(Ok(_)) => violation(
@@ -892,4 +924,130 @@ fn assert_updated_beneficiaries(
             "a removed beneficiary still has the will in their index",
         );
     }
+}
+
+/// Drives guardian quorum voting, cancellation, consent, and weighted-list
+/// updates across arbitrary action combinations (#705).
+pub fn run_guardian_quorum(input: &GuardianQuorumInput) -> Outcome {
+    let create = sanitize_create(&input.create);
+    let scenario = Scenario::new(create.mint);
+    let will_id = create_valid_will(&scenario, input, &create);
+
+    for action in input.actions.iter().take(MAX_FUZZ_QUORUM_ACTIONS) {
+        let res = match action {
+            GuardianQuorumAction::AcceptRole { guardian_slot } => {
+                let addr = slot(&scenario.pool, *guardian_slot);
+                scenario
+                    .client
+                    .try_accept_guardian_role(&will_id, &addr)
+                    .map(|_| ())
+            }
+            GuardianQuorumAction::RejectRole { guardian_slot } => {
+                let addr = slot(&scenario.pool, *guardian_slot);
+                scenario
+                    .client
+                    .try_reject_guardian_role(&will_id, &addr)
+                    .map(|_| ())
+            }
+            GuardianQuorumAction::TriggerVote {
+                guardian_slot,
+                reason_idx,
+            } => {
+                let addr = slot(&scenario.pool, *guardian_slot);
+                let reason = match reason_idx % 4 {
+                    0 => GuardianVoteReason::Deceased,
+                    1 => GuardianVoteReason::Incapacitated,
+                    2 => GuardianVoteReason::Unreachable,
+                    _ => GuardianVoteReason::Other,
+                };
+                scenario
+                    .client
+                    .try_guardian_trigger(&will_id, &addr, &reason)
+                    .map(|_| ())
+            }
+            GuardianQuorumAction::CancelVote { guardian_slot } => {
+                let addr = slot(&scenario.pool, *guardian_slot);
+                scenario
+                    .client
+                    .try_guardian_cancel_trigger(&will_id, &addr)
+                    .map(|_| ())
+            }
+            GuardianQuorumAction::TriggerByDeadline => {
+                scenario.client.try_trigger_will(&will_id).map(|_| ())
+            }
+            GuardianQuorumAction::EmergencyCheckin => scenario
+                .client
+                .try_emergency_checkin(&will_id, &scenario.owner)
+                .map(|_| ()),
+            GuardianQuorumAction::AdvanceDays { days } => {
+                scenario.advance_days(*days as u64);
+                Ok(Ok(()))
+            }
+            GuardianQuorumAction::UpdateWeighted {
+                guardian_slots,
+                weights,
+                threshold,
+            } => {
+                let mut specs = SorobanVec::new(&scenario.env);
+                for (i, &g_slot) in guardian_slots.iter().take(MAX_FUZZ_GUARDIANS).enumerate() {
+                    let weight = weights.get(i).copied().unwrap_or(1);
+                    specs.push_back(GuardianSpec {
+                        address: slot(&scenario.pool, g_slot),
+                        weight,
+                    });
+                }
+                scenario
+                    .client
+                    .try_update_guardians_weighted(&will_id, &scenario.owner, &specs, threshold)
+                    .map(|_| ())
+            }
+        };
+
+        if let Err(Err(abort)) = res {
+            violation(
+                input,
+                &std::format!("guardian quorum action aborted instead of returning WillError: {abort:?}"),
+            );
+        }
+
+        let will = scenario.client.get_will(&will_id);
+        let mut total_weight: u32 = 0;
+        for g in will.guardians.iter() {
+            total_weight = total_weight.saturating_add(g.weight);
+        }
+        check(
+            will.guardian_votes <= will.guardians.len(),
+            input,
+            "guardian_votes exceeds guardian list length",
+        );
+        check(
+            will.guardian_vote_weight <= total_weight,
+            input,
+            "guardian_vote_weight exceeds total guardian weight",
+        );
+        check(
+            will.guardian_cancel_votes <= will.guardians.len(),
+            input,
+            "guardian_cancel_votes exceeds guardian list length",
+        );
+        check(
+            will.guardian_cancel_vote_weight <= total_weight,
+            input,
+            "guardian_cancel_vote_weight exceeds total guardian weight",
+        );
+        if will.status == WillStatus::Active {
+            check(
+                will.trigger_time.is_none(),
+                input,
+                "Active will has trigger_time set",
+            );
+            check(
+                will.guardian_cancel_votes == 0 && will.guardian_cancel_vote_weight == 0,
+                input,
+                "Active will has non-zero cancel votes",
+            );
+        }
+    }
+
+    Outcome::Accepted(will_id)
 }
