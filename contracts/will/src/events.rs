@@ -3,9 +3,10 @@
 //! Every state-changing entry point publishes exactly one event so that
 //! off-chain indexers (such as the SoroWill SDK/app) can reconstruct will
 //! history without re-simulating transactions. That includes the guardian
-//! consent transitions: [`guardian_accepted_role`] and
-//! [`guardian_rejected_role`] report when a named guardian becomes eligible to
-//! vote in `guardian_trigger`, or loses that eligibility.
+//! consent transitions ([`guardian_accepted_role`] and
+//! [`guardian_rejected_role`]) and guardian voting activity
+//! ([`guardian_voted`] for trigger votes and [`guardian_cancel_voted`] for
+//! cancel-trigger votes).
 
 use soroban_sdk::{symbol_short, Address, Bytes, Env, Symbol, Vec};
 
@@ -68,7 +69,10 @@ pub fn check_in(env: &Env, will_id: u64, owner: &Address, next_deadline: u64) {
     );
 }
 
-/// Published when a will is triggered after a missed check-in.
+/// Published when a will is triggered after a missed check-in (#697).
+///
+/// Emits `("triggered", will_id)` with `grace_period_ends` so off-chain
+/// monitors and indexers can track trigger transitions without polling.
 pub fn will_triggered(env: &Env, will_id: u64, grace_period_ends: u64) {
     env.events()
         .publish((symbol_short!("triggered"), will_id), grace_period_ends);
@@ -90,6 +94,21 @@ pub fn inheritance_released(env: &Env, will_id: u64, token_count: u32, beneficia
     env.events().publish(
         (symbol_short!("released"), will_id),
         (token_count, beneficiaries_count),
+    );
+}
+
+/// Published when a token share is distributed to a beneficiary during
+/// `release_inheritance` / `distribute` (#698).
+pub fn tokens_distributed(
+    env: &Env,
+    will_id: u64,
+    token: &Address,
+    beneficiary: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (symbol_short!("distrib"), will_id),
+        (token.clone(), beneficiary.clone(), amount),
     );
 }
 
@@ -156,26 +175,12 @@ pub fn top_up(
     );
 }
 
-/// Published alongside [`top_up`] whenever a will is funded (#725), so
-/// indexers can track funding activity by will ID.
+/// Published each time a guardian votes to trigger an early release (#699).
 ///
-/// `amount` is the amount added in this call. `timestamp` is the ledger
-/// timestamp (Unix seconds) at which the funding was applied. The `topup`
-/// event above is kept unchanged for existing consumers, so a successful
-/// `top_up` publishes both events.
-pub fn will_funded(env: &Env, will_id: u64, owner: &Address, token: &Address, amount: i128) {
-    env.events().publish(
-        (Symbol::new(env, "will_funded"), will_id),
-        (
-            owner.clone(),
-            token.clone(),
-            amount,
-            env.ledger().timestamp(),
-        ),
-    );
-}
-
-/// Published each time a guardian votes to trigger an early release.
+/// Topics: `("gvote", will_id)`.
+/// Data: `(guardian, weight, total_weight)` where `weight` is the voting
+/// guardian's weight and `total_weight` is the accumulated live vote weight
+/// after recording this vote.
 pub fn guardian_voted(env: &Env, will_id: u64, guardian: &Address, weight: u32, total_weight: u32) {
     env.events().publish(
         (symbol_short!("gvote"), will_id),
@@ -183,7 +188,10 @@ pub fn guardian_voted(env: &Env, will_id: u64, guardian: &Address, weight: u32, 
     );
 }
 
-/// Published each time a guardian votes to cancel a trigger (return to Active).
+/// Published each time a guardian votes to cancel a trigger (return to Active) (#699).
+///
+/// Topics: `("gcvote", will_id)`.
+/// Data: `(guardian, weight, total_weight)`.
 pub fn guardian_cancel_voted(
     env: &Env,
     will_id: u64,
