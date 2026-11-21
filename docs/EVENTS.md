@@ -11,7 +11,7 @@ data, in order.
 
 | Topic | Emitted by | Data |
 | ----- | ---------- | ---- |
-| `created` | `create_will`, `clone_will`, `batch_create_wills`, `split_will` | `(owner: Address, token_count: u32, beneficiaries: Vec<Beneficiary>, checkin_deadline: u64)` |
+| `created` | `create_will`, `clone_will`, `batch_create_wills`, `split_will` | `(owner: Address, token_count: u32, beneficiaries: Vec<Beneficiary>, checkin_deadline: u64, created_at: u64)` |
 | `confirmed` | `confirm_will` | `owner: Address` |
 | `checkin` | `check_in` | `(owner: Address, next_deadline: u64)` |
 | `batchchk` | `batch_check_in` (second topic is `owner`) | `(will_ids: Vec<u64>, count: u32)` |
@@ -28,6 +28,7 @@ data, in order.
 | `periodu` | `update_periods` | `(owner: Address, checkin_period_days: u64, grace_period_days: u64, next_deadline: u64)` |
 | `setupd` | `update_will_settings` | `(owner: Address, updated_fields: Vec<Symbol>)` |
 | `topup` | `top_up` | `(owner: Address, token: Address, amount: i128, new_balance: i128)` |
+| `will_funded` | `top_up` (published after `topup`) | `(owner: Address, token: Address, amount: i128, timestamp: u64)` |
 | `delegset` | `set_delegate` | `(owner: Address, delegate: Address)` |
 | `delegclr` | `set_delegate` (clearing) | `owner: Address` |
 | `gvote` | `guardian_trigger` | `(guardian: Address, weight: u32, total_weight: u32)` |

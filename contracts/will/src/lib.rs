@@ -2363,7 +2363,10 @@ impl WillContract {
     }
 
     /// Adds `amount` of a specific `token` to an existing will's locked
-    /// balance. Only possible while the will is `Active`. The token does not
+    /// balance. Possible while the will is `Active`, and also while it is
+    /// `Triggered` and still inside its grace period (#724): the owner may top
+    /// up a will whose check-in was missed until the grace deadline passes.
+    /// The token does not
     /// need to have been part of the original `create_will` call — new tokens
     /// can be added via `top_up`, up to the same [`MAX_TOKENS`]
     /// distinct-token cap `create_will` enforces.
@@ -2378,7 +2381,11 @@ impl WillContract {
     ///
     /// # Panics
     /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
-    /// - [`WillError::WillNotActive`] if the will is not `Active`.
+    /// - [`WillError::WillNotActive`] if the will is neither `Active` nor
+    ///   `Triggered`.
+    /// - [`WillError::GracePeriodExpired`] if the will is `Triggered` and the
+    ///   grace deadline has already passed (#724). The grace deadline second
+    ///   itself is still accepted, matching `emergency_checkin`.
     /// - [`WillError::ZeroAmount`] if `amount` is not positive.
     /// - [`WillError::InvalidTokenCount`] if `token` is not already in the
     ///   will's `balances` map and that map already holds [`MAX_TOKENS`]
@@ -2388,7 +2395,15 @@ impl WillContract {
     pub fn top_up(env: Env, will_id: u64, owner: Address, token: Address, amount: i128) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
-        assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
+        match will.status {
+            WillStatus::Active => {}
+            WillStatus::Triggered => {
+                if env.ledger().timestamp() > grace_deadline(&will) {
+                    panic_with_error!(&env, WillError::GracePeriodExpired);
+                }
+            }
+            _ => panic_with_error!(&env, WillError::WillNotActive),
+        }
 
         if amount <= 0 {
             panic_with_error!(&env, WillError::ZeroAmount);
@@ -2431,6 +2446,7 @@ impl WillContract {
         token::Client::new(&env, &token).transfer(&owner, &env.current_contract_address(), &amount);
 
         events::top_up(&env, will_id, &owner, &token, amount, new_balance);
+        events::will_funded(&env, will_id, &owner, &token, amount);
     }
 
     /// Returns the contract version as a `u32` encoded semver value:
