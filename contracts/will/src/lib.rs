@@ -852,10 +852,12 @@ impl WillContract {
             // before attempting any transfer (#703).
             assert_valid_token(&env, &token_addr);
             // Transfer this token from the owner into the contract.
-            token::Client::new(&env, &token_addr).transfer(
+            safe_transfer_token(
+                &env,
+                &token_addr,
                 &owner,
                 &env.current_contract_address(),
-                &amount,
+                amount,
             );
             // Duplicates were rejected above, so this is a plain insert; the
             // additive accumulation is kept so the intent stays explicit.
@@ -1023,6 +1025,8 @@ impl WillContract {
         assert_valid_allocations(&env, &will.beneficiaries, total_balance(&will.balances));
         assert_valid_percentages(&env, &will.beneficiaries, &will.hashed_beneficiaries);
 
+        let now = env.ledger().timestamp();
+        assert_timestamp_progression(&env, &will, now);
         will.status = WillStatus::Active;
         will.last_checkin = now;
         will.confirmation_deadline = None;
@@ -1081,6 +1085,7 @@ impl WillContract {
         // production delays move that time forward for everyone at once, so the
         // cooldown is measured in ledger seconds, not in blocks (#652).
         let now = env.ledger().timestamp();
+        assert_timestamp_progression(&env, &will, now);
         will.last_checkin = now;
         let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
         storage::save_will(&env, &will);
@@ -1155,6 +1160,7 @@ impl WillContract {
         for will_id in will_ids.iter() {
             let mut will = load_owned(&env, will_id, &owner);
             assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
+            assert_timestamp_progression(&env, &will, now);
 
             will.last_checkin = now;
             let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
@@ -1275,6 +1281,7 @@ impl WillContract {
         if now > grace_deadline(&will) {
             panic_with_error!(&env, WillError::GracePeriodExpired);
         }
+        assert_timestamp_progression(&env, &will, now);
 
         // Clear the vote markers before zeroing the counter: the counter is
         // what tells `reset_guardian_votes` whether there is anything to clear.
@@ -1469,10 +1476,12 @@ impl WillContract {
             None => panic_with_error!(&env, WillError::NoFailedPayout),
         };
 
-        token::Client::new(&env, &token).transfer(
+        safe_transfer_token(
+            &env,
+            &token,
             &env.current_contract_address(),
             &recipient,
-            &amount,
+            amount,
         );
 
         storage::remove_failed_payout(&env, will_id, &token, &recipient);
@@ -1553,7 +1562,7 @@ impl WillContract {
         // --- INTERACTIONS: external token transfers happen after state is settled ---
         for (token_addr, balance) in balances_snapshot.iter() {
             if balance > 0 {
-                token::Client::new(&env, &token_addr).transfer(&contract_address, &owner, &balance);
+                safe_transfer_token(&env, &token_addr, &contract_address, &owner, balance);
             }
         }
 
@@ -1642,6 +1651,18 @@ impl WillContract {
                 storage::index_by_beneficiary(&env, &new_beneficiary.address, will_id);
             }
         }
+
+        // Clear any pending guardian trigger/cancel votes and trigger metadata
+        // so stale votes cast before the beneficiary update cannot carry over (#693).
+        storage::reset_guardian_votes(&env, &will);
+        guardian_vote_purge::purge_guardian_vote_records(&env, &will);
+        storage::reset_guardian_cancel_votes(&env, &will);
+        will.trigger_time = None;
+        will.triggered_beneficiaries = None;
+        will.guardian_votes = 0;
+        will.guardian_vote_weight = 0;
+        will.guardian_cancel_votes = 0;
+        will.guardian_cancel_vote_weight = 0;
 
         will.beneficiaries = beneficiaries;
         storage::save_will(&env, &will);
@@ -3165,6 +3186,7 @@ impl WillContract {
         );
 
         if will.guardian_cancel_vote_weight >= will.guardian_threshold {
+            assert_timestamp_progression(&env, &will, now);
             // Quorum reached: reset the will to Active, mirror emergency_checkin.
             storage::reset_guardian_cancel_votes(&env, &will);
             // Also clear any in-progress release votes so the release cycle
@@ -3439,7 +3461,7 @@ impl WillContract {
             token::Client::new(&env, &token_addr).transfer(
                 &owner,
                 &env.current_contract_address(),
-                &amount,
+                amount,
             );
             let prev = balances.get(token_addr.clone()).unwrap_or(0);
             balances.set(token_addr, prev + amount);
@@ -3688,7 +3710,7 @@ impl WillContract {
                 token::Client::new(&env, &token_addr).transfer(
                     &owner,
                     &env.current_contract_address(),
-                    &amount,
+                    amount,
                 );
                 let prev = balances.get(token_addr.clone()).unwrap_or(0);
                 balances.set(token_addr, prev + amount);
@@ -4912,11 +4934,7 @@ impl WillContract {
         let contract_address = env.current_contract_address();
         for (token_addr, share) in transfer_plan.iter() {
             if share > 0 {
-                token::Client::new(&env, &token_addr).transfer(
-                    &contract_address,
-                    &claimant,
-                    &share,
-                );
+                safe_transfer_token(&env, &token_addr, &contract_address, &claimant, share);
             }
         }
 
@@ -6036,6 +6054,32 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     }
 
     events::inheritance_released(env, will.id, token_count, count);
+}
+
+/// Validates that a check-in or timestamp-advancing operation does not move
+/// `last_checkin` backward (#706).
+pub(crate) fn assert_timestamp_progression(env: &Env, will: &Will, now: u64) {
+    if now < will.last_checkin {
+        panic_with_error!(env, WillError::InvalidTimestamp);
+    }
+}
+
+/// Transfers `amount` of `token_addr` from `from` to `to` using `try_transfer`
+/// so that a paused token or frozen account surfaces as
+/// [`WillError::TokenTransferFailed`] instead of an opaque host abort (#704).
+fn safe_transfer_token(
+    env: &Env,
+    token_addr: &Address,
+    from: &Address,
+    to: &Address,
+    amount: i128,
+) {
+    if token::Client::new(env, token_addr)
+        .try_transfer(from, to, &amount)
+        .is_err()
+    {
+        panic_with_error!(env, WillError::TokenTransferFailed);
+    }
 }
 
 /// Attempts to transfer `amount` of `token_addr` from `from` to `to`,
