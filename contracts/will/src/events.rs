@@ -80,10 +80,22 @@ pub fn will_triggered(env: &Env, will_id: u64, grace_period_ends: u64) {
 
 /// Published when the owner emergency-checks-in during the grace period,
 /// cancelling the trigger.
-pub fn emergency_checkin(env: &Env, will_id: u64, owner: &Address, next_deadline: u64) {
+///
+/// Topics: `("emerg", will_id)`.
+/// Data: `(owner, next_deadline, timestamp)`, where `timestamp` is the ledger
+/// time at which the emergency check-in was accepted (issue #733). The
+/// timestamp is appended after `next_deadline` so existing positional
+/// decoders of the first two fields keep working.
+pub fn emergency_checkin(
+    env: &Env,
+    will_id: u64,
+    owner: &Address,
+    next_deadline: u64,
+    timestamp: u64,
+) {
     env.events().publish(
         (symbol_short!("emerg"), will_id),
-        (owner.clone(), next_deadline),
+        (owner.clone(), next_deadline, timestamp),
     );
 }
 

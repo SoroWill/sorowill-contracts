@@ -29,7 +29,7 @@ use soroban_sdk::{
 use crate::fuzz_harness::{
     assert_beneficiaries_are_indexed, assert_removed_beneficiaries_are_unindexed,
 };
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatus};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillError, WillStatus};
 
 const DAY: u64 = 86_400;
 
@@ -251,9 +251,17 @@ fn update_beneficiaries_rejected_after_trigger() {
         ],
     );
 
-    assert!(
-        result.is_err(),
-        "update_beneficiaries must be rejected after trigger"
+    // Issue #732: the rejection is a specific, documented error, and the
+    // stored list is left untouched.
+    assert_eq!(
+        result,
+        Err(Ok(WillError::WillNotActive.into())),
+        "update_beneficiaries must be rejected with WillNotActive after trigger"
+    );
+    assert_eq!(
+        client.get_will(&will_id).beneficiaries.get(0).unwrap().address,
+        original,
+        "a rejected update must not change the stored beneficiary list"
     );
 }
 

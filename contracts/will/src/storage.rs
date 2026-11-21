@@ -343,6 +343,25 @@ pub fn save_will(env: &Env, will: &Will) {
             }
         }
     }
+    write_will(env, will);
+}
+
+/// Writes `will` without the guardian-cleanup pre-read that [`save_will`]
+/// performs (issue #734).
+///
+/// Only for entry points that leave `will.guardians` exactly as they loaded
+/// it. The pre-read exists solely to find guardians that were dropped from the
+/// list and clear their votes; when the list is unchanged that scan finds
+/// nothing, so skipping it saves a full decode of the stored will on every
+/// call without changing what is written. Entry points that replace the
+/// guardian list must keep calling [`save_will`].
+pub fn save_will_guardians_unchanged(env: &Env, will: &Will) {
+    write_will(env, will);
+}
+
+/// Persists the will entry and renews its TTL unless it is terminal.
+fn write_will(env: &Env, will: &Will) {
+    let key = DataKey::Will(will.id);
     env.storage().persistent().set(&key, will);
     if !matches!(will.status, WillStatus::Released | WillStatus::Cancelled) {
         env.storage()

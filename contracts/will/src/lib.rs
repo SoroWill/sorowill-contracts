@@ -1061,7 +1061,7 @@ impl WillContract {
         will.status = WillStatus::Active;
         will.last_checkin = now;
         will.confirmation_deadline = None;
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         // Record the confirmation in the audit trail so `get_will_history`
         // can reconstruct the full lifecycle (#352).
@@ -1122,7 +1122,7 @@ impl WillContract {
         assert_timestamp_progression(&env, &will, now);
         will.last_checkin = now;
         let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         // Record the check-in in the same audit trail status transitions use
         // (#500). `status` does not change, so this is a same-status entry
@@ -1150,7 +1150,7 @@ impl WillContract {
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
 
         will.delegate = delegate.clone();
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         if let Some(ref addr) = delegate {
             events::delegate_set(&env, will_id, &owner, addr);
@@ -1198,7 +1198,7 @@ impl WillContract {
 
             will.last_checkin = now;
             let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
-            storage::save_will(&env, &will);
+            storage::save_will_guardians_unchanged(&env, &will);
 
             // Same per-will audit entry as the single-will `check_in` path,
             // so a batched check-in is indistinguishable in the trail from
@@ -1341,7 +1341,7 @@ impl WillContract {
         will.guardian_cancel_votes = 0;
         // Never persist a will whose legacy mirror disagrees with the map (#592).
         balance_consistency::sync_primary_balance(&mut will);
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         storage::unindex_triggered_will(&env, will_id);
 
@@ -1355,7 +1355,7 @@ impl WillContract {
         );
 
         let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
-        events::emergency_checkin(&env, will_id, &owner, next_deadline);
+        events::emergency_checkin(&env, will_id, &owner, next_deadline, now);
     }
 
     /// Distributes all token balances to beneficiaries proportionally to
@@ -1598,7 +1598,7 @@ impl WillContract {
             storage::remove_beneficiary_index(&env, &beneficiary.address, will_id);
         }
 
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         record_transition(
             &env,
@@ -1637,7 +1637,7 @@ impl WillContract {
         );
 
         will.status = WillStatus::Settled;
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         // Record the Released -> Settled transition so the audit trail from
         // `get_will_history` has no gaps (#352).
@@ -1727,7 +1727,7 @@ impl WillContract {
         will.guardian_cancel_vote_weight = 0;
 
         will.beneficiaries = beneficiaries;
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         events::beneficiaries_updated(
             &env,
@@ -2004,7 +2004,7 @@ impl WillContract {
 
         // Get the owner for event emission (not changed)
         let owner = will.owner.clone();
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         events::beneficiary_renounced(
             &env,
@@ -2290,7 +2290,7 @@ impl WillContract {
         // `now + period` — otherwise the published deadline is later than the
         // enforced one by the age of the current check-in (#357).
         let next_deadline = will.last_checkin + will.checkin_period_days * SECONDS_PER_DAY;
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         events::periods_updated(
             &env,
@@ -2544,7 +2544,7 @@ impl WillContract {
         // from the map, so a top-up of a secondary token also heals a stale
         // mirror (#592).
         balance_consistency::record_balance(&mut will, &token, new_balance);
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         // Increment locked value for this token
         storage::adjust_locked_value(&env, &token, amount);
@@ -3262,7 +3262,7 @@ impl WillContract {
             tally_guardian_votes(&env, &will, now, storage::has_guardian_voted);
         will.guardian_votes = votes;
         will.guardian_vote_weight = vote_weight;
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         // Events are part of this invocation: if the release below fails, the
         // host discards this event along with the state (see
@@ -3379,7 +3379,7 @@ impl WillContract {
             tally_guardian_votes(&env, &will, now, storage::has_guardian_cancel_voted);
         will.guardian_cancel_votes = votes;
         will.guardian_cancel_vote_weight = vote_weight;
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         events::guardian_cancel_voted(
             &env,
@@ -3409,7 +3409,7 @@ impl WillContract {
             // re-snapshots whatever the beneficiary list is at that point
             // (#657).
             will.triggered_beneficiaries = None;
-            storage::save_will(&env, &will);
+            storage::save_will_guardians_unchanged(&env, &will);
 
             storage::unindex_triggered_will(&env, will_id);
 
@@ -4926,7 +4926,7 @@ impl WillContract {
         // way (#641).
         assert_valid_percentages(&env, &will.beneficiaries, &will.hashed_beneficiaries);
 
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         events::hashed_beneficiary_added(&env, will_id, &owner, &commitment, percentage);
     }
@@ -5186,7 +5186,7 @@ impl WillContract {
             }
         }
         will.hashed_beneficiaries = updated_hb;
-        storage::save_will(&env, &will);
+        storage::save_will_guardians_unchanged(&env, &will);
 
         events::hashed_claimed(&env, will_id, &claimant, primary_share);
     }
@@ -6262,7 +6262,7 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     // its purpose and is cleared so it can never be mistaken for live state
     // (#657).
     will.triggered_beneficiaries = None;
-    storage::save_will(env, will);
+    storage::save_will_guardians_unchanged(env, will);
 
     // --- INTERACTIONS: external token transfers execute after state is settled ---
     //
