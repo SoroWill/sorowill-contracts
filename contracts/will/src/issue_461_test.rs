@@ -90,7 +90,7 @@ fn hashed_beneficiary_claims_its_share_of_every_token() {
     client.add_hashed_beneficiary(&will_id, &owner, &commitment_bytes, &5_000);
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
 

@@ -180,7 +180,7 @@ fn test_will_triggered_event_snapshot() {
     let grace_period_ends = env.ledger().timestamp() + (7 * 24 * 60 * 60); // 7 days
 
     env.as_contract(&contract_id, || {
-        events::will_triggered(&env, will_id, grace_period_ends);
+        events::will_triggered(&env, will_id, grace_period_ends, env.ledger().timestamp(), &None);
     });
 
     // Verify will_triggered event
@@ -196,19 +196,21 @@ fn test_emergency_checkin_event_snapshot() {
     let (env, owner, contract_id, _client) = setup_test_env();
 
     let will_id = 12345u64;
-    let next_deadline = env.ledger().timestamp() + (90 * 24 * 60 * 60);
+    let now = env.ledger().timestamp();
+    let next_deadline = now + (90 * 24 * 60 * 60);
 
     env.as_contract(&contract_id, || {
-        events::emergency_checkin(&env, will_id, &owner, next_deadline);
+        events::emergency_checkin(&env, will_id, &owner, next_deadline, now);
     });
 
     // Verify emergency_checkin event
     let event_data = find_event_by_topic(&env, symbol_short!("emerg"), Some(will_id))
         .expect("emergency_checkin event not found");
 
-    let data: (Address, u64) = event_data.try_into_val(&env).unwrap();
+    let data: (Address, u64, u64) = event_data.try_into_val(&env).unwrap();
     assert_eq!(data.0, owner, "event owner mismatch");
     assert_eq!(data.1, next_deadline, "event next_deadline mismatch");
+    assert_eq!(data.2, now, "event timestamp mismatch");
 }
 
 #[test]
@@ -220,7 +222,7 @@ fn test_inheritance_released_event_snapshot() {
     let beneficiaries_count = 3u32;
 
     env.as_contract(&contract_id, || {
-        events::inheritance_released(&env, will_id, token_count, beneficiaries_count);
+        events::inheritance_released(&env, will_id, token_count, beneficiaries_count, env.ledger().timestamp(), &soroban_sdk::Vec::new(&env));
     });
 
     // Verify inheritance_released event
@@ -475,10 +477,11 @@ fn test_remaining_events_snapshot() {
 
     let event_data = find_event_by_topic(&env, symbol_short!("migrated"), Some(will_id))
         .expect("will_migrated event not found");
-    let data: (Address, u32, u32) = event_data.try_into_val(&env).unwrap();
+    let data: (Address, u32, u32, u64) = event_data.try_into_val(&env).unwrap();
     assert_eq!(data.0, owner, "migrated event owner mismatch");
     assert_eq!(data.1, from_version, "migrated event from_version mismatch");
     assert_eq!(data.2, to_version, "migrated event to_version mismatch");
+    assert_eq!(data.3, env.ledger().timestamp(), "migrated event timestamp mismatch");
 
     // will_cloned event
     let source_id = 22222u64;
@@ -697,13 +700,19 @@ fn test_event_ordering_lifecycle() {
         // 2. Check-in
         events::check_in(&env, will_id, &owner, env.ledger().timestamp() + 7200);
         // 3. Will triggered
-        events::will_triggered(&env, will_id, env.ledger().timestamp() + 604800);
+        events::will_triggered(&env, will_id, env.ledger().timestamp() + 604800, env.ledger().timestamp(), &None);
         // 4. Emergency check-in (cancels trigger)
-        events::emergency_checkin(&env, will_id, &owner, env.ledger().timestamp() + 10800);
+        events::emergency_checkin(
+            &env,
+            will_id,
+            &owner,
+            env.ledger().timestamp() + 10800,
+            env.ledger().timestamp(),
+        );
         // 5. Will triggered again
-        events::will_triggered(&env, will_id, env.ledger().timestamp() + 608400);
+        events::will_triggered(&env, will_id, env.ledger().timestamp() + 608400, env.ledger().timestamp(), &None);
         // 6. Inheritance released
-        events::inheritance_released(&env, will_id, 1, 1);
+        events::inheritance_released(&env, will_id, 1, 1, env.ledger().timestamp(), &soroban_sdk::Vec::new(&env));
     });
 
     // Verify all events are present and in correct order by checking the event stream

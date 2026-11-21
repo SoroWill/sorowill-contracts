@@ -3,9 +3,10 @@
 //! Every state-changing entry point publishes exactly one event so that
 //! off-chain indexers (such as the SoroWill SDK/app) can reconstruct will
 //! history without re-simulating transactions. That includes the guardian
-//! consent transitions: [`guardian_accepted_role`] and
-//! [`guardian_rejected_role`] report when a named guardian becomes eligible to
-//! vote in `guardian_trigger`, or loses that eligibility.
+//! consent transitions ([`guardian_accepted_role`] and
+//! [`guardian_rejected_role`]) and guardian voting activity
+//! ([`guardian_voted`] for trigger votes and [`guardian_cancel_voted`] for
+//! cancel-trigger votes).
 
 use soroban_sdk::{symbol_short, Address, Bytes, Env, Symbol, Vec};
 
@@ -14,6 +15,10 @@ use crate::types::{Beneficiary, Guardian};
 /// Published when a new will is created.
 ///
 /// `token_count` is the number of distinct tokens locked at creation time.
+///
+/// The final tuple element is the creation timestamp (ledger Unix seconds)
+/// (#726), so the audit trail records when each will was created without a
+/// follow-up `get_will` call.
 ///
 /// `beneficiaries` is the *full* beneficiary list (address + allocation
 /// pairs), not just a count, so an off-chain indexer can reconstruct who a
@@ -45,6 +50,7 @@ pub fn will_created(
             token_count,
             beneficiaries.clone(),
             checkin_deadline,
+            env.ledger().timestamp(),
         ),
     );
 }
@@ -63,7 +69,10 @@ pub fn check_in(env: &Env, will_id: u64, owner: &Address, next_deadline: u64) {
     );
 }
 
-/// Published when a will is triggered after a missed check-in.
+/// Published when a will is triggered after a missed check-in (#697).
+///
+/// Emits `("triggered", will_id)` with `grace_period_ends` so off-chain
+/// monitors and indexers can track trigger transitions without polling.
 pub fn will_triggered(env: &Env, will_id: u64, grace_period_ends: u64) {
     env.events()
         .publish((symbol_short!("triggered"), will_id), grace_period_ends);
@@ -71,20 +80,61 @@ pub fn will_triggered(env: &Env, will_id: u64, grace_period_ends: u64) {
 
 /// Published when the owner emergency-checks-in during the grace period,
 /// cancelling the trigger.
-pub fn emergency_checkin(env: &Env, will_id: u64, owner: &Address, next_deadline: u64) {
+///
+/// Topics: `("emerg", will_id)`.
+/// Data: `(owner, next_deadline, timestamp)`, where `timestamp` is the ledger
+/// time at which the emergency check-in was accepted (issue #733). The
+/// timestamp is appended after `next_deadline` so existing positional
+/// decoders of the first two fields keep working.
+pub fn emergency_checkin(
+    env: &Env,
+    will_id: u64,
+    owner: &Address,
+    next_deadline: u64,
+    timestamp: u64,
+) {
     env.events().publish(
         (symbol_short!("emerg"), will_id),
-        (owner.clone(), next_deadline),
+        (owner.clone(), next_deadline, timestamp),
     );
 }
 
 /// Published when inheritance is released to all beneficiaries.
 ///
-/// `token_count` is the number of distinct tokens distributed.
-pub fn inheritance_released(env: &Env, will_id: u64, token_count: u32, beneficiaries_count: u32) {
+/// Data: `(token_count, beneficiaries_count, released_at, payouts)`.
+/// - `token_count` is the number of distinct tokens distributed.
+/// - `released_at` is the ledger timestamp of the release.
+/// - `payouts` lists every planned beneficiary share as
+///   `(beneficiary, token, amount)`, one entry per non-zero share, so an audit
+///   trail can reconstruct exactly what each beneficiary was owed. Amounts are
+///   the planned payouts; any transfer that could not be sent is recorded
+///   separately for retry (see `retry_failed_payout`).
+pub fn inheritance_released(
+    env: &Env,
+    will_id: u64,
+    token_count: u32,
+    beneficiaries_count: u32,
+    released_at: u64,
+    payouts: &Vec<(Address, Address, i128)>,
+) {
     env.events().publish(
         (symbol_short!("released"), will_id),
-        (token_count, beneficiaries_count),
+        (token_count, beneficiaries_count, released_at, payouts.clone()),
+    );
+}
+
+/// Published when a token share is distributed to a beneficiary during
+/// `release_inheritance` / `distribute` (#698).
+pub fn tokens_distributed(
+    env: &Env,
+    will_id: u64,
+    token: &Address,
+    beneficiary: &Address,
+    amount: i128,
+) {
+    env.events().publish(
+        (symbol_short!("distrib"), will_id),
+        (token.clone(), beneficiary.clone(), amount),
     );
 }
 
@@ -118,6 +168,38 @@ pub fn beneficiaries_updated(
     );
 }
 
+/// Published whenever a will's beneficiary list is replaced, by
+/// [`crate::WillContract::update_beneficiaries`] or the beneficiary branch of
+/// [`crate::WillContract::update_will_settings`] (#718).
+///
+/// Topics: `("beneficiary_updated", will_id)`.
+/// Data: `(will_id, owner, timestamp, old_beneficiaries, new_beneficiaries)`,
+/// where `timestamp` is the ledger time of the change and both lists are full
+/// `(Address, Allocation)` lists, so an indexer can see exactly what changed
+/// without a follow-up `get_will` call. Each list is bounded by
+/// `MAX_BENEFICIARIES`.
+///
+/// Distinct from [`beneficiaries_updated`] (`benefup`), which carries only the
+/// new list and no history.
+pub fn beneficiary_updated(
+    env: &Env,
+    will_id: u64,
+    owner: &Address,
+    old_beneficiaries: &Vec<Beneficiary>,
+    new_beneficiaries: &Vec<Beneficiary>,
+) {
+    env.events().publish(
+        (Symbol::new(env, "beneficiary_updated"), will_id),
+        (
+            will_id,
+            owner.clone(),
+            env.ledger().timestamp(),
+            old_beneficiaries.clone(),
+            new_beneficiaries.clone(),
+        ),
+    );
+}
+
 /// Published when the owner updates the guardian list.
 ///
 /// `guardians` is the full new guardian list (address + weight pairs), so
@@ -127,6 +209,35 @@ pub fn guardians_updated(env: &Env, will_id: u64, owner: &Address, guardians: &V
     env.events().publish(
         (symbol_short!("guardup"), will_id),
         (owner.clone(), guardians.clone()),
+    );
+}
+
+/// Audit-trail event published alongside every guardian-list replacement
+/// (`update_guardians`, `update_guardians_weighted`, and the guardian branch of
+/// `update_will_settings`) (#719).
+///
+/// Unlike [`guardians_updated`], which only carries the new list, this event
+/// records the `old_guardians` that were removed as well as the `new_guardians`
+/// that replaced them, so an auditor can reconstruct the change without
+/// replaying history. The ledger timestamp is included so each change is
+/// time-stamped on-chain.
+pub fn guardian_updated(
+    env: &Env,
+    will_id: u64,
+    owner: &Address,
+    old_guardians: &Vec<Guardian>,
+    new_guardians: &Vec<Guardian>,
+) {
+    let timestamp = env.ledger().timestamp();
+    env.events().publish(
+        (Symbol::new(env, "guardian_updated"), will_id),
+        (
+            will_id,
+            owner.clone(),
+            old_guardians.clone(),
+            new_guardians.clone(),
+            timestamp,
+        ),
     );
 }
 
@@ -151,7 +262,12 @@ pub fn top_up(
     );
 }
 
-/// Published each time a guardian votes to trigger an early release.
+/// Published each time a guardian votes to trigger an early release (#699).
+///
+/// Topics: `("gvote", will_id)`.
+/// Data: `(guardian, weight, total_weight)` where `weight` is the voting
+/// guardian's weight and `total_weight` is the accumulated live vote weight
+/// after recording this vote.
 pub fn guardian_voted(env: &Env, will_id: u64, guardian: &Address, weight: u32, total_weight: u32) {
     env.events().publish(
         (symbol_short!("gvote"), will_id),
@@ -159,7 +275,10 @@ pub fn guardian_voted(env: &Env, will_id: u64, guardian: &Address, weight: u32, 
     );
 }
 
-/// Published each time a guardian votes to cancel a trigger (return to Active).
+/// Published each time a guardian votes to cancel a trigger (return to Active) (#699).
+///
+/// Topics: `("gcvote", will_id)`.
+/// Data: `(guardian, weight, total_weight)`.
 pub fn guardian_cancel_voted(
     env: &Env,
     will_id: u64,
@@ -208,10 +327,17 @@ pub fn wills_merged(
 }
 
 /// Published when a will is migrated to a new schema version.
+///
+/// Topics: `("migrated", will_id)`.
+/// Data: `(owner, from_version, to_version, timestamp)`, where `from_version`
+/// and `to_version` are storage schema versions (see the "Migration event"
+/// section of `docs/EVENTS.md`) and `timestamp` is the ledger time at which
+/// the migration was applied (#712).
 pub fn will_migrated(env: &Env, will_id: u64, owner: &Address, from_version: u32, to_version: u32) {
+    let timestamp = env.ledger().timestamp();
     env.events().publish(
         (symbol_short!("migrated"), will_id),
-        (owner.clone(), from_version, to_version),
+        (owner.clone(), from_version, to_version, timestamp),
     );
 }
 

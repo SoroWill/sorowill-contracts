@@ -120,7 +120,7 @@ fn sole_beneficiary_cannot_renounce_a_triggered_will() {
         .address;
 
     env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     assert_eq!(client.get_will_status(&will_id), WillStatus::Triggered);
 
     assert_eq!(

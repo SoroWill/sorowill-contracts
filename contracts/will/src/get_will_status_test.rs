@@ -121,7 +121,7 @@ fn test_get_will_status_triggered() {
     env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
 
     // Trigger the will
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     let status = client.get_will_status(&will_id);
     assert_eq!(status, WillStatus::Triggered);
@@ -155,7 +155,7 @@ fn test_get_will_status_released() {
 
     // confirmation_delay_seconds is 0 above, so the will is already Active.
     env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Release
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);

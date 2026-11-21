@@ -46,7 +46,7 @@ fn triggered_will() -> (Env, Address, Address, u64, u64) {
     );
 
     env.ledger().set_timestamp(t0 + 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     let grace_deadline = (t0 + 91 * DAY) + 7 * DAY;
     (env, contract_id, owner, will_id, grace_deadline)
 }
