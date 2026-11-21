@@ -43,6 +43,38 @@
 //!
 //! A grace period is a single configurable window: the will is released once,
 //! in full, once that window has fully elapsed.
+//!
+//! # State Machine & Transitions
+//!
+//! Every will moves through [`WillStatus`] states according to the following
+//! lifecycle:
+//!
+//! ```text
+//!   create_will (confirmation_window > 0) ──► PendingConfirmation
+//!   create_will (confirmation_window == 0) ─► Active
+//!
+//!   PendingConfirmation ──(confirm_will)──────────────────► Active
+//!   PendingConfirmation ──(cancel_will)───────────────────► Cancelled
+//!
+//!   Active ──(trigger_will, deadline missed)──────────────► Triggered
+//!   Active ──(guardian_trigger, quorum reached)───────────► Released
+//!   Active ──(cancel_will / merge_wills consumed)─────────► Cancelled
+//!
+//!   Triggered ──(emergency_checkin / guardian_cancel_trigger) ─► Active
+//!   Triggered ──(release_inheritance, grace elapsed)──────► Released
+//!   Triggered ──(cancel_will)─────────────────────────────► Cancelled
+//!
+//!   Released ──(close_will)───────────────────────────────► Settled
+//! ```
+//!
+//! - **In-state operations**: `check_in`, `batch_check_in`, `top_up`,
+//!   `update_beneficiaries`, `update_guardians`, `update_guardians_weighted`,
+//!   `update_periods`, `update_will_settings`, `set_delegate`, `clear_delegate`,
+//!   `add_hashed_beneficiary`, `split_will`, and `clone_will` keep the will in
+//!   its current status (`Active`, or `Triggered` where permitted).
+//! - **Terminal states**: `Cancelled` and `Settled` are terminal (no further
+//!   balance-moving or lifecycle transitions). `archive_will` removes a
+//!   `Released` or `Cancelled` will from active storage once settled.
 
 mod batch_check_in_limit;
 mod errors;
@@ -411,6 +443,10 @@ mod issue_572_575_test;
 /// circular transfer that would lock the bounty amount with no withdrawal path.
 #[cfg(test)]
 mod issue_662_test;
+
+/// Regression tests for issues #700, #701, #703, and #711.
+#[cfg(test)]
+mod issue_700_701_703_711_test;
 
 use soroban_sdk::{
     contract, contractimpl, log, panic_with_error, symbol_short, token, xdr::ToXdr, Address,
@@ -813,21 +849,15 @@ impl WillContract {
                 panic_with_error!(&env, WillError::ZeroAmount);
             }
             // Probe the token interface with a read-only `decimals()` call
-            // before attempting any transfer. A non-token address (or any
-            // contract that does not implement SEP-41) will fail here with a
-            // clear `InvalidToken` error rather than an opaque host-level
-            // cross-contract failure deep inside `transfer`.
-            if token::Client::new(&env, &token_addr)
-                .try_decimals()
-                .is_err()
-            {
-                panic_with_error!(&env, WillError::InvalidToken);
-            }
+            // before attempting any transfer (#703).
+            assert_valid_token(&env, &token_addr);
             // Transfer this token from the owner into the contract.
-            token::Client::new(&env, &token_addr).transfer(
+            safe_transfer_token(
+                &env,
+                &token_addr,
                 &owner,
                 &env.current_contract_address(),
-                &amount,
+                amount,
             );
             // Duplicates were rejected above, so this is a plain insert; the
             // additive accumulation is kept so the intent stays explicit.
@@ -995,6 +1025,8 @@ impl WillContract {
         assert_valid_allocations(&env, &will.beneficiaries, total_balance(&will.balances));
         assert_valid_percentages(&env, &will.beneficiaries, &will.hashed_beneficiaries);
 
+        let now = env.ledger().timestamp();
+        assert_timestamp_progression(&env, &will, now);
         will.status = WillStatus::Active;
         will.last_checkin = now;
         will.confirmation_deadline = None;
@@ -1056,6 +1088,7 @@ impl WillContract {
         // production delays move that time forward for everyone at once, so the
         // cooldown is measured in ledger seconds, not in blocks (#652).
         let now = env.ledger().timestamp();
+        assert_timestamp_progression(&env, &will, now);
         will.last_checkin = now;
         let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
         storage::save_will(&env, &will);
@@ -1130,9 +1163,7 @@ impl WillContract {
         for will_id in will_ids.iter() {
             let mut will = load_owned(&env, will_id, &owner);
             assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
-            if will.grace_period_days >= will.checkin_period_days {
-                panic_with_error!(&env, WillError::InvalidPeriod);
-            }
+            assert_timestamp_progression(&env, &will, now);
 
             will.last_checkin = now;
             let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
@@ -1260,6 +1291,7 @@ impl WillContract {
         if now > grace_deadline(&will) {
             panic_with_error!(&env, WillError::GracePeriodExpired);
         }
+        assert_timestamp_progression(&env, &will, now);
 
         // Clear the vote markers before zeroing the counter: the counter is
         // what tells `reset_guardian_votes` whether there is anything to clear.
@@ -1454,10 +1486,12 @@ impl WillContract {
             None => panic_with_error!(&env, WillError::NoFailedPayout),
         };
 
-        token::Client::new(&env, &token).transfer(
+        safe_transfer_token(
+            &env,
+            &token,
             &env.current_contract_address(),
             &recipient,
-            &amount,
+            amount,
         );
 
         storage::remove_failed_payout(&env, will_id, &token, &recipient);
@@ -1538,7 +1572,7 @@ impl WillContract {
         // --- INTERACTIONS: external token transfers happen after state is settled ---
         for (token_addr, balance) in balances_snapshot.iter() {
             if balance > 0 {
-                token::Client::new(&env, &token_addr).transfer(&contract_address, &owner, &balance);
+                safe_transfer_token(&env, &token_addr, &contract_address, &owner, balance);
             }
         }
 
@@ -1627,6 +1661,18 @@ impl WillContract {
                 storage::index_by_beneficiary(&env, &new_beneficiary.address, will_id);
             }
         }
+
+        // Clear any pending guardian trigger/cancel votes and trigger metadata
+        // so stale votes cast before the beneficiary update cannot carry over (#693).
+        storage::reset_guardian_votes(&env, &will);
+        guardian_vote_purge::purge_guardian_vote_records(&env, &will);
+        storage::reset_guardian_cancel_votes(&env, &will);
+        will.trigger_time = None;
+        will.triggered_beneficiaries = None;
+        will.guardian_votes = 0;
+        will.guardian_vote_weight = 0;
+        will.guardian_cancel_votes = 0;
+        will.guardian_cancel_vote_weight = 0;
 
         will.beneficiaries = beneficiaries;
         storage::save_will(&env, &will);
@@ -2357,6 +2403,8 @@ impl WillContract {
             panic_with_error!(&env, WillError::InvalidTokenCount);
         }
 
+        assert_valid_token(&env, &token);
+
         // Snapshot values needed after state mutation (checks-effects-interactions).
         let prev = will.balances.get(token.clone()).unwrap_or(0);
         let new_balance = prev + amount;
@@ -2377,6 +2425,7 @@ impl WillContract {
         storage::adjust_locked_value(&env, &token, amount);
 
         // --- INTERACTIONS: external token transfer after state is committed ---
+        assert_owner_min_balance(&env, &owner, &token, amount);
         token::Client::new(&env, &token).transfer(&owner, &env.current_contract_address(), &amount);
 
         events::top_up(&env, will_id, &owner, &token, amount, new_balance);
@@ -3151,6 +3200,7 @@ impl WillContract {
         );
 
         if will.guardian_cancel_vote_weight >= will.guardian_threshold {
+            assert_timestamp_progression(&env, &will, now);
             // Quorum reached: reset the will to Active, mirror emergency_checkin.
             storage::reset_guardian_cancel_votes(&env, &will);
             // Also clear any in-progress release votes so the release cycle
@@ -3421,10 +3471,11 @@ impl WillContract {
             if amount <= 0 {
                 panic_with_error!(&env, WillError::ZeroAmount);
             }
+            assert_valid_token(&env, &token_addr);
             token::Client::new(&env, &token_addr).transfer(
                 &owner,
                 &env.current_contract_address(),
-                &amount,
+                amount,
             );
             let prev = balances.get(token_addr.clone()).unwrap_or(0);
             balances.set(token_addr, prev + amount);
@@ -3563,6 +3614,63 @@ impl WillContract {
             panic_with_error!(&env, WillError::TooManyBeneficiaries);
         }
 
+        // Pre-validate every spec in a read-only pass before any token transfer
+        // or storage write so the batch is strictly atomic (#694).
+        let mut total_required_by_token: Map<Address, i128> = Map::new(&env);
+        for spec in will_specs.iter() {
+            let (
+                tokens,
+                beneficiaries,
+                checkin_period_days,
+                grace_period_days,
+                guardians,
+                guardian_threshold,
+            ) = spec;
+
+            if tokens.is_empty() || tokens.len() > MAX_TOKENS {
+                panic_with_error!(&env, WillError::InvalidTokenCount);
+            }
+            let mut seen_tokens: Vec<Address> = Vec::new(&env);
+            let mut spec_balances: Map<Address, i128> = Map::new(&env);
+            for (token_addr, amount) in tokens.iter() {
+                if seen_tokens.contains(&token_addr) {
+                    panic_with_error!(&env, WillError::DuplicateToken);
+                }
+                seen_tokens.push_back(token_addr.clone());
+                if amount <= 0 {
+                    panic_with_error!(&env, WillError::ZeroAmount);
+                }
+                if token::Client::new(&env, &token_addr)
+                    .try_decimals()
+                    .is_err()
+                {
+                    panic_with_error!(&env, WillError::InvalidToken);
+                }
+                let prev_spec = spec_balances.get(token_addr.clone()).unwrap_or(0);
+                spec_balances.set(token_addr.clone(), prev_spec + amount);
+                let prev_total = total_required_by_token.get(token_addr.clone()).unwrap_or(0);
+                total_required_by_token.set(token_addr, prev_total + amount);
+            }
+
+            assert_beneficiary_count(&env, &beneficiaries);
+            assert_valid_guardians(&env, &owner, &guardians);
+            assert_valid_periods(&env, checkin_period_days, grace_period_days);
+            if !guardians.is_empty() && !(1..=guardians.len()).contains(&guardian_threshold) {
+                panic_with_error!(&env, WillError::InvalidGuardianThreshold);
+            }
+            storage::assert_index_capacity(&env, &owner, &beneficiaries);
+
+            let (primary_token, _) = tokens.get_unchecked(0);
+            assert_valid_allocations(
+                &env,
+                &beneficiaries,
+                primary_token_balance(&spec_balances, &primary_token),
+            );
+        }
+        for (token_addr, total_required) in total_required_by_token.iter() {
+            assert_owner_min_balance(&env, &owner, &token_addr, total_required);
+        }
+
         let mut ids = Vec::new(&env);
         for spec in will_specs.iter() {
             let (
@@ -3612,10 +3720,11 @@ impl WillContract {
                 if amount <= 0 {
                     panic_with_error!(&env, WillError::ZeroAmount);
                 }
+                assert_valid_token(&env, &token_addr);
                 token::Client::new(&env, &token_addr).transfer(
                     &owner,
                     &env.current_contract_address(),
-                    &amount,
+                    amount,
                 );
                 let prev = balances.get(token_addr.clone()).unwrap_or(0);
                 balances.set(token_addr, prev + amount);
@@ -4719,6 +4828,7 @@ impl WillContract {
     /// - [`WillError::AlreadyClaimed`] if that slot was already claimed.
     pub fn reveal_and_claim(env: Env, will_id: u64, claimant: Address, preimage: Bytes) {
         claimant.require_auth();
+        assert_valid_beneficiary_address(&env, &claimant);
         let mut will = load_will(&env, will_id);
         // A hashed beneficiary's reserved share is only carved out of the
         // will's balances once `distribute()` runs (see #181), so claiming
@@ -4816,7 +4926,7 @@ impl WillContract {
             let share = if total == 0 || hb.percentage == 0 {
                 0
             } else {
-                total * (hb.percentage as i128) / unclaimed_bps
+                proportional_share_with_denom(total, hb.percentage, unclaimed_bps)
             };
             if share > 0 {
                 transfer_plan.push_back((token_addr.clone(), share));
@@ -4838,11 +4948,7 @@ impl WillContract {
         let contract_address = env.current_contract_address();
         for (token_addr, share) in transfer_plan.iter() {
             if share > 0 {
-                token::Client::new(&env, &token_addr).transfer(
-                    &contract_address,
-                    &claimant,
-                    &share,
-                );
+                safe_transfer_token(&env, &token_addr, &contract_address, &claimant, share);
             }
         }
 
@@ -5005,6 +5111,26 @@ fn assert_owner_or_delegate(env: &Env, will: &Will, caller: &Address) {
     }
 }
 
+/// Minimum token balance required on an owner's account when creating or
+/// funding a will (#695).
+const MIN_OWNER_BALANCE: i128 = 1;
+
+/// Validates that `owner` holds at least `required_amount` (and at least
+/// [`MIN_OWNER_BALANCE`]) of `token_addr` before attempting a transfer (#695).
+fn assert_owner_min_balance(
+    env: &Env,
+    owner: &Address,
+    token_addr: &Address,
+    required_amount: i128,
+) {
+    let min_required = required_amount.max(MIN_OWNER_BALANCE);
+    if let Ok(Ok(balance)) = token::Client::new(env, token_addr).try_balance(owner) {
+        if balance < min_required {
+            panic_with_error!(env, WillError::InsufficientBalance);
+        }
+    }
+}
+
 /// Returns whether `beneficiaries` names `address`.
 ///
 /// Operates on an in-memory list, so callers can decide reverse-index
@@ -5037,6 +5163,26 @@ fn names_address(beneficiaries: &Vec<Beneficiary>, address: &Address) -> bool {
 ///   beneficiaries at all) is allowed to account for less than the whole
 ///   balance; the unallocated remainder is refunded to the owner at
 ///   distribute time rather than left stranded in the contract (#383).
+/// Probes a token address with a read-only `decimals()` call to verify it
+/// implements the SEP-41 token interface before attempting a transfer (#703).
+fn assert_valid_token(env: &Env, token_addr: &Address) {
+    if token::Client::new(env, token_addr)
+        .try_decimals()
+        .is_err()
+    {
+        panic_with_error!(env, WillError::InvalidToken);
+    }
+}
+
+/// Validates that a beneficiary (or hashed-beneficiary claimant) address is
+/// eligible to receive payouts (#711). Rejects the contract's own address so
+/// funds can never be transferred into the contract itself and locked forever.
+fn assert_valid_beneficiary_address(env: &Env, address: &Address) {
+    if *address == env.current_contract_address() {
+        panic_with_error!(env, WillError::InvalidBeneficiaryAddress);
+    }
+}
+
 fn assert_valid_allocations(env: &Env, beneficiaries: &Vec<Beneficiary>, primary_balance: i128) {
     let contract_address = env.current_contract_address();
     let mut percentage_total: u32 = 0;
@@ -5045,9 +5191,7 @@ fn assert_valid_allocations(env: &Env, beneficiaries: &Vec<Beneficiary>, primary
 
     for i in 0..beneficiaries.len() {
         let beneficiary = beneficiaries.get_unchecked(i);
-        if beneficiary.address == contract_address {
-            panic_with_error!(env, WillError::InvalidBeneficiary);
-        }
+        assert_valid_beneficiary_address(env, &beneficiary.address);
         match beneficiary.allocation {
             Allocation::Percentage(bp) => {
                 if bp == 0 {
@@ -5541,12 +5685,17 @@ fn assert_valid_periods(env: &Env, checkin_period_days: u64, grace_period_days: 
 /// truncating towards zero) without ever forming the potentially overflowing
 /// `total * basis_points` intermediate. The workspace release profile enables overflow
 /// checks, but this decomposition also makes the calculation safe independently of that compiler setting.
+/// Calculates `floor(total * numerator / denominator)` without forming the
+/// potentially overflowing `total * numerator` intermediate (#700).
+fn proportional_share_with_denom(total: i128, numerator: u32, denominator: i128) -> i128 {
+    let whole = total / denominator;
+    let remainder = total % denominator;
+    whole * (numerator as i128) + remainder * (numerator as i128) / denominator
+}
+
 pub(crate) fn proportional_share(total: i128, basis_points: u32) -> i128 {
     const BASIS_POINTS_TOTAL: i128 = 10_000;
-
-    let whole = total / BASIS_POINTS_TOTAL;
-    let remainder = total % BASIS_POINTS_TOTAL;
-    whole * basis_points as i128 + remainder * basis_points as i128 / BASIS_POINTS_TOTAL
+    proportional_share_with_denom(total, basis_points, BASIS_POINTS_TOTAL)
 }
 
 /// Pays out every token balance the will holds, marks the will `Released`,
@@ -5899,15 +6048,17 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
 
     for (token_addr, shares) in transfer_plan.iter() {
         for (beneficiary_addr, share) in shares.iter() {
-            if share > 0 {
-                pay_or_record_failure(
+            if share > 0
+                && pay_or_record_failure(
                     env,
                     &token_addr,
                     &contract_address,
                     &beneficiary_addr,
                     share,
                     will.id,
-                );
+                )
+            {
+                events::tokens_distributed(env, will.id, &token_addr, &beneficiary_addr, share);
             }
         }
 
@@ -5931,6 +6082,32 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     }
 
     events::inheritance_released(env, will.id, token_count, count);
+}
+
+/// Validates that a check-in or timestamp-advancing operation does not move
+/// `last_checkin` backward (#706).
+pub(crate) fn assert_timestamp_progression(env: &Env, will: &Will, now: u64) {
+    if now < will.last_checkin {
+        panic_with_error!(env, WillError::InvalidTimestamp);
+    }
+}
+
+/// Transfers `amount` of `token_addr` from `from` to `to` using `try_transfer`
+/// so that a paused token or frozen account surfaces as
+/// [`WillError::TokenTransferFailed`] instead of an opaque host abort (#704).
+fn safe_transfer_token(
+    env: &Env,
+    token_addr: &Address,
+    from: &Address,
+    to: &Address,
+    amount: i128,
+) {
+    if token::Client::new(env, token_addr)
+        .try_transfer(from, to, &amount)
+        .is_err()
+    {
+        panic_with_error!(env, WillError::TokenTransferFailed);
+    }
 }
 
 /// Attempts to transfer `amount` of `token_addr` from `from` to `to`,
@@ -6101,11 +6278,15 @@ fn merge_beneficiaries(env: &Env, will_a: &Will, will_b: &Will) -> Vec<Beneficia
             Some(Allocation::FixedAmount(amt)) => Allocation::FixedAmount(amt),
             _ => {
                 // Convert to percentage for non-fixed-amount beneficiaries.
-                // Widened to u128 so the `share * 10_000` intermediate can
-                // never overflow, mirroring `proportional_share`'s guarantee
-                // in the other direction (#382).
+                // Widened to u128, with a scaled fallback when `share * 10_000`
+                // would exceed `u128::MAX` (#382, #700).
                 let bp = if total_value > 0 {
-                    ((share as u128 * 10_000u128) / total_value as u128) as u32
+                    let s = share as u128;
+                    let t = total_value as u128;
+                    match s.checked_mul(10_000) {
+                        Some(prod) => (prod / t) as u32,
+                        None => (((s >> 14) * 10_000) / (t >> 14)) as u32,
+                    }
                 } else {
                     0
                 };

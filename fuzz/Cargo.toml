@@ -44,3 +44,10 @@ path = "fuzz_targets/update_beneficiaries.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "guardian_quorum"
+path = "fuzz_targets/guardian_quorum.rs"
+test = false
+doc = false
+bench = false
