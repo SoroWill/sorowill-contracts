@@ -113,7 +113,7 @@ fn overdue_triggered_will_returns_negative_seconds() {
 
     // Advance past the check-in deadline and trigger.
     env.ledger().with_mut(|l| l.timestamp += 31 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Advance past the grace period too — the will is overdue for release.
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);

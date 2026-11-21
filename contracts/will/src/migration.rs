@@ -24,11 +24,27 @@ use soroban_sdk::{Env, TryFromVal, Val};
 use crate::errors::WillError;
 use crate::types::{Will, WillStatus};
 
+/// Minimum legacy schema version supported by [`upgrade`] and
+/// [`migrate_to_version`].
+pub const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 0;
+
 /// Schema version written into every newly created or migrated will.
 ///
 /// Bump this whenever the persisted `Will` layout changes, and add both a
 /// legacy decode arm in [`decode_will`] and a migration step in [`upgrade`].
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+/// Returns `true` if `version` is within the supported schema range
+/// `[MIN_SUPPORTED_SCHEMA_VERSION, CURRENT_SCHEMA_VERSION]`.
+pub const fn is_supported_version(version: u32) -> bool {
+    version >= MIN_SUPPORTED_SCHEMA_VERSION && version <= CURRENT_SCHEMA_VERSION
+}
+
+/// Returns `true` if `will` is at an older schema version and requires
+/// migration to reach [`CURRENT_SCHEMA_VERSION`].
+pub const fn needs_migration(will: &Will) -> bool {
+    will.schema_version < CURRENT_SCHEMA_VERSION
+}
 
 /// Decodes a raw persisted will, accepting the current layout and every known
 /// legacy layout.
@@ -53,10 +69,23 @@ pub fn decode_will(env: &Env, raw: &Val) -> Result<Will, WillError> {
 }
 
 /// Runs every migration step between `will.schema_version` and
-/// [`CURRENT_SCHEMA_VERSION`], in order. A will already at (or beyond) the
-/// current version is returned unchanged.
-pub fn upgrade(env: &Env, mut will: Will) -> Will {
-    while will.schema_version < CURRENT_SCHEMA_VERSION {
+/// `target_version`, in order.
+///
+/// Returns `Ok(will)` unchanged when `will.schema_version == target_version`.
+/// Returns `Err(WillError::UnsupportedSchemaVersion)` if `target_version`
+/// exceeds [`CURRENT_SCHEMA_VERSION`], if `will.schema_version > target_version`
+/// (downgrades are not supported), or if an intermediate version has no
+/// registered migration step.
+pub fn migrate_to_version(
+    env: &Env,
+    mut will: Will,
+    target_version: u32,
+) -> Result<Will, WillError> {
+    if target_version > CURRENT_SCHEMA_VERSION || will.schema_version > target_version {
+        return Err(WillError::UnsupportedSchemaVersion);
+    }
+
+    while will.schema_version < target_version {
         let previous = will.schema_version;
         will = match will.schema_version {
             0 => {
@@ -65,13 +94,26 @@ pub fn upgrade(env: &Env, mut will: Will) -> Will {
                 upgraded
             }
             // Every version below CURRENT_SCHEMA_VERSION must have a step.
-            _ => soroban_sdk::panic_with_error!(env, WillError::UnsupportedSchemaVersion),
+            _ => return Err(WillError::UnsupportedSchemaVersion),
         };
         // Each step must advance the schema by exactly one version and leave
         // a structurally consistent will behind (#596).
         crate::migration_rules::validate_step(env, &will, previous);
     }
-    will
+    Ok(will)
+}
+
+/// Runs every migration step between `will.schema_version` and
+/// [`CURRENT_SCHEMA_VERSION`], in order. A will already at (or beyond) the
+/// current version is returned unchanged.
+pub fn upgrade(env: &Env, will: Will) -> Will {
+    if will.schema_version >= CURRENT_SCHEMA_VERSION {
+        return will;
+    }
+    match migrate_to_version(env, will, CURRENT_SCHEMA_VERSION) {
+        Ok(upgraded) => upgraded,
+        Err(err) => soroban_sdk::panic_with_error!(env, err),
+    }
 }
 
 /// Invariant checks run after each migration step to guarantee that the upgraded

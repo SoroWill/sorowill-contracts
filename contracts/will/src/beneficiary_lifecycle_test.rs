@@ -29,7 +29,7 @@ use soroban_sdk::{
 use crate::fuzz_harness::{
     assert_beneficiaries_are_indexed, assert_removed_beneficiaries_are_unindexed,
 };
-use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillStatus};
+use crate::{Allocation, Beneficiary, WillContract, WillContractClient, WillError, WillStatus};
 
 const DAY: u64 = 86_400;
 
@@ -100,7 +100,7 @@ fn release_pays_the_updated_beneficiary_list_not_the_original_one() {
 
     // Full lifecycle: missed check-in -> trigger -> grace period -> release.
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
 
@@ -186,7 +186,7 @@ fn release_pays_the_latest_of_several_beneficiary_updates() {
     assert_removed_beneficiaries_are_unindexed(&client, will_id, &[first.clone(), second.clone()]);
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
 
@@ -236,7 +236,7 @@ fn update_beneficiaries_rejected_after_trigger() {
 
     // Advance past check-in deadline and trigger the will
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // The will is now Triggered; attempting to update beneficiaries should fail
     let result = client.try_update_beneficiaries(
@@ -251,9 +251,17 @@ fn update_beneficiaries_rejected_after_trigger() {
         ],
     );
 
-    assert!(
-        result.is_err(),
-        "update_beneficiaries must be rejected after trigger"
+    // Issue #732: the rejection is a specific, documented error, and the
+    // stored list is left untouched.
+    assert_eq!(
+        result,
+        Err(Ok(WillError::WillNotActive.into())),
+        "update_beneficiaries must be rejected with WillNotActive after trigger"
+    );
+    assert_eq!(
+        client.get_will(&will_id).beneficiaries.get(0).unwrap().address,
+        original,
+        "a rejected update must not change the stored beneficiary list"
     );
 }
 
@@ -308,7 +316,7 @@ fn release_pays_trigger_time_snapshot_despite_reorder_attempt() {
     assert_eq!(snapshot.len(), 2);
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Within the grace period, attempt to reorder/replace the list. This must
     // be rejected because the will is no longer Active.
@@ -407,7 +415,7 @@ fn retrigger_after_emergency_checkin_captures_current_list() {
 
     // First trigger captures [alice].
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Owner checks in, returning the will to Active.
     client.emergency_checkin(&will_id, &owner);
@@ -428,7 +436,7 @@ fn retrigger_after_emergency_checkin_captures_current_list() {
 
     // Second trigger must capture the then-current list ([bob]).
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
 

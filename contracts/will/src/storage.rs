@@ -119,6 +119,9 @@ pub(crate) enum DataKey {
     /// re-reads or re-validates the will, so it still succeeds even if the
     /// will has since been archived.
     FailedPayout(u64, Address, Address),
+    /// Per-will configurable guardian vote expiry window in days (#692).
+    /// When unset, falls back to `will.grace_period_days`.
+    GuardianVoteExpiryDays(u64),
 }
 
 /// The data stored for each guardian vote: the Unix timestamp when the vote
@@ -340,6 +343,25 @@ pub fn save_will(env: &Env, will: &Will) {
             }
         }
     }
+    write_will(env, will);
+}
+
+/// Writes `will` without the guardian-cleanup pre-read that [`save_will`]
+/// performs (issue #734).
+///
+/// Only for entry points that leave `will.guardians` exactly as they loaded
+/// it. The pre-read exists solely to find guardians that were dropped from the
+/// list and clear their votes; when the list is unchanged that scan finds
+/// nothing, so skipping it saves a full decode of the stored will on every
+/// call without changing what is written. Entry points that replace the
+/// guardian list must keep calling [`save_will`].
+pub fn save_will_guardians_unchanged(env: &Env, will: &Will) {
+    write_will(env, will);
+}
+
+/// Persists the will entry and renews its TTL unless it is terminal.
+fn write_will(env: &Env, will: &Will) {
+    let key = DataKey::Will(will.id);
     env.storage().persistent().set(&key, will);
     if !matches!(will.status, WillStatus::Released | WillStatus::Cancelled) {
         env.storage()
@@ -659,6 +681,31 @@ pub fn get_guardian_vote(
     env.storage().persistent().get(&key)
 }
 
+/// Returns the configured guardian vote expiry window (in days) for `will`,
+/// falling back to `will.grace_period_days` when no custom window is set (#692).
+pub fn get_guardian_vote_expiry_days(env: &Env, will: &Will) -> u64 {
+    let key = DataKey::GuardianVoteExpiryDays(will.id);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(will.grace_period_days)
+}
+
+/// Sets a custom guardian vote expiry window (in days) for `will_id` (#692).
+pub fn set_guardian_vote_expiry_days(env: &Env, will_id: u64, expiry_days: u64) {
+    let key = DataKey::GuardianVoteExpiryDays(will_id);
+    env.storage().persistent().set(&key, &expiry_days);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+}
+
+/// Removes any custom guardian vote expiry window for `will_id`.
+pub fn clear_guardian_vote_expiry_days(env: &Env, will_id: u64) {
+    let key = DataKey::GuardianVoteExpiryDays(will_id);
+    env.storage().persistent().remove(&key);
+}
+
 /// Returns whether a vote recorded at `vote_timestamp` is still inside its
 /// `expiry_days` window at `now`, i.e. whether it has not expired yet.
 ///
@@ -728,7 +775,7 @@ pub fn tally_guardian_votes(env: &Env, will: &Will, now: u64, expiry_days: u64) 
     let mut count: u32 = 0;
     for guardian in will.guardians.iter() {
         if has_guardian_voted(env, will.id, &guardian.address, now, expiry_days) {
-            weight += guardian.weight;
+            weight = weight.saturating_add(guardian.weight);
             count += 1;
         }
     }
@@ -746,7 +793,7 @@ pub fn tally_guardian_cancel_votes(
     let mut count: u32 = 0;
     for guardian in will.guardians.iter() {
         if has_guardian_cancel_voted(env, will.id, &guardian.address, now, expiry_days) {
-            weight += guardian.weight;
+            weight = weight.saturating_add(guardian.weight);
             count += 1;
         }
     }
@@ -1242,6 +1289,7 @@ pub fn archive_will(env: &Env, will: &Will) {
     env.storage()
         .persistent()
         .remove(&DataKey::WillHistorySeq(will.id));
+    clear_guardian_vote_expiry_days(env, will.id);
 }
 
 /// Records (or overwrites) the amount of `token` still owed to `recipient`
@@ -1276,4 +1324,21 @@ pub fn get_failed_payout(
 pub fn remove_failed_payout(env: &Env, will_id: u64, token: &Address, recipient: &Address) {
     let key = DataKey::FailedPayout(will_id, token.clone(), recipient.clone());
     env.storage().persistent().remove(&key);
+}
+
+/// Reads the owner-configured guardian cooldown (in days) for `will_id`, or
+/// `None` if the will still uses the protocol default (#721).
+pub fn get_guardian_cooldown_days(env: &Env, will_id: u64) -> Option<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::GuardianCooldownDays(will_id))
+}
+
+/// Records the guardian cooldown (in days) for `will_id` (#721).
+pub fn set_guardian_cooldown_days(env: &Env, will_id: u64, days: u64) {
+    let key = DataKey::GuardianCooldownDays(will_id);
+    env.storage().persistent().set(&key, &days);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
 }

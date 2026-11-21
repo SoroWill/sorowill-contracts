@@ -52,7 +52,7 @@ fn setup<'a>() -> (
 
 fn release(env: &Env, client: &WillContractClient, will_id: u64) {
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
 }

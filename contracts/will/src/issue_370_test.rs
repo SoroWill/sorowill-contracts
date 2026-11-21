@@ -93,7 +93,7 @@ fn setup_with_released_will<'a>(
 
     // Trigger and release so `reveal_and_claim` is reachable.
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
 

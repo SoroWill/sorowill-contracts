@@ -95,7 +95,7 @@ fn issue_592_state_reads_between_top_up_and_checkin_stay_consistent() {
     );
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     client.emergency_checkin(&will_id, &owner);
     let will = client.get_will(&will_id);
     assert_eq!(will.status, WillStatus::Active);

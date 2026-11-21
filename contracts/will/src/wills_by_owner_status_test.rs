@@ -57,7 +57,7 @@ fn filters_wills_by_owner_and_status() {
     let triggered_will = make_will();
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&triggered_will);
+    client.trigger_will(&triggered_will, &None);
 
     let active = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &None, &100);
     assert_eq!(active.len(), 2);

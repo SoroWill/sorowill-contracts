@@ -385,7 +385,7 @@ fn release_rejects_a_second_call_on_the_same_will() {
     );
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
 
     client.release_inheritance(&will_id, &None);
@@ -417,7 +417,7 @@ fn release_before_the_grace_deadline_is_rejected() {
     );
 
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 
     // Still inside the 7-day grace period.
     env.ledger().with_mut(|l| l.timestamp += DAY);

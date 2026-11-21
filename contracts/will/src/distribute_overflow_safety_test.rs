@@ -51,7 +51,7 @@ fn advance(env: &Env, days: u64) {
 
 fn release(env: &Env, client: &WillContractClient, will_id: u64) {
     advance(env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(env, 8);
     client.release_inheritance(&will_id, &None);
 }
@@ -207,7 +207,7 @@ fn distribute_with_keeper_bounty_reduces_beneficiary_shares() {
     );
 
     advance(&env, 91);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     advance(&env, 8);
     client.release_inheritance(&will_id, &Some(keeper.clone()));
 

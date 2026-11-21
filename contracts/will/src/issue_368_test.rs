@@ -81,7 +81,7 @@ fn make_triggered(
     }
     env.ledger().with_mut(|l| l.timestamp += 2 * DAY);
     for will_id in ids.iter() {
-        client.trigger_will(&will_id);
+        client.trigger_will(&will_id, &None);
     }
     ids
 }

@@ -81,7 +81,7 @@ fn past_cooldown(env: &Env) {
 /// Misses the check-in deadline and triggers the will, leaving it `Triggered`.
 fn trigger(env: &Env, client: &WillContractClient, will_id: u64) {
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
 }
 
 /// Issue #372: one guardian voting twice across an expiry window must not reach

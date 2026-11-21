@@ -55,7 +55,7 @@ fn setup_released<'a>(
     let commitment = env.crypto().sha256(&preimage);
     client.add_hashed_beneficiary(&will_id, &owner, &Bytes::from_array(&env, &commitment.to_array()), &5_000);
     env.ledger().with_mut(|l| l.timestamp += 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     env.ledger().with_mut(|l| l.timestamp += 8 * DAY);
     client.release_inheritance(&will_id, &None);
     (env, client, claimant, preimage, token, will_id)

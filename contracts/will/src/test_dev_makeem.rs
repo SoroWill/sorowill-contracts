@@ -70,7 +70,7 @@ fn boundary_second_only_owner_succeeds_and_release_is_rejected() {
     let will_id = create_one(&env, &client, &owner, &token);
 
     env.ledger().set_timestamp(t0 + 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     let deadline = t0 + 91 * DAY + 7 * DAY;
 
     env.ledger().set_timestamp(deadline);
@@ -93,7 +93,7 @@ fn one_second_after_boundary_only_release_succeeds() {
     let will_id = create_one(&env, &client, &owner, &token);
 
     env.ledger().set_timestamp(t0 + 91 * DAY);
-    client.trigger_will(&will_id);
+    client.trigger_will(&will_id, &None);
     let deadline = t0 + 91 * DAY + 7 * DAY;
 
     env.ledger().set_timestamp(deadline + 1);
@@ -136,7 +136,7 @@ fn batch_check_in_rejects_non_active_middle_element() {
     let t0 = env.ledger().timestamp();
 
     env.ledger().set_timestamp(t0 + 91 * DAY);
-    client.trigger_will(&middle);
+    client.trigger_will(&middle, &None);
     let before_first = client.get_will(&first).last_checkin;
 
     let err = client
