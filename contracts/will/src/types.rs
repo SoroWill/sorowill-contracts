@@ -461,7 +461,9 @@ pub struct WillStatusTransition {
     pub from_status: WillStatus,
     /// The status after the transition.
     pub to_status: WillStatus,
-    /// Unix timestamp (seconds) when the transition occurred.
+    /// Unix timestamp (seconds) when the transition occurred (#668).
+    /// Recorded alongside `seq` so temporal ordering is unambiguous even when
+    /// multiple transitions occur in rapid succession.
     pub timestamp: u64,
     /// The address that initiated the transition, or the contract address
     /// for transitions triggered by anyone (e.g. `trigger_will`,

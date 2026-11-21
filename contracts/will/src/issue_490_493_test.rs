@@ -151,7 +151,7 @@ fn trigger_and_release_in_same_ledger_is_rejected() {
     let id = create_simple(&ctx, &b);
 
     env.ledger().set_timestamp(START + 91 * DAY);
-    ctx.client.trigger_will(&id);
+    ctx.client.trigger_will(&id, &None);
     assert_eq!(
         ctx.client.try_release_inheritance(&id, &None),
         Err(Ok(WillError::GracePeriodNotExpired.into()))
@@ -168,7 +168,7 @@ fn emergency_checkin_before_release_blocks_release() {
     let id = create_simple(&ctx, &b);
 
     env.ledger().set_timestamp(START + 91 * DAY);
-    ctx.client.trigger_will(&id);
+    ctx.client.trigger_will(&id, &None);
     env.ledger().set_timestamp(START + 92 * DAY);
     ctx.client.emergency_checkin(&id, &ctx.owner);
     assert_eq!(ctx.client.get_will(&id).status, WillStatus::Active);
@@ -189,7 +189,7 @@ fn release_after_grace_still_pays_out() {
     let id = create_simple(&ctx, &b);
 
     env.ledger().set_timestamp(START + 91 * DAY);
-    ctx.client.trigger_will(&id);
+    ctx.client.trigger_will(&id, &None);
     env.ledger().set_timestamp(START + 100 * DAY);
     ctx.client.release_inheritance(&id, &None);
 
@@ -223,7 +223,7 @@ fn release_at_beneficiary_cap_across_tokens_pays_everyone() {
     );
 
     env.ledger().set_timestamp(START + 91 * DAY);
-    ctx.client.trigger_will(&id);
+    ctx.client.trigger_will(&id, &None);
     env.ledger().set_timestamp(START + 100 * DAY);
     ctx.client.release_inheritance(&id, &None);
     assert_eq!(ctx.client.get_will(&id).status, WillStatus::Released);
@@ -278,7 +278,7 @@ fn release_refuses_over_cap_stored_will() {
     );
 
     env.ledger().set_timestamp(START + 91 * DAY);
-    ctx.client.trigger_will(&id);
+    ctx.client.trigger_will(&id, &None);
 
     // Simulate a will stored under an older layout with too many entries.
     let mut will = ctx.client.get_will(&id);
