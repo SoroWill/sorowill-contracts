@@ -436,6 +436,10 @@ mod issue_628_test;
 #[cfg(test)]
 mod issue_630_test;
 #[cfg(test)]
+mod issue_740_test;
+#[cfg(test)]
+mod property_invariants_test;
+#[cfg(test)]
 // mod issue_486_489_test; // TODO: ContractEvents API
 #[cfg(test)]
 mod issue_572_575_test;
@@ -1028,6 +1032,15 @@ impl WillContract {
     ///   `distribute`'s failed-payout record and
     ///   [`Self::retry_failed_payout`] (#459), so it never aborts the release
     ///   for everyone else.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to confirm.
+    /// - `owner`: the will's owner; must authorize this call.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.confirm_will(&will_id, &owner);
+    /// ```
     pub fn confirm_will(env: Env, will_id: u64, owner: Address) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -1108,6 +1121,10 @@ impl WillContract {
     /// Timestamps have one-second granularity. Two check-ins in the same second
     /// store the same `last_checkin`, so the countdown lands on the same deadline
     /// whichever one ran first. The outcome does not depend on their order (#624).
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to check in on.
+    /// - `caller`: the owner or the will's delegate; must authorize this call.
     pub fn check_in(env: Env, will_id: u64, caller: Address) {
         caller.require_auth();
         let mut will = load_will(&env, will_id);
@@ -1146,6 +1163,19 @@ impl WillContract {
 
     /// Sets or replaces the delegate address for `will_id`. Only callable
     /// by the owner while the will is `Active`. Pass `None` to clear.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to update.
+    /// - `owner`: the will's owner; must authorize this call.
+    /// - `delegate`: the new delegate, or `None` to remove the current one.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Appoint a delegate who may call `check_in` on the owner's behalf.
+    /// client.set_delegate(&will_id, &owner, &Some(delegate));
+    /// // Remove the delegate again.
+    /// client.set_delegate(&will_id, &owner, &None);
+    /// ```
     pub fn set_delegate(env: Env, will_id: u64, owner: Address, delegate: Option<Address>) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -1179,6 +1209,15 @@ impl WillContract {
     /// - [`WillError::WillNotFound`] if any id names no will.
     /// - [`WillError::NotOwner`] if any of those wills is not owned by `owner`.
     /// - [`WillError::WillNotActive`] if any of those wills is not `Active`.
+    ///
+    /// # Parameters
+    /// - `will_ids`: the wills to check in on. Must not exceed the batch limit and must not contain duplicates.
+    /// - `owner`: the owner of every will in the list; must authorize this call.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.batch_check_in(&vec![&env, will_a, will_b], &owner);
+    /// ```
     pub fn batch_check_in(env: Env, will_ids: Vec<u64>, owner: Address) {
         owner.require_auth();
         batch_check_in_limit::assert_within_limit(&env, will_ids.len());
@@ -1350,6 +1389,16 @@ impl WillContract {
     /// - [`WillError::WillNotTriggered`] if the will is not `Triggered`.
     /// - [`WillError::GracePeriodExpired`] if the grace period has already
     ///   elapsed, i.e. `now` is strictly greater than the grace deadline.
+    ///
+    /// # Parameters
+    /// - `will_id`: the triggered will to rescue.
+    /// - `owner`: the will's owner; must authorize this call.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // During the grace period, the owner cancels the trigger.
+    /// client.emergency_checkin(&will_id, &owner);
+    /// ```
     pub fn emergency_checkin(env: Env, will_id: u64, owner: Address) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -1483,6 +1532,10 @@ impl WillContract {
     /// assert_eq!(client.get_will(&will_id).status, WillStatus::Released);
     /// // Each beneficiary's token balance reflects their basis-point share.
     /// ```
+    ///
+    /// # Parameters
+    /// - `will_id`: the triggered will to release.
+    /// - `caller`: the keeper to receive any keeper bounty, or `None` to forgo it. The caller does not need to authorize this call.
     pub fn release_inheritance(env: Env, will_id: u64, caller: Option<Address>) {
         release_lock::acquire(&env, will_id);
         let mut will = load_will(&env, will_id);
@@ -1575,6 +1628,16 @@ impl WillContract {
     ///   already retried successfully, or the arguments don't match).
     /// - Propagates the token contract's own panic if this attempt also
     ///   fails; the record is left in place for a future retry.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will the failed payout belongs to.
+    /// - `token`: the token contract of the failed payout.
+    /// - `recipient`: the address the payout was owed to.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.retry_failed_payout(&will_id, &token, &beneficiary);
+    /// ```
     pub fn retry_failed_payout(env: Env, will_id: u64, token: Address, recipient: Address) {
         let amount = match storage::get_failed_payout(&env, will_id, &token, &recipient) {
             Some(amount) => amount,
@@ -1607,6 +1670,15 @@ impl WillContract {
     /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
     /// - [`WillError::WillNotActive`] if the will is neither `Active` nor
     ///   `PendingConfirmation`.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to cancel.
+    /// - `owner`: the will's owner; must authorize this call.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.cancel_will(&will_id, &owner);
+    /// ```
     pub fn cancel_will(env: Env, will_id: u64, owner: Address) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -1681,6 +1753,15 @@ impl WillContract {
     /// # Panics
     /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
     /// - [`WillError::WillNotReleased`] if the will is not `Released`.
+    ///
+    /// # Parameters
+    /// - `will_id`: the released will to close.
+    /// - `owner`: the will's owner; must authorize this call.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.close_will(&will_id, &owner);
+    /// ```
     pub fn close_will(env: Env, will_id: u64, owner: Address) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -1728,6 +1809,16 @@ impl WillContract {
     /// - [`WillError::TooManyBeneficiaries`] if the new list is empty or too large.
     /// - [`WillError::InvalidPercentages`] if the new basis points do not sum to 10,000.
     /// - [`WillError::DuplicateBeneficiary`] if the same address is supplied twice.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to update.
+    /// - `owner`: the will's owner; must authorize this call.
+    /// - `beneficiaries`: the replacement beneficiary list.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.update_beneficiaries(&will_id, &owner, &new_beneficiaries);
+    /// ```
     pub fn update_beneficiaries(
         env: Env,
         will_id: u64,
@@ -1879,6 +1970,12 @@ impl WillContract {
     /// - [`WillError::InvalidPercentages`] / [`WillError::FixedAmountExceedsBalance`]
     ///   if the redistributed allocations fail validation (defensive: the
     ///   redistribution keeps every percentage share summing to 10,000 bps).
+    ///
+    /// # Example
+    /// ```ignore
+    /// // The beneficiary gives up their share before release.
+    /// client.renounce_beneficiary(&will_id, &beneficiary);
+    /// ```
     pub fn renounce_beneficiary(env: Env, will_id: u64, beneficiary: Address) {
         beneficiary.require_auth();
         let mut will = load_will(&env, will_id);
@@ -2094,6 +2191,16 @@ impl WillContract {
     ///   the new list — either before or after shrinking it.
     /// - [`WillError::GuardianCancelInProgress`] if guardian-cancel votes are
     ///   still recorded against the current guardian list (#488).
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to update.
+    /// - `owner`: the will's owner; must authorize this call.
+    /// - `guardians`: the replacement guardian list.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.update_guardians(&will_id, &owner, &vec![&env, guardian_a, guardian_b]);
+    /// ```
     pub fn update_guardians(env: Env, will_id: u64, owner: Address, guardians: Vec<Address>) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -2164,6 +2271,11 @@ impl WillContract {
     ///   always validated against the weights actually stored (#489).
     /// - [`WillError::GuardianCancelInProgress`] if guardian-cancel votes are
     ///   still recorded against the current guardian list (#488).
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.update_guardians_weighted(&will_id, &owner, &guardians, &Some(3));
+    /// ```
     pub fn update_guardians_weighted(
         env: Env,
         will_id: u64,
@@ -2309,6 +2421,12 @@ impl WillContract {
     /// owner happens to call: an indexer that schedules reminders from the event
     /// stays in sync with the on-chain rule instead of drifting later by however
     /// long it has been since the last check-in (#357).
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Extend the check-in period to 180 days and keep the grace period.
+    /// client.update_periods(&will_id, &owner, &Some(180), &None);
+    /// ```
     pub fn update_periods(
         env: Env,
         will_id: u64,
@@ -2394,6 +2512,11 @@ impl WillContract {
     /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
     /// - [`WillError::WillNotActive`] if the will is not `Active`.
     /// - Any validation error from the specific update functions.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.update_will_settings(&will_id, &owner, &None, &None, &Some(120), &None);
+    /// ```
     pub fn update_will_settings(
         env: Env,
         will_id: u64,
@@ -2523,6 +2646,73 @@ impl WillContract {
         }
     }
 
+    /// Sets or clears the guardian vote-expiry window for one will (#740).
+    ///
+    /// A guardian's release or cancel vote counts toward quorum only while it is
+    /// younger than the window. By default the window equals the will's
+    /// `grace_period_days`, which is the behaviour before this setting existed.
+    /// Passing `Some(days)` overrides that default for this will only; passing
+    /// `None` removes the override so the will follows its grace period again.
+    ///
+    /// Only allowed while the will is `Active`. Changing the window during a
+    /// trigger cycle would retroactively revalidate votes already cast, so the
+    /// setting is frozen once the will is `Triggered`.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to configure.
+    /// - `owner`: must be the will's owner and must authorize the call.
+    /// - `days`: the new window in days, or `None` to restore the default. A
+    ///   `Some` value must be between 1 and [`MAX_PERIOD_DAYS`] inclusive.
+    ///
+    /// # Panics
+    /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
+    /// - [`WillError::WillNotActive`] if the will is not `Active`.
+    /// - [`WillError::InvalidPeriod`] if `days` is `Some(0)` or above
+    ///   [`MAX_PERIOD_DAYS`].
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Votes lapse after 3 days, even if the grace period is 7.
+    /// client.set_guardian_vote_expiry(&will_id, &owner, &Some(3));
+    /// // Go back to following the grace period.
+    /// client.set_guardian_vote_expiry(&will_id, &owner, &None);
+    /// ```
+    pub fn set_guardian_vote_expiry(env: Env, will_id: u64, owner: Address, days: Option<u64>) {
+        owner.require_auth();
+        let will = load_owned(&env, will_id, &owner);
+        assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
+        if let Some(days) = days {
+            if !(1..=MAX_PERIOD_DAYS).contains(&days) {
+                panic_with_error!(&env, WillError::InvalidPeriod);
+            }
+        }
+        storage::set_guardian_vote_expiry(&env, will_id, days);
+    }
+
+    /// Returns the guardian vote-expiry window, in days, currently in effect
+    /// for `will_id` (#740).
+    ///
+    /// This is the override set by [`Self::set_guardian_vote_expiry`] when one
+    /// exists, and otherwise the will's `grace_period_days`.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to query.
+    ///
+    /// # Returns
+    /// The window in days.
+    ///
+    /// # Panics
+    /// - If `will_id` does not exist.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let days = client.get_guardian_vote_expiry(&will_id);
+    /// ```
+    pub fn get_guardian_vote_expiry(env: Env, will_id: u64) -> u64 {
+        let will = load_will(&env, will_id);
+        storage::guardian_vote_expiry_days(&env, &will)
+    }
+
     /// Adds `amount` of a specific `token` to an existing will's locked
     /// balance. Possible while the will is `Active`, and also while it is
     /// `Triggered` and still inside its grace period (#724): the owner may top
@@ -2555,6 +2745,17 @@ impl WillContract {
     ///   distinct tokens (#358). Topping up a token the will already holds is
     ///   always allowed, including at the cap, because it does not grow the
     ///   map.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to top up.
+    /// - `owner`: the will's owner; must authorize this call.
+    /// - `token`: the token contract to add. It may be one the will does not yet hold.
+    /// - `amount`: the amount to add, in the token's base units. Must be positive.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.top_up(&will_id, &owner, &token, &500_000);
+    /// ```
     pub fn top_up(env: Env, will_id: u64, owner: Address, token: Address, amount: i128) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -2644,11 +2845,31 @@ impl WillContract {
     ///   freshly deployed contract immediately after deployment and fails the
     ///   deploy if it disagrees with the source constant, rather than
     ///   silently recording a contract id that doesn't match what was built.
+    ///
+    /// # Returns
+    /// The contract version as a `u32`, encoded as `major * 1_000_000 + minor * 1_000 + patch`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let version = client.get_contract_version();
+    /// ```
     pub fn get_contract_version(_env: Env) -> u32 {
         CONTRACT_VERSION
     }
 
     /// Returns the full on-chain state of `will_id`.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to read.
+    ///
+    /// # Returns
+    /// The stored [`Will`] record.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let will = client.get_will(&will_id);
+    /// assert_eq!(will.owner, owner);
+    /// ```
     pub fn get_will(env: Env, will_id: u64) -> Will {
         load_will(&env, will_id)
     }
@@ -2663,6 +2884,17 @@ impl WillContract {
     ///
     /// # Panics
     /// - [`WillError::WillNotFound`] if no will exists with this id.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to read.
+    ///
+    /// # Returns
+    /// The will's current [`WillStatus`].
+    ///
+    /// # Example
+    /// ```ignore
+    /// let status = client.get_will_status(&will_id);
+    /// ```
     pub fn get_will_status(env: Env, will_id: u64) -> WillStatus {
         load_will(&env, will_id).status
     }
@@ -2701,6 +2933,19 @@ impl WillContract {
     ///
     /// # Panics
     /// - [`WillError::WillNotFound`] if no will exists with this id.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to read.
+    ///
+    /// # Returns
+    /// The seconds remaining until the next deadline, or `None` when the will has none.
+    ///
+    /// # Example
+    /// ```ignore
+    /// if let Some(secs) = client.get_time_until_deadline(&will_id) {
+    ///     // Show a countdown to the owner.
+    /// }
+    /// ```
     pub fn get_time_until_deadline(env: Env, will_id: u64) -> Option<i64> {
         let will = load_will(&env, will_id);
         let now = env.ledger().timestamp() as i64;
@@ -2745,6 +2990,18 @@ impl WillContract {
     /// after `now` is reported as-is here rather than hidden: this is a
     /// read-only query over stored state, and swallowing the record would make
     /// a skewed ledger clock look like "no vote was ever cast".
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to read.
+    /// - `guardian`: the guardian whose vote to look up.
+    ///
+    /// # Returns
+    /// The guardian's [`GuardianVoteRecord`] if they have a live vote, otherwise `None`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let vote = client.get_guardian_vote_status(&will_id, &guardian);
+    /// ```
     pub fn get_guardian_vote_status(
         env: Env,
         will_id: u64,
@@ -2790,6 +3047,14 @@ impl WillContract {
     /// operations: a failed invocation rolls back all of its writes, so it
     /// can never be counted. See [`ProtocolStats`] for the consistency
     /// invariant and [`Self::audit_protocol_stats`] to verify it.
+    ///
+    /// # Returns
+    /// The [`ProtocolStats`] counters maintained by the contract.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let stats = client.get_protocol_stats();
+    /// ```
     pub fn get_protocol_stats(env: Env) -> ProtocolStats {
         storage::get_protocol_stats(&env)
     }
@@ -2803,6 +3068,14 @@ impl WillContract {
     ///
     /// Cost grows linearly with the number of wills ever created; once that
     /// exceeds the per-invocation budget, run it via simulation only.
+    ///
+    /// # Returns
+    /// A [`ProtocolStatsAudit`] comparing the stored counters with the recomputed values.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let audit = client.audit_protocol_stats();
+    /// ```
     pub fn audit_protocol_stats(env: Env) -> ProtocolStatsAudit {
         let stored = storage::get_protocol_stats(&env);
         let computed = storage::recompute_protocol_stats(&env);
@@ -2820,6 +3093,14 @@ impl WillContract {
     /// Callable by anyone: the written values are derived purely from
     /// on-chain will state, so a caller cannot influence them. Tokens whose
     /// recomputed total is zero are dropped from the stored list.
+    ///
+    /// # Returns
+    /// The [`ProtocolStats`] values after the repair.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let stats = client.repair_protocol_stats();
+    /// ```
     pub fn repair_protocol_stats(env: Env) -> ProtocolStats {
         let computed = storage::recompute_protocol_stats(&env);
         let mut total_locked_by_token = Vec::new(&env);
@@ -2866,6 +3147,14 @@ impl WillContract {
     /// here — any single address could otherwise exhaust it and break
     /// `trigger_will` for the whole protocol. See `storage::index_triggered_will`
     /// for the full bounding strategy.
+    ///
+    /// # Returns
+    /// A page of will ids currently in `Triggered` status.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let page = client.get_triggered_wills(&None, &50);
+    /// ```
     pub fn get_triggered_wills(env: Env, cursor: Option<u64>, limit: u32) -> Vec<u64> {
         storage::get_triggered_wills_page(&env, cursor, limit)
     }
@@ -2890,6 +3179,14 @@ impl WillContract {
     /// position, so wills added or removed between pages never cause an
     /// entry to be skipped or repeated; new wills appear on later pages.
     /// Pages are not a snapshot. See `docs/PAGINATION_CONSISTENCY.md` (#591).
+    ///
+    /// # Returns
+    /// A page of [`Will`] records owned by `owner`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let first = client.get_wills_by_owner(&owner, &None, &20);
+    /// ```
     pub fn get_wills_by_owner(
         env: Env,
         owner: Address,
@@ -2923,6 +3220,17 @@ impl WillContract {
     /// `active_wills` and `total_locked_by_token` cover only non-terminal
     /// wills (`PendingConfirmation`, `Active`, `Triggered`), matching how
     /// [`ProtocolStats`] counts locked value.
+    ///
+    /// # Parameters
+    /// - `owner`: the address to summarise.
+    ///
+    /// # Returns
+    /// The [`OwnerStats`] aggregate for every will `owner` holds.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let stats = client.get_owner_stats(&owner);
+    /// ```
     pub fn get_owner_stats(env: Env, owner: Address) -> OwnerStats {
         let ids = storage::get_owner_wills(&env, &owner);
         let mut active_wills: u32 = 0;
@@ -2979,6 +3287,14 @@ impl WillContract {
     ///   matching [`Self::get_wills_by_owner`] and
     ///   [`Self::get_wills_by_beneficiary`], which build their pages through
     ///   [`storage::paginate_ids`] (#360).
+    ///
+    /// # Returns
+    /// A page of matching [`Will`] records.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let active = client.get_wills_by_owner_and_status(&owner, &WillStatus::Active, &None, &20);
+    /// ```
     pub fn get_wills_by_owner_and_status(
         env: Env,
         owner: Address,
@@ -3016,6 +3332,9 @@ impl WillContract {
     ///   or `0` for the first page.
     /// - `limit`: maximum number of wills to return. Capped at
     ///   [`storage::MAX_PAGE_SIZE`].
+    ///
+    /// # Returns
+    /// A [`WillPage`] with the matching wills, the total number of matches, and the cursor for the next page.
     pub fn get_owner_status_page(
         env: Env,
         owner: Address,
@@ -3091,6 +3410,14 @@ impl WillContract {
     /// 1. Call with `cursor=None, limit=N`
     /// 2. If result has N wills, call again with `cursor=last_will_id`
     /// 3. Repeat until result has fewer than N wills
+    ///
+    /// # Returns
+    /// A page of [`Will`] records that name `beneficiary`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let wills = client.get_wills_by_beneficiary(&beneficiary, &None, &20);
+    /// ```
     pub fn get_wills_by_beneficiary(
         env: Env,
         beneficiary: Address,
@@ -3379,6 +3706,11 @@ impl WillContract {
     /// - [`WillError::NotGuardian`] if `guardian` is not one of the will's guardians.
     /// - [`WillError::AlreadyVoted`] if `guardian` already cast a cancel vote in this cycle.
     /// - [`WillError::GuardianCooldownActive`] if the guardian-list cooldown has not elapsed.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.guardian_cancel_trigger(&will_id, &guardian);
+    /// ```
     pub fn guardian_cancel_trigger(env: Env, will_id: u64, guardian: Address) {
         guardian.require_auth();
         let mut will = load_will(&env, will_id);
@@ -3503,6 +3835,11 @@ impl WillContract {
     ///   (`Released`, `Cancelled` or `Settled`).
     /// - [`WillError::InvalidConsentTransition`] if the guardian already
     ///   `Rejected` their role, which is irrevocable.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.accept_guardian_role(&will_id, &guardian);
+    /// ```
     pub fn accept_guardian_role(env: Env, will_id: u64, guardian: Address) {
         guardian.require_auth();
         let mut will = load_will(&env, will_id);
@@ -3579,6 +3916,11 @@ impl WillContract {
     /// - [`WillError::NotGuardian`] if `guardian` is not named on this will.
     /// - [`WillError::WillNotActive`] if the will is in a terminal status
     ///   (`Released`, `Cancelled` or `Settled`).
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.reject_guardian_role(&will_id, &guardian);
+    /// ```
     pub fn reject_guardian_role(env: Env, will_id: u64, guardian: Address) {
         guardian.require_auth();
         let mut will = load_will(&env, will_id);
@@ -3611,12 +3953,13 @@ impl WillContract {
         // Withdraw any vote the guardian had already cast in this cycle, so a
         // rejected guardian stops contributing weight toward quorum (#374).
         let weight = g_weight(&will, &guardian);
-        if storage::has_guardian_voted(&env, will_id, &guardian, now, will.grace_period_days) {
+        let expiry_days = storage::guardian_vote_expiry_days(&env, &will);
+        if storage::has_guardian_voted(&env, will_id, &guardian, now, expiry_days) {
             storage::clear_guardian_vote(&env, will_id, &guardian);
             will.guardian_vote_weight = will.guardian_vote_weight.saturating_sub(weight);
             will.guardian_votes = will.guardian_votes.saturating_sub(1);
         }
-        if storage::has_guardian_cancel_voted(&env, will_id, &guardian, now, will.grace_period_days)
+        if storage::has_guardian_cancel_voted(&env, will_id, &guardian, now, expiry_days)
         {
             storage::clear_guardian_cancel_vote(&env, will_id, &guardian);
             will.guardian_cancel_vote_weight =
@@ -3680,6 +4023,11 @@ impl WillContract {
     /// - [`WillError::InvalidTokenCount`] if the token list is empty or too large.
     /// - [`WillError::FixedAmountExceedsBalance`] if the source's
     ///   `Allocation::FixedAmount` beneficiaries no longer fit the new balance.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let new_id = client.clone_will(&source_id, &owner, &vec![&env, (token, 1_000_000)]);
+    /// ```
     #[allow(clippy::too_many_arguments)]
     pub fn clone_will(
         env: Env,
@@ -3840,6 +4188,15 @@ impl WillContract {
     /// the invocation panics and the host discards every will, index entry and
     /// transfer made earlier in the call, so a bad spec in the middle of the
     /// batch never leaves earlier wills created (#590).
+    ///
+    /// # Parameters
+    /// - `owner`: the owner of every new will; must authorize this call.
+    /// - `will_specs`: one tuple per will, holding its tokens, beneficiaries, check-in period, grace period, guardians and guardian threshold.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ids = client.batch_create_wills(&owner, &specs);
+    /// ```
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub fn batch_create_wills(
         env: Env,
@@ -4095,6 +4452,15 @@ impl WillContract {
     /// # Panics
     /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
     /// - [`WillError::WillNotFound`] if the will does not exist.
+    ///
+    /// # Parameters
+    /// - `will_id`: the will to migrate.
+    /// - `owner`: the will's owner; must authorize this call.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.migrate_will(&will_id, &owner);
+    /// ```
     pub fn migrate_will(env: Env, will_id: u64, owner: Address) {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
@@ -4170,6 +4536,11 @@ impl WillContract {
     ///   already claimed are inert and do not block a merge.
     /// - [`WillError::MergeWouldExceedLimits`] if merging would exceed MAX_BENEFICIARIES or MAX_GUARDIANS limits.
     /// - [`WillError::InvalidPercentages`] if recalculating percentages fails.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.merge_wills(&owner, &will_a, &will_b);
+    /// ```
     pub fn merge_wills(env: Env, owner: Address, will_id_a: u64, will_id_b: u64) {
         owner.require_auth();
 
@@ -4451,6 +4822,17 @@ impl WillContract {
     /// state-mutating entry point publishes an event, and that log is never
     /// trimmed. Callers who want to walk the retained trail in bounded slices
     /// should prefer [`WillContract::get_will_history_page`].
+    ///
+    /// # Parameters
+    /// - `will_id`: the will whose trail to read.
+    ///
+    /// # Returns
+    /// The retained [`WillStatusTransition`] entries, oldest first.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let trail = client.get_will_history(&will_id);
+    /// ```
     pub fn get_will_history(env: Env, will_id: u64) -> Vec<WillStatusTransition> {
         storage::get_history(&env, will_id)
     }
@@ -4478,6 +4860,14 @@ impl WillContract {
     /// walk as long as no transition is appended past the cursor, but a
     /// concurrent write that trips the history cap trims the front of the
     /// trail and shifts every earlier offset — restart the walk in that case.
+    ///
+    /// # Returns
+    /// A page of [`WillStatusTransition`] entries, oldest first.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let page = client.get_will_history_page(&will_id, &None, &25);
+    /// ```
     pub fn get_will_history_page(
         env: Env,
         will_id: u64,
@@ -4499,6 +4889,20 @@ impl WillContract {
     ///
     /// # Panics
     /// - [`WillError::InvalidCursor`] if `cursor` is not well-formed.
+    ///
+    /// # Parameters
+    /// - `owner`: the address to query.
+    /// - `status`: only return wills in this status, or `None` for all statuses.
+    /// - `cursor`: an opaque cursor from a previous page, or `None` to start from the beginning.
+    /// - `limit`: the maximum number of ids to return.
+    ///
+    /// # Returns
+    /// A page of will ids owned by `owner`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ids = client.get_wills_by_owner(&owner, &None, &None, &20);
+    /// ```
     pub fn get_wills_by_owner(
         env: Env,
         owner: Address,
@@ -4521,6 +4925,19 @@ impl WillContract {
     ///
     /// # Panics
     /// - [`WillError::InvalidCursor`] if `cursor` is not well-formed.
+    ///
+    /// # Parameters
+    /// - `beneficiary`: the address to query.
+    /// - `cursor`: an opaque cursor from a previous page, or `None` to start from the beginning.
+    /// - `limit`: the maximum number of ids to return.
+    ///
+    /// # Returns
+    /// A page of will ids that name `beneficiary`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ids = client.get_wills_by_beneficiary(&beneficiary, &None, &20);
+    /// ```
     pub fn get_wills_by_beneficiary(
         env: Env,
         beneficiary: Address,
@@ -4615,6 +5032,14 @@ impl WillContract {
     ///   the ambiguity note above — this error is also returned for wills
     ///   that have already been archived).
     /// - [`WillError::WillNotSettled`] if the will is not `Released` or `Cancelled`.
+    ///
+    /// # Parameters
+    /// - `will_id`: the released or cancelled will to archive.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.archive_will(&will_id);
+    /// ```
     pub fn archive_will(env: Env, will_id: u64) {
         let will = load_will(&env, will_id);
         if will.status != WillStatus::Released && will.status != WillStatus::Cancelled {
@@ -4698,6 +5123,11 @@ impl WillContract {
     /// - [`WillError::FixedAmountExceedsBalance`] if either the remaining or
     ///   split beneficiary list has `Allocation::FixedAmount` entries that no
     ///   longer fit the resulting balance.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let child_id = client.split_will(&will_id, &owner, &moving, &vec![&env, (token, 500_000)]);
+    /// ```
     pub fn split_will(
         env: Env,
         will_id: u64,
@@ -4907,14 +5337,6 @@ impl WillContract {
     /// # Parameters
     /// - `will_id`: the will to add the hashed beneficiary to.
     /// - `owner`: must be the primary owner.
-    /// - `commitment`: 32-byte SHA-256 hash of the pre-image
-    ///   `beneficiary.clone().to_xdr() || salt` (see [`Self::reveal_and_claim`]).
-    /// - `percentage`: share of the will's balance for this beneficiary.
-    ///
-    /// # Panics
-    /// - [`WillError::NotOwner`] / [`WillError::WillNotActive`]
-    /// - [`WillError::InvalidPercentages`] if total percentages would exceed 100.
-    /// - [`WillError::InvalidPreimage`] if `commitment` is not a 32-byte digest.
     /// - `commitment`: SHA-256 hash of the pre-image `address_bytes || salt_bytes`.
     ///   Must be exactly 32 bytes — see the validation rules below.
     ///   The contract cannot verify the salt's entropy: use 32 bytes from a
@@ -4948,6 +5370,11 @@ impl WillContract {
     /// - [`WillError::DuplicateCommitment`] if `commitment` is already registered on this will.
     /// - [`WillError::InvalidPercentages`] if `percentage` is zero, or if total
     ///   percentages would exceed 100.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.add_hashed_beneficiary(&will_id, &owner, &commitment, &2_500);
+    /// ```
     pub fn add_hashed_beneficiary(
         env: Env,
         will_id: u64,
