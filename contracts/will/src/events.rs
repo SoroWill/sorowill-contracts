@@ -64,7 +64,10 @@ pub fn check_in(env: &Env, will_id: u64, owner: &Address, next_deadline: u64) {
     );
 }
 
-/// Published when a will is triggered after a missed check-in.
+/// Published when a will is triggered after a missed check-in (#697).
+///
+/// Emits `("triggered", will_id)` with `grace_period_ends` so off-chain
+/// monitors and indexers can track trigger transitions without polling.
 pub fn will_triggered(env: &Env, will_id: u64, grace_period_ends: u64) {
     env.events()
         .publish((symbol_short!("triggered"), will_id), grace_period_ends);
