@@ -324,6 +324,8 @@ mod create_will_doc_example_test;
 #[cfg(test)]
 mod entrypoint_coverage_test;
 #[cfg(test)]
+mod issue_729_test;
+#[cfg(test)]
 mod get_contract_version_test;
 #[cfg(test)]
 mod get_time_until_deadline_test;
@@ -1216,6 +1218,59 @@ impl WillContract {
         }
 
         events::batch_checkin(&env, &owner, &will_ids, count);
+    }
+
+    /// Checks in every will in `will_ids` and reports the outcome per will
+    /// (#714). Unlike [`WillContract::batch_check_in`], a failing id does not
+    /// revert the batch.
+    ///
+    /// Each will is handled on its own:
+    /// - Its checks run first. If any check fails, that will is left untouched.
+    /// - If they pass, its `last_checkin`, audit entry and `check_in` event are
+    ///   written together. A will that succeeds keeps its check-in even when
+    ///   another id in the same call fails.
+    ///
+    /// Returns a `Vec<u32>` the same length as `will_ids`. Entry `i` is `0`
+    /// when `will_ids[i]` was checked in. Otherwise it is the numeric
+    /// [`WillError`] code for that id: `WillNotFound` (1), `NotOwner` (2),
+    /// `WillNotActive` (3), or `DuplicateWillId` for a repeat of an earlier id
+    /// in the same call. Only the first occurrence of a repeated id is checked
+    /// in.
+    ///
+    /// # Panics
+    /// - [`WillError::BatchTooLarge`] if more than
+    ///   `batch_check_in_limit::MAX_BATCH_CHECK_IN` ids are supplied. This
+    ///   check runs before any will is touched.
+    pub fn batch_check_in_each(env: Env, will_ids: Vec<u64>, owner: Address) -> Vec<u32> {
+        owner.require_auth();
+        batch_check_in_limit::assert_within_limit(&env, will_ids.len());
+
+        let now = env.ledger().timestamp();
+        let mut results: Vec<u32> = Vec::new(&env);
+        let mut seen: Vec<u64> = Vec::new(&env);
+
+        for will_id in will_ids.iter() {
+            let mut repeat = false;
+            for prior in seen.iter() {
+                if prior == will_id {
+                    repeat = true;
+                    break;
+                }
+            }
+            if repeat {
+                results.push_back(WillError::DuplicateWillId as u32);
+                continue;
+            }
+            seen.push_back(will_id);
+
+            let code = match check_in_one(&env, will_id, &owner, now) {
+                Ok(()) => 0,
+                Err(err) => err as u32,
+            };
+            results.push_back(code);
+        }
+
+        results
     }
 
     /// Starts the grace period for `will_id` once the check-in deadline has
@@ -5243,6 +5298,49 @@ fn stats_match(a: &ProtocolStats, b: &ProtocolStats) -> bool {
 }
 
 /// Loads a will by id, panicking with [`WillError::WillNotFound`] if it does not exist.
+/// Checks in one will for [`WillContract::batch_check_in_each`] (#714).
+///
+/// Every validation runs before the first write, and failures come back as a
+/// `Result` rather than a panic. That lets the caller record the error for
+/// this will and continue with the rest of the batch.
+fn check_in_one(env: &Env, will_id: u64, owner: &Address, now: u64) -> Result<(), WillError> {
+    let mut will = storage::load_will(env, will_id)?;
+    if &will.owner != owner {
+        return Err(WillError::NotOwner);
+    }
+    if will.status != WillStatus::Active {
+        return Err(WillError::WillNotActive);
+    }
+
+    will.last_checkin = now;
+    let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
+    storage::save_will(env, &will);
+    record_transition(
+        env,
+        will_id,
+        WillStatus::Active,
+        WillStatus::Active,
+        owner,
+        symbol_short!("checkin"),
+    );
+    events::check_in(env, will_id, owner, next_deadline);
+    Ok(())
+}
+
+/// Checks that `owner` holds at least `amount` of `token` before the contract
+/// pulls it in (#713).
+///
+/// Owner funds move with `token.transfer(owner, contract, amount)`. That call
+/// is authorized by the owner's own `require_auth`, so these entry points do
+/// not use a SEP-41 allowance. See `docs/TOKEN_PERMISSIONS.md`. A short
+/// balance would otherwise fail deep inside the token contract with an opaque
+/// host error. This check returns [`WillError::InsufficientBalance`] instead.
+fn assert_owner_can_fund(env: &Env, token: &Address, owner: &Address, amount: i128) {
+    if token::Client::new(env, token).balance(owner) < amount {
+        panic_with_error!(env, WillError::InsufficientBalance);
+    }
+}
+
 fn load_will(env: &Env, will_id: u64) -> Will {
     match storage::load_will(env, will_id) {
         Ok(will) => will,

@@ -477,10 +477,11 @@ fn test_remaining_events_snapshot() {
 
     let event_data = find_event_by_topic(&env, symbol_short!("migrated"), Some(will_id))
         .expect("will_migrated event not found");
-    let data: (Address, u32, u32) = event_data.try_into_val(&env).unwrap();
+    let data: (Address, u32, u32, u64) = event_data.try_into_val(&env).unwrap();
     assert_eq!(data.0, owner, "migrated event owner mismatch");
     assert_eq!(data.1, from_version, "migrated event from_version mismatch");
     assert_eq!(data.2, to_version, "migrated event to_version mismatch");
+    assert_eq!(data.3, env.ledger().timestamp(), "migrated event timestamp mismatch");
 
     // will_cloned event
     let source_id = 22222u64;

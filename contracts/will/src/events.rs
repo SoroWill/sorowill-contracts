@@ -327,10 +327,17 @@ pub fn wills_merged(
 }
 
 /// Published when a will is migrated to a new schema version.
+///
+/// Topics: `("migrated", will_id)`.
+/// Data: `(owner, from_version, to_version, timestamp)`, where `from_version`
+/// and `to_version` are storage schema versions (see the "Migration event"
+/// section of `docs/EVENTS.md`) and `timestamp` is the ledger time at which
+/// the migration was applied (#712).
 pub fn will_migrated(env: &Env, will_id: u64, owner: &Address, from_version: u32, to_version: u32) {
+    let timestamp = env.ledger().timestamp();
     env.events().publish(
         (symbol_short!("migrated"), will_id),
-        (owner.clone(), from_version, to_version),
+        (owner.clone(), from_version, to_version, timestamp),
     );
 }
 

@@ -2447,10 +2447,11 @@ fn test_migrate_will_emits_event() {
                     assert_eq!(event.0, client.address.clone());
                     let topic1: u64 = event.1.get(1).unwrap().try_into_val(&env).unwrap();
                     assert_eq!(topic1, will_id);
-                    let data: (Address, u32, u32) = event.2.try_into_val(&env).unwrap();
+                    let data: (Address, u32, u32, u64) = event.2.try_into_val(&env).unwrap();
                     assert_eq!(data.0, owner);
                     assert_eq!(data.1, 1); // old version
                     assert_eq!(data.2, 1); // new version
+                    assert_eq!(data.3, env.ledger().timestamp()); // migration time (#712)
                 }
             }
         }
