@@ -3,9 +3,10 @@
 //! Every state-changing entry point publishes exactly one event so that
 //! off-chain indexers (such as the SoroWill SDK/app) can reconstruct will
 //! history without re-simulating transactions. That includes the guardian
-//! consent transitions: [`guardian_accepted_role`] and
-//! [`guardian_rejected_role`] report when a named guardian becomes eligible to
-//! vote in `guardian_trigger`, or loses that eligibility.
+//! consent transitions ([`guardian_accepted_role`] and
+//! [`guardian_rejected_role`]) and guardian voting activity
+//! ([`guardian_voted`] for trigger votes and [`guardian_cancel_voted`] for
+//! cancel-trigger votes).
 
 use soroban_sdk::{symbol_short, Address, Bytes, Env, Symbol, Vec};
 
@@ -151,7 +152,12 @@ pub fn top_up(
     );
 }
 
-/// Published each time a guardian votes to trigger an early release.
+/// Published each time a guardian votes to trigger an early release (#699).
+///
+/// Topics: `("gvote", will_id)`.
+/// Data: `(guardian, weight, total_weight)` where `weight` is the voting
+/// guardian's weight and `total_weight` is the accumulated live vote weight
+/// after recording this vote.
 pub fn guardian_voted(env: &Env, will_id: u64, guardian: &Address, weight: u32, total_weight: u32) {
     env.events().publish(
         (symbol_short!("gvote"), will_id),
@@ -159,7 +165,10 @@ pub fn guardian_voted(env: &Env, will_id: u64, guardian: &Address, weight: u32, 
     );
 }
 
-/// Published each time a guardian votes to cancel a trigger (return to Active).
+/// Published each time a guardian votes to cancel a trigger (return to Active) (#699).
+///
+/// Topics: `("gcvote", will_id)`.
+/// Data: `(guardian, weight, total_weight)`.
 pub fn guardian_cancel_voted(
     env: &Env,
     will_id: u64,

@@ -43,6 +43,38 @@
 //!
 //! A grace period is a single configurable window: the will is released once,
 //! in full, once that window has fully elapsed.
+//!
+//! # State Machine & Transitions
+//!
+//! Every will moves through [`WillStatus`] states according to the following
+//! lifecycle:
+//!
+//! ```text
+//!   create_will (confirmation_window > 0) ──► PendingConfirmation
+//!   create_will (confirmation_window == 0) ─► Active
+//!
+//!   PendingConfirmation ──(confirm_will)──────────────────► Active
+//!   PendingConfirmation ──(cancel_will)───────────────────► Cancelled
+//!
+//!   Active ──(trigger_will, deadline missed)──────────────► Triggered
+//!   Active ──(guardian_trigger, quorum reached)───────────► Released
+//!   Active ──(cancel_will / merge_wills consumed)─────────► Cancelled
+//!
+//!   Triggered ──(emergency_checkin / guardian_cancel_trigger) ─► Active
+//!   Triggered ──(release_inheritance, grace elapsed)──────► Released
+//!   Triggered ──(cancel_will)─────────────────────────────► Cancelled
+//!
+//!   Released ──(close_will)───────────────────────────────► Settled
+//! ```
+//!
+//! - **In-state operations**: `check_in`, `batch_check_in`, `top_up`,
+//!   `update_beneficiaries`, `update_guardians`, `update_guardians_weighted`,
+//!   `update_periods`, `update_will_settings`, `set_delegate`, `clear_delegate`,
+//!   `add_hashed_beneficiary`, `split_will`, and `clone_will` keep the will in
+//!   its current status (`Active`, or `Triggered` where permitted).
+//! - **Terminal states**: `Cancelled` and `Settled` are terminal (no further
+//!   balance-moving or lifecycle transitions). `archive_will` removes a
+//!   `Released` or `Cancelled` will from active storage once settled.
 
 mod batch_check_in_limit;
 mod errors;
