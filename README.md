@@ -419,3 +419,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-792 -->
 - #792: Add contract delegation support
+
+<!-- handsoff-issue-793 -->
+- #793: Implement contract fee sharing
