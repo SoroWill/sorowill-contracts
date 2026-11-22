@@ -419,3 +419,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-800 -->
 - #800: Add contract integer overflow protection
+
+<!-- handsoff-issue-801 -->
+- #801: Implement contract underflow protection
