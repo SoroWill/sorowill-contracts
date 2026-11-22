@@ -419,3 +419,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-789 -->
 - #789: Implement contract transaction ordering
+
+<!-- handsoff-issue-790 -->
+- #790: Add contract recovery address support
