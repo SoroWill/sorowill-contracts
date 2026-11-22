@@ -419,3 +419,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-768 -->
 - #768: Implement timelocked transactions
+
+<!-- handsoff-issue-770 -->
+- #770: Implement contract state machine tests
