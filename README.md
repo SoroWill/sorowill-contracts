@@ -422,3 +422,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-765 -->
 - #765: Add contract pause mechanism
+
+<!-- handsoff-issue-766 -->
+- #766: Implement beneficiary vesting schedule
