@@ -419,3 +419,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-781 -->
 - #781: Implement beneficiary smart claim logic
+
+<!-- handsoff-issue-783 -->
+- #783: Implement guardians revocation mechanism
