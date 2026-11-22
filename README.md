@@ -419,3 +419,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-762 -->
 - #762: Implement contract state snapshots
+
+<!-- handsoff-issue-763 -->
+- #763: Add contract upgrade mechanism
