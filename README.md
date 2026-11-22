@@ -422,3 +422,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-774 -->
 - #774: Implement beneficiary fungible token swaps
+
+<!-- handsoff-issue-775 -->
+- #775: Add contract monitoring and alerting
