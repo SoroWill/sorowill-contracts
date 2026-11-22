@@ -267,6 +267,24 @@ pub enum WillError {
     /// receiving payouts — for example, the contract's own address, which would
     /// lock distributed funds inside the contract with no withdrawal path (#711).
     InvalidBeneficiaryAddress = 58,
+    /// Guardian weights exceed the tally range.
+    GuardianWeightOverflow = 59,
+    /// A release is already in progress for this will.
+    ReleaseInProgress = 60,
+    /// The amount would exceed the maximum will balance.
+    BalanceExceedsMax = 61,
+    /// The will has already released its inheritance.
+    AlreadyReleased = 62,
+    /// The guardian cooldown cannot be reduced.
+    GuardianCooldownCannotDecrease = 63,
+    /// The beneficiary preimage salt is all zeros.
+    WeakPreimageSalt = 64,
+    /// The owner cannot name themselves as a beneficiary.
+    OwnerCannotBeBeneficiary = 65,
+    /// The ledger timestamp precedes the last check-in.
+    InvalidTimestamp = 66,
+    /// The token contract rejected a required transfer.
+    TokenTransferFailed = 67,
 }
 
 impl WillError {
@@ -278,7 +296,10 @@ impl WillError {
             Self::DistributionMismatch
             | Self::UnsupportedSchemaVersion
             | Self::MigrationInvariantViolation
-            | Self::DistributionTooLarge => ErrorCategory::System,
+            | Self::DistributionTooLarge
+            | Self::GuardianWeightOverflow
+            | Self::InvalidTimestamp
+            | Self::TokenTransferFailed => ErrorCategory::System,
 
             Self::WillNotFound
             | Self::NotOwner
@@ -331,7 +352,14 @@ impl WillError {
             | Self::NoFailedPayout
             | Self::GuardianCancelInProgress
             | Self::InvalidCursor
-            | Self::MergeWithReleasedWill => ErrorCategory::User,
+            | Self::MergeWithReleasedWill
+            | Self::InvalidBeneficiaryAddress
+            | Self::ReleaseInProgress
+            | Self::BalanceExceedsMax
+            | Self::AlreadyReleased
+            | Self::GuardianCooldownCannotDecrease
+            | Self::WeakPreimageSalt
+            | Self::OwnerCannotBeBeneficiary => ErrorCategory::User,
         }
     }
 

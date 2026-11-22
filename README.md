@@ -338,6 +338,15 @@ disambiguate.
 | 48 | `DuplicateWillId` | A `batch_check_in` `will_ids` list named the same will more than once. |
 | 49 | `InvalidConsentTransition` | `accept_guardian_role` was called by a guardian who had already `Rejected` the role, which is terminal. |
 | 50 | `NoFailedPayout` | `retry_failed_payout` was called for a `(will_id, token, recipient)` tuple with no recorded failed payout. |
+| 59 | `GuardianWeightOverflow` | Guardian weights exceed the tally range. |
+| 60 | `ReleaseInProgress` | A release is already in progress for this will. |
+| 61 | `BalanceExceedsMax` | The amount would exceed the maximum will balance. |
+| 62 | `AlreadyReleased` | The will has already released its inheritance. |
+| 63 | `GuardianCooldownCannotDecrease` | The guardian cooldown cannot be reduced. |
+| 64 | `WeakPreimageSalt` | The beneficiary preimage salt is all zeros. |
+| 65 | `OwnerCannotBeBeneficiary` | The owner cannot name themselves as a beneficiary. |
+| 66 | `InvalidTimestamp` | The ledger timestamp precedes the last check-in. |
+| 67 | `TokenTransferFailed` | The token contract rejected a required transfer. |
 
 ## Contract spec artifact
 

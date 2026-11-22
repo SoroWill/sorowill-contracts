@@ -10,7 +10,14 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ## [Unreleased]
 
+### Added
+- Append-only emergency and maintenance action logs, with timestamped records
+  and cursor-based queries (#784).
+
 ### Fixed
+- Release planning accounts for beneficiary payouts, refunds, keeper bounties,
+  and hashed reserves exactly once. Release and cancellation each deduct
+  locked protocol balances once.
 - `distribute` now skips the keeper bounty when the caller-supplied keeper
   address equals the contract's own address. Previously, passing the contract
   address as the keeper would deduct the bounty from the beneficiaries' pool
