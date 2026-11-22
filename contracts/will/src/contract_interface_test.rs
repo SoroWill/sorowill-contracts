@@ -7,6 +7,15 @@
 //! It also verifies the sealing of critical functions (issue #806): sealed
 //! functions must be documented as non-overridable and must not be
 //! re-implementable by downstream contracts.
+//!
+//! Finally, it verifies the contract's function visibility contract (issue
+//! #807). The visibility rules are:
+//! - Contract entry points are `pub fn` so they are exposed through the
+//!   generated `WillContractClient` and callable by external accounts.
+//! - Internal helpers are private (no `pub`) so they are not part of the
+//!   contract's public ABI and cannot be invoked directly from outside.
+//! The tests below assert that public entry points are reachable through the
+//! client and that internal helpers are not exposed on it.
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -153,4 +162,51 @@ fn sealed_functions_remain_callable() {
     assert_eq!(will.id, will_id);
     let status = client.get_will_status(&will_id);
     assert_eq!(status, will.status);
+}
+
+/// Verifies the contract's function visibility contract (issue #807).
+///
+/// Public entry points must be declared `pub fn` in the contract source so
+/// they are exposed through the generated client, while internal helpers must
+/// remain private (no `pub`) so they are not part of the public ABI.
+#[test]
+fn function_visibility_is_enforced() {
+    let source = include_str!("lib.rs");
+
+    // Public entry points must be declared `pub fn`.
+    for entry_point in [
+        "create_will",
+        "execute_will",
+        "claim",
+        "get_will",
+        "get_will_status",
+        "get_time_until_deadline",
+        "get_wills_by_owner",
+        "get_wills_by_beneficiary",
+        "get_protocol_stats",
+        "get_contract_version",
+    ] {
+        let marker = format!("pub fn {}", entry_point);
+        assert!(
+            source.contains(&marker),
+            "entry point `{}` must be public (`{}`)",
+            entry_point,
+            marker
+        );
+    }
+
+    // Internal helpers must not be exposed as `pub fn`.
+    for internal_fn in [
+        "compute_allocation",
+        "validate_allocations",
+        "transfer_to_beneficiary",
+    ] {
+        let forbidden = format!("pub fn {}", internal_fn);
+        assert!(
+            !source.contains(&forbidden),
+            "internal helper `{}` must not be public (`{}`)",
+            internal_fn,
+            forbidden
+        );
+    }
 }
