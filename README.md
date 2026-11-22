@@ -419,3 +419,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-764 -->
 - #764: Implement beneficiary claims tracking
+
+<!-- handsoff-issue-765 -->
+- #765: Add contract pause mechanism
