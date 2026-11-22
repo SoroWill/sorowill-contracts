@@ -422,3 +422,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-793 -->
 - #793: Implement contract fee sharing
+
+<!-- handsoff-issue-795 -->
+- #795: Implement contract slashing mechanism
