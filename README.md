@@ -425,3 +425,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-766 -->
 - #766: Implement beneficiary vesting schedule
+
+<!-- handsoff-issue-767 -->
+- #767: Add contract recovery function
