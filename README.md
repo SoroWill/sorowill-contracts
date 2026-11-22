@@ -422,3 +422,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-790 -->
 - #790: Add contract recovery address support
+
+<!-- handsoff-issue-791 -->
+- #791: Implement contract snapshot versioning
