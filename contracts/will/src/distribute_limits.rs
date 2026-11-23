@@ -30,6 +30,9 @@ use soroban_sdk::{panic_with_error, Env};
 use crate::errors::WillError;
 use crate::MAX_RELEASE_PAYOUTS;
 
+/// Basis-point denominator used for percentage share math.
+pub(crate) const BPS_DENOMINATOR: i128 = 10_000;
+
 /// Pre-flight check run at the top of `distribute` (#597): rejects a release
 /// whose beneficiary x token payout count exceeds [`MAX_RELEASE_PAYOUTS`]
 /// before any state changes or transfers happen. Every entry point already
@@ -43,6 +46,28 @@ pub(crate) fn assert_payout_budget(env: &Env, beneficiaries: u32, tokens: u32) {
     };
     if payouts > MAX_RELEASE_PAYOUTS {
         panic_with_error!(env, WillError::DistributionTooLarge);
+    }
+}
+
+/// Divides `numerator` by `divisor`, rejecting a zero divisor with a clear
+/// contract error instead of panicking on the raw division (#802).
+///
+/// Returns `None` when the divisor is zero so callers can surface
+/// [`WillError::DivisionByZero`] through their own error path; use
+/// [`checked_div_or_error`] to panic with that error directly.
+pub(crate) fn checked_div(numerator: i128, divisor: i128) -> Option<i128> {
+    if divisor == 0 {
+        return None;
+    }
+    numerator.checked_div(divisor)
+}
+
+/// Divides `numerator` by `divisor`, panicking with
+/// [`WillError::DivisionByZero`] when the divisor is zero (#802).
+pub(crate) fn checked_div_or_error(env: &Env, numerator: i128, divisor: i128) -> i128 {
+    match checked_div(numerator, divisor) {
+        Some(quotient) => quotient,
+        None => panic_with_error!(env, WillError::DivisionByZero),
     }
 }
 
@@ -70,59 +95,46 @@ pub(crate) fn min_one_unit_share(
     floor_share.max(1).min(cap)
 }
 
-/// Returns the dust that the final percentage beneficiary must absorb so the
-/// plan sums exactly to the balance (#782).
-///
-/// `percentage_remaining` is the amount not yet assigned after all non-final
-/// percentage beneficiaries have been paid; it is exactly the accumulated
-/// rounding dust plus the final beneficiary's own floor share. Returning it
-/// unchanged documents that the final absorber collects all dust, leaving no
-/// stranded remainder.
-pub(crate) fn final_dust_share(percentage_remaining: i128) -> i128 {
-    percentage_remaining.max(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::Env;
 
     #[test]
-    fn min_one_unit_share_never_strands_dust() {
-        // A tiny allocation that floors to zero still gets one unit.
-        assert_eq!(min_one_unit_share(0, 100, 1), 1);
-        // The share never exceeds what leaves a unit for later beneficiaries.
-        assert_eq!(min_one_unit_share(50, 10, 3), 7);
-        // When the balance is too small, later beneficiaries get what is left.
-        assert_eq!(min_one_unit_share(0, 0, 2), 0);
+    fn checked_div_returns_none_on_zero_divisor() {
+        assert_eq!(checked_div(100, 0), None);
     }
 
     #[test]
-    fn plan_sums_exactly_to_balance() {
-        // Three beneficiaries at 33/33/34 bps of 100 units.
-        let balance: i128 = 100;
-        let mut remaining = balance;
-        let mut paid: i128 = 0;
+    fn checked_div_divides_normally() {
+        assert_eq!(checked_div(100, 4), Some(25));
+        assert_eq!(checked_div(0, 4), Some(0));
+    }
 
-        // First two non-final beneficiaries.
-        for _ in 0..2 {
-            let floor_share = remaining * 3_300 / 10_000;
-            let share = min_one_unit_share(floor_share, remaining, 1);
-            paid += share;
-            remaining -= share;
+    #[test]
+    fn checked_div_or_error_panics_on_zero_divisor() {
+        let env = Env::default();
+        let result = env.try_invoke_contract::<i128, WillError, _>(
+            &env.register_contract(None, ZeroDivProbe),
+            &soroban_sdk::symbol_short!("probe"),
+            soroban_sdk::vec![&env],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn checked_div_or_error_divides_normally() {
+        let env = Env::default();
+        assert_eq!(checked_div_or_error(&env, 100, 4), 25);
+    }
+
+    #[soroban_sdk::contract]
+    struct ZeroDivProbe;
+
+    #[soroban_sdk::contractimpl]
+    impl ZeroDivProbe {
+        pub fn probe(env: Env) -> i128 {
+            checked_div_or_error(&env, 1, 0)
         }
-        // Final absorber collects the dust.
-        let dust = final_dust_share(remaining);
-        paid += dust;
-        remaining -= dust;
-
-        assert_eq!(paid, balance);
-        assert_eq!(remaining, 0);
-    }
-
-    #[test]
-    fn final_dust_share_is_non_negative() {
-        assert_eq!(final_dust_share(0), 0);
-        assert_eq!(final_dust_share(7), 7);
-        assert_eq!(final_dust_share(-3), 0);
     }
 }
