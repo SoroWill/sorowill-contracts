@@ -1,5 +1,6 @@
 //! Keeps the legacy `Will::balance` mirror and the authoritative
-//! `Will::balances` map in agreement (#592).
+//! `Will::balances` map in agreement (#592), and exposes the broader
+//! state-consistency checks for a will (#805).
 //!
 //! A will tracks its primary token twice: `balance` (legacy, single-token
 //! helpers such as `merge_wills`, `split_will` and `reveal_and_claim` still
