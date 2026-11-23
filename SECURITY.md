@@ -68,6 +68,92 @@ If you conduct security research in good faith and follow these guidelines, we w
 
 ---
 
+## Contract Security Hardening Guide
+
+This section is the operational companion to the disclosure policy above. It
+covers the checklist, audit preparation, deployment, and monitoring steps that
+maintainers and integrators must follow when shipping or upgrading the SoroWill
+contract.
+
+### Security Checklist
+
+Run through this list before every release and before any mainnet deployment:
+
+- [ ] **Authorization**: Every state-changing entry point calls
+      `require_auth` on the correct address (owner, claimant, or admin). No
+      privileged path is reachable without an auth check.
+- [ ] **Reentrancy / ordering**: State is written (e.g. `claimed` flags,
+      balances) *before* any token transfer or external call.
+- [ ] **Arithmetic**: All balance and time math uses checked operations
+      (`checked_add`, `checked_sub`, `checked_mul`) and fails closed on
+      overflow/underflow.
+- [ ] **Commitments**: Hashed beneficiaries are stored as
+      `sha256(beneficiary_address.to_xdr() || salt)` with a random salt of at
+      least 16 bytes; the pre-image is validated against the `claimant`
+      argument.
+- [ ] **Access control**: Admin-only functions (pause, upgrade, config) are
+      gated and documented; no default or hardcoded admin keys.
+- [ ] **Input validation**: Amounts, intervals, and beneficiary lists are
+      validated (non-zero, bounded length, sane time windows).
+- [ ] **Storage**: TTLs are extended for long-lived entries; no unbounded
+      iteration over user-controlled collections.
+- [ ] **Events**: All state transitions emit events with enough data for
+      off-chain monitoring.
+- [ ] **Dependencies**: `Cargo.lock` is committed and `cargo audit` reports no
+      known advisories.
+- [ ] **Tests**: Unit and integration tests cover happy paths, auth failures,
+      replay attempts, and boundary conditions; `cargo test` is green.
+
+### Audit Preparation
+
+Before engaging an external auditor:
+
+1. **Freeze scope**: Tag the commit to be audited and record the exact
+   contract ID(s) and storage layout in the audit request.
+2. **Document invariants**: Write down the protocol invariants (e.g. "a slot
+   can be claimed at most once", "sum of allocations never exceeds the
+   deposited balance") so auditors can target them.
+3. **Provide a threat model**: List assets at risk, trusted roles, and known
+   risks (see below) with their mitigations.
+4. **Reproducible builds**: Ensure `cargo build --target wasm32-unknown-unknown
+   --release` produces a deterministic artifact and record its hash.
+5. **Test coverage**: Share the test suite and any fuzzing harnesses; note
+   areas with intentionally limited coverage.
+6. **Triage channel**: Designate a private channel for findings and agree on
+   severity classification (Critical / High / Medium / Low).
+
+### Deployment Procedures
+
+1. **Build**: Compile the release WASM from a clean checkout of the tagged
+   commit and record the artifact hash.
+2. **Verify**: Confirm the hash matches CI output and that `cargo test` passed
+   on the same commit.
+3. **Dry run on Testnet**: Deploy to Testnet first, exercise create / check-in /
+   claim / cancel flows, and confirm events are emitted as expected.
+4. **Deploy**: Install the WASM and deploy/upgrade the contract instance using
+   the admin key held in the approved signer setup (never a personal key).
+5. **Initialize**: Set configuration and admin roles, then verify on-chain
+   state matches the intended configuration.
+6. **Record**: Update [`deployments/testnet.json`](./deployments/testnet.json)
+   (and the mainnet equivalent) with the new contract ID and artifact hash.
+7. **Announce**: Publish the deployment notes and any migration steps for
+   integrators.
+
+### Monitoring Setup
+
+- **Event streaming**: Subscribe to contract events (create, check-in, claim,
+  cancel, upgrade) and alert on unexpected or high-value claims.
+- **Balance watch**: Track the contract's token balance against the sum of
+  outstanding allocations; alert on any divergence.
+- **Failure alerts**: Monitor for spikes in failed invocations, which can
+  indicate replay attempts or misconfigured clients.
+- **Admin actions**: Alert on any admin/upgrade invocation and require
+  out-of-band confirmation.
+- **Health checks**: Periodically read contract state (TTL, config) and alert
+  before storage entries approach expiration.
+
+---
+
 ## Known Risks & Mitigations
 
 ### Replay of `reveal_and_claim` (#440)
