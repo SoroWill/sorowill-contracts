@@ -10,6 +10,9 @@ use soroban_sdk::{panic_with_error, Env};
 use crate::errors::WillError;
 use crate::MAX_RELEASE_PAYOUTS;
 
+/// Basis-point denominator used for percentage share math.
+pub(crate) const BPS_DENOMINATOR: i128 = 10_000;
+
 /// Pre-flight check run at the top of `distribute` (#597): rejects a release
 /// whose beneficiary x token payout count exceeds [`MAX_RELEASE_PAYOUTS`]
 /// before any state changes or transfers happen. Every entry point already
@@ -23,6 +26,28 @@ pub(crate) fn assert_payout_budget(env: &Env, beneficiaries: u32, tokens: u32) {
     };
     if payouts > MAX_RELEASE_PAYOUTS {
         panic_with_error!(env, WillError::DistributionTooLarge);
+    }
+}
+
+/// Divides `numerator` by `divisor`, rejecting a zero divisor with a clear
+/// contract error instead of panicking on the raw division (#802).
+///
+/// Returns `None` when the divisor is zero so callers can surface
+/// [`WillError::DivisionByZero`] through their own error path; use
+/// [`checked_div_or_error`] to panic with that error directly.
+pub(crate) fn checked_div(numerator: i128, divisor: i128) -> Option<i128> {
+    if divisor == 0 {
+        return None;
+    }
+    numerator.checked_div(divisor)
+}
+
+/// Divides `numerator` by `divisor`, panicking with
+/// [`WillError::DivisionByZero`] when the divisor is zero (#802).
+pub(crate) fn checked_div_or_error(env: &Env, numerator: i128, divisor: i128) -> i128 {
+    match checked_div(numerator, divisor) {
+        Some(quotient) => quotient,
+        None => panic_with_error!(env, WillError::DivisionByZero),
     }
 }
 
@@ -45,4 +70,48 @@ pub(crate) fn min_one_unit_share(
 ) -> i128 {
     let cap = (percentage_remaining - later_count as i128).max(0);
     floor_share.max(1).min(cap)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::Env;
+
+    #[test]
+    fn checked_div_returns_none_on_zero_divisor() {
+        assert_eq!(checked_div(100, 0), None);
+    }
+
+    #[test]
+    fn checked_div_divides_normally() {
+        assert_eq!(checked_div(100, 4), Some(25));
+        assert_eq!(checked_div(0, 4), Some(0));
+    }
+
+    #[test]
+    fn checked_div_or_error_panics_on_zero_divisor() {
+        let env = Env::default();
+        let result = env.try_invoke_contract::<i128, WillError, _>(
+            &env.register_contract(None, ZeroDivProbe),
+            &soroban_sdk::symbol_short!("probe"),
+            soroban_sdk::vec![&env],
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn checked_div_or_error_divides_normally() {
+        let env = Env::default();
+        assert_eq!(checked_div_or_error(&env, 100, 4), 25);
+    }
+
+    #[soroban_sdk::contract]
+    struct ZeroDivProbe;
+
+    #[soroban_sdk::contractimpl]
+    impl ZeroDivProbe {
+        pub fn probe(env: Env) -> i128 {
+            checked_div_or_error(&env, 1, 0)
+        }
+    }
 }
