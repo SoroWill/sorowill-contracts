@@ -68,6 +68,106 @@ If you conduct security research in good faith and follow these guidelines, we w
 
 ---
 
+## Contract Security Audit Checklist
+
+Every release of the `will` contract must pass the following review before deployment. Each item should be marked `[x]` (verified), `[ ]` (not yet reviewed), or `N/A` with a justification.
+
+### Access Control & Authorization
+- [ ] Every state-mutating entry point calls `require_auth` on the correct principal (owner, beneficiary, or claimant).
+- [ ] Admin/owner-only functions (e.g. configuration, upgrades) are gated and cannot be invoked by arbitrary callers.
+- [ ] Authorization is checked against the *actual* caller, not a caller-supplied address argument.
+- [ ] No privileged action can be triggered indirectly through a helper that skips the auth check.
+
+### Arithmetic Safety
+- [ ] All balance and allocation arithmetic uses checked operations (`checked_add`, `checked_sub`, `checked_mul`) or is provably bounded.
+- [ ] Token amounts and percentages cannot overflow, underflow, or be truncated by integer division.
+- [ ] Sum of beneficiary allocations equals the total deposited amount (no dust left unassigned or double-counted).
+- [ ] Rounding behavior is documented and cannot be exploited to extract more than deposited.
+
+### State Transitions
+- [ ] The will lifecycle (created → active → claimed/expired) is enforced; invalid transitions revert.
+- [ ] Terminal states (fully claimed, cancelled) cannot be re-entered or mutated.
+- [ ] `reveal_and_claim` sets the per-slot `claimed` flag and persists it *before* the token transfer (see Known Risks).
+- [ ] Reentrancy / re-entrant token callbacks cannot corrupt state or double-pay.
+
+### Events & Observability
+- [ ] Every state-changing operation emits an event with the relevant identifiers and amounts.
+- [ ] Events are emitted after state is finalized so off-chain indexers observe consistent data.
+- [ ] No sensitive pre-images or secrets are leaked in event payloads beyond what is already public on-chain.
+
+### Upgrade & Versioning
+- [ ] Storage keys and layouts are versioned; migrations are idempotent and tested.
+- [ ] Contract `wasm` hash / version is recorded in `deployments/` for each deployment.
+- [ ] Upgrade path preserves existing will state and cannot orphan user funds.
+
+---
+
+## Audit Findings Log
+
+All findings from internal reviews and external audits are recorded here. Severity follows the standard **Critical / High / Medium / Low / Informational** scale.
+
+| ID | Date | Severity | Area | Location | Description | Status |
+| -- | ---- | -------- | ---- | -------- | ----------- | ------ |
+| F-001 | YYYY-MM-DD | High | Access Control | `contracts/will/src/lib.rs` | _Example: missing auth on config setter_ | Resolved |
+| F-002 | YYYY-MM-DD | Medium | Arithmetic | `contracts/will/src/lib.rs` | _Example: unchecked subtraction on balance_ | Open |
+
+**Status values:** `Open` → `In Progress` → `Resolved` → `Verified` (or `Won't Fix` with justification).
+
+---
+
+## Remediation Tracking
+
+Each finding above is tracked to closure. A finding may only be marked `Verified` once a reviewer other than the fix author confirms the remediation.
+
+| Finding | Owner | Status | Fix PR / Commit | Target Date | Verified By |
+| ------- | ----- | ------ | --------------- | ----------- | ----------- |
+| F-001 | @owner | Verified | #000 | YYYY-MM-DD | @reviewer |
+| F-002 | @owner | In Progress | — | YYYY-MM-DD | — |
+
+**Remediation rules:**
+- Every `Critical`/`High` finding must be `Verified` before the next deployment.
+- `Won't Fix` decisions require written justification and maintainer sign-off.
+- Re-test the full checklist after remediation to confirm no regressions.
+
+---
+
+## Final Audit Report
+
+A completed audit is summarized using the template below and stored alongside the release.
+
+```
+# SoroWill Contract Audit Report
+
+- Audit date:        YYYY-MM-DD
+- Auditor(s):        <names / firm>
+- Commit / wasm hash: <git sha / wasm hash>
+- Scope:             contracts/will/ (and any listed dependencies)
+
+## Methodology
+<Manual review, static analysis tooling, unit/fuzz tests, threat modeling.>
+
+## Summary of Findings
+| Severity | Count | Resolved |
+| -------- | ----- | -------- |
+| Critical | 0     | 0        |
+| High     | 0     | 0        |
+| Medium   | 0     | 0        |
+| Low      | 0     | 0        |
+| Info     | 0     | 0        |
+
+## Detailed Findings
+<Reference F-xxx entries from the Audit Findings Log.>
+
+## Conclusion
+<Overall risk assessment and whether the contract is fit for deployment.>
+
+## Sign-off
+- Auditor:  ____________________  Date: __________
+- Maintainer: ________________  Date: __________
+```
+
+---
+
 ## Known Risks & Mitigations
 
 ### Replay of `reveal_and_claim` (#440)

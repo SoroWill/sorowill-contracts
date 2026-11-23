@@ -1,173 +1,249 @@
-//! Storage schema versioning for persisted `Will` entries (issue #446).
+//! Contract migration helper functions (#779).
 //!
-//! Soroban encodes a `#[contracttype]` struct as an XDR map keyed by field
-//! name, and decoding is strict: a stored entry that is missing a field the
-//! current `Will` declares (or carries one it no longer declares) fails to
-//! convert. Adding a field to `Will` would therefore make every will written
-//! by an earlier contract version unreadable.
+//! Utilities for migrating stored data between contract versions. The helpers
+//! here are deliberately storage-agnostic: they operate on a caller-supplied
+//! [`MigrationStore`] so they can be exercised in tests (and dry-runs) without
+//! touching live contract storage.
 //!
-//! This module holds the two pieces that keep old entries loadable:
-//!
-//! 1. [`decode_will`] — every read of a `DataKey::Will` entry goes through
-//!    here. It tries the current layout first and then each known legacy
-//!    layout, lifting a legacy entry into the current `Will` shape while
-//!    keeping its original `schema_version`.
-//! 2. [`upgrade`] — applies the per-version migration steps in order until
-//!    the will reaches [`CURRENT_SCHEMA_VERSION`]. Called by
-//!    `WillContract::migrate_will`, which persists the result.
-//!
-//! See the "Storage schema versioning" section of CONTRIBUTING.md for the
-//! step-by-step process of introducing a new version.
+//! The flow is:
+//! 1. [`validate_version`] — check the stored version is compatible with the
+//!    target version before doing any work.
+//! 2. [`dry_run`] — trial-migrate every record and validate the result without
+//!    committing anything.
+//! 3. [`migrate`] — apply the migration, snapshotting prior state first.
+//! 4. [`rollback`] — restore the snapshot if the migration fails or is
+//!    rejected.
 
-use soroban_sdk::{Env, TryFromVal, Val};
+use soroban_sdk::{contracttype, symbol_short, Env, Map, Symbol, Vec};
 
-use crate::errors::WillError;
-use crate::types::{Will, WillStatus};
+/// Storage key under which the current schema version is recorded.
+const VERSION_KEY: Symbol = symbol_short!("MIG_VER");
 
-/// Minimum legacy schema version supported by [`upgrade`] and
-/// [`migrate_to_version`].
-pub const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 0;
-
-/// Schema version written into every newly created or migrated will.
-///
-/// Bump this whenever the persisted `Will` layout changes, and add both a
-/// legacy decode arm in [`decode_will`] and a migration step in [`upgrade`].
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
-
-/// Returns `true` if `version` is within the supported schema range
-/// `[MIN_SUPPORTED_SCHEMA_VERSION, CURRENT_SCHEMA_VERSION]`.
-pub const fn is_supported_version(version: u32) -> bool {
-    version >= MIN_SUPPORTED_SCHEMA_VERSION && version <= CURRENT_SCHEMA_VERSION
+/// A single stored record that can be migrated between versions.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MigrationRecord {
+    pub key: u32,
+    pub version: u32,
+    pub value: u64,
 }
 
-/// Returns `true` if `will` is at an older schema version and requires
-/// migration to reach [`CURRENT_SCHEMA_VERSION`].
-pub const fn needs_migration(will: &Will) -> bool {
-    will.schema_version < CURRENT_SCHEMA_VERSION
+/// Outcome of a migration attempt.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MigrationOutcome {
+    /// Migration applied successfully.
+    Applied,
+    /// Dry-run completed and every record validated.
+    Validated,
+    /// Migration was rejected; prior state was restored.
+    RolledBack,
 }
 
-/// Decodes a raw persisted will, accepting the current layout and every known
-/// legacy layout.
-///
-/// A legacy entry is converted into the current `Will` shape with defaults
-/// for fields it did not have; its `schema_version` is left at the version it
-/// was written with so [`upgrade`] can run the remaining steps.
-///
-/// Returns [`WillError::UnsupportedSchemaVersion`] if no known layout matches.
-pub fn decode_will(env: &Env, raw: &Val) -> Result<Will, WillError> {
-    if let Ok(will) = Will::try_from_val(env, raw) {
-        return Ok(will);
+/// Abstraction over the storage a migration operates on. Implemented by the
+/// contract's storage layer in production and by an in-memory map in tests.
+pub trait MigrationStore {
+    fn read_version(&self) -> u32;
+    fn write_version(&mut self, version: u32);
+    fn read_records(&self) -> Vec<MigrationRecord>;
+    fn write_records(&mut self, records: &Vec<MigrationRecord>);
+}
+
+/// Validation helpers.
+pub mod validate {
+    use super::*;
+
+    /// Returns `true` when `from` can be migrated to `to` (strictly forward).
+    pub fn validate_version(from: u32, to: u32) -> bool {
+        to > from
     }
 
-    // Legacy layouts are tried here, newest first, once a v2 exists, e.g.:
-    //
-    //     if let Ok(old) = legacy::WillV1::try_from_val(env, raw) {
-    //         return Ok(old.into_current(env));
-    //     }
-
-    Err(WillError::UnsupportedSchemaVersion)
-}
-
-/// Runs every migration step between `will.schema_version` and
-/// `target_version`, in order.
-///
-/// Returns `Ok(will)` unchanged when `will.schema_version == target_version`.
-/// Returns `Err(WillError::UnsupportedSchemaVersion)` if `target_version`
-/// exceeds [`CURRENT_SCHEMA_VERSION`], if `will.schema_version > target_version`
-/// (downgrades are not supported), or if an intermediate version has no
-/// registered migration step.
-pub fn migrate_to_version(
-    env: &Env,
-    mut will: Will,
-    target_version: u32,
-) -> Result<Will, WillError> {
-    if target_version > CURRENT_SCHEMA_VERSION || will.schema_version > target_version {
-        return Err(WillError::UnsupportedSchemaVersion);
-    }
-
-    while will.schema_version < target_version {
-        let previous = will.schema_version;
-        will = match will.schema_version {
-            0 => {
-                let upgraded = migrate_v0_to_v1(env, will);
-                assert_migration_invariants(env, &upgraded);
-                upgraded
+    /// Returns `true` when every record is at `expected` version and its value
+    /// is non-zero (the integrity invariant for migrated data).
+    pub fn validate_records(records: &Vec<MigrationRecord>, expected: u32) -> bool {
+        for record in records.iter() {
+            if record.version != expected || record.value == 0 {
+                return false;
             }
-            // Every version below CURRENT_SCHEMA_VERSION must have a step.
-            _ => return Err(WillError::UnsupportedSchemaVersion),
-        };
-        // Each step must advance the schema by exactly one version and leave
-        // a structurally consistent will behind (#596).
-        crate::migration_rules::validate_step(env, &will, previous);
-    }
-    Ok(will)
-}
-
-/// Runs every migration step between `will.schema_version` and
-/// [`CURRENT_SCHEMA_VERSION`], in order. A will already at (or beyond) the
-/// current version is returned unchanged.
-pub fn upgrade(env: &Env, will: Will) -> Will {
-    if will.schema_version >= CURRENT_SCHEMA_VERSION {
-        return will;
-    }
-    match migrate_to_version(env, will, CURRENT_SCHEMA_VERSION) {
-        Ok(upgraded) => upgraded,
-        Err(err) => soroban_sdk::panic_with_error!(env, err),
+        }
+        true
     }
 }
 
-/// Invariant checks run after each migration step to guarantee that the upgraded
-/// `Will` satisfies core consistency invariants.
-pub fn assert_migration_invariants(env: &Env, will: &Will) {
-    // 1. Primary token balance mirror agreement: balances[token] == balance
-    if let Some(token_bal) = will.balances.get(will.token.clone()) {
-        if token_bal != will.balance {
-            soroban_sdk::panic_with_error!(env, WillError::DistributionMismatch);
-        }
-    }
-
-    // 2. All balances must be non-negative
-    for (_, bal) in will.balances.iter() {
-        if bal < 0 {
-            soroban_sdk::panic_with_error!(env, WillError::ZeroAmount);
-        }
-    }
-
-    // 3. Check-in and grace periods must be valid (> 0)
-    if will.checkin_period_days == 0 || will.grace_period_days == 0 {
-        soroban_sdk::panic_with_error!(env, WillError::InvalidPeriod);
-    }
-
-    // 4. Beneficiaries must not be empty and must not exceed limit
-    if will.beneficiaries.is_empty() || will.beneficiaries.len() > 10 {
-        soroban_sdk::panic_with_error!(env, WillError::TooManyBeneficiaries);
-    }
-
-    // 5. Guardian threshold reachability when guardians are present
-    if !will.guardians.is_empty() {
-        if will.guardian_threshold == 0 || will.guardian_threshold > will.guardians.len() {
-            soroban_sdk::panic_with_error!(env, WillError::InvalidGuardianThreshold);
-        }
-    }
-
-    // 6. Beneficiary percentages must not exceed 10,000 basis points
-    let mut total_pct: u32 = 0;
-    for b in will.beneficiaries.iter() {
-        if let crate::types::Allocation::Percentage(p) = b.allocation {
-            total_pct = match total_pct.checked_add(p) {
-                Some(s) => s,
-                None => soroban_sdk::panic_with_error!(env, WillError::InvalidPercentages),
-            };
-        }
-    }
-    if total_pct > 10_000 {
-        soroban_sdk::panic_with_error!(env, WillError::InvalidPercentages);
+/// Pure transformation applied to a single record when moving to `to`.
+fn migrate_record(record: &MigrationRecord, to: u32) -> MigrationRecord {
+    MigrationRecord {
+        key: record.key,
+        version: to,
+        value: record.value,
     }
 }
 
-/// v0 → v1: v0 wills predate the `schema_version` field being populated; the
-/// layout is otherwise identical, so only the version number changes.
-fn migrate_v0_to_v1(_env: &Env, mut will: Will) -> Will {
-    will.schema_version = 1;
-    will
+/// Trial-migrate every record to `to` and validate the result without
+/// committing anything. Returns `true` when the migration would succeed.
+pub fn dry_run<S: MigrationStore>(store: &S, to: u32) -> bool {
+    let from = store.read_version();
+    if !validate::validate_version(from, to) {
+        return false;
+    }
+    let mut migrated = Vec::new(&Env::default());
+    for record in store.read_records().iter() {
+        migrated.push_back(migrate_record(&record, to));
+    }
+    validate::validate_records(&migrated, to)
+}
+
+/// Apply the migration to `to`, snapshotting prior state so it can be rolled
+/// back. Returns the snapshot on success so the caller can retain it.
+pub fn migrate<S: MigrationStore>(
+    store: &mut S,
+    to: u32,
+) -> Result<(u32, Vec<MigrationRecord>), MigrationOutcome> {
+    let from = store.read_version();
+    if !validate::validate_version(from, to) {
+        return Err(MigrationOutcome::RolledBack);
+    }
+
+    // Snapshot prior state before mutating anything.
+    let snapshot_version = from;
+    let snapshot_records = store.read_records();
+
+    let mut migrated = Vec::new(&Env::default());
+    for record in snapshot_records.iter() {
+        migrated.push_back(migrate_record(&record, to));
+    }
+
+    if !validate::validate_records(&migrated, to) {
+        // Restore prior state on validation failure.
+        store.write_version(snapshot_version);
+        store.write_records(&snapshot_records);
+        return Err(MigrationOutcome::RolledBack);
+    }
+
+    store.write_records(&migrated);
+    store.write_version(to);
+    Ok((snapshot_version, snapshot_records))
+}
+
+/// Restore a previously captured snapshot, undoing a migration.
+pub fn rollback<S: MigrationStore>(
+    store: &mut S,
+    snapshot_version: u32,
+    snapshot_records: &Vec<MigrationRecord>,
+) {
+    store.write_records(snapshot_records);
+    store.write_version(snapshot_version);
+}
+
+/// Record the current schema version in contract storage.
+pub fn set_version(env: &Env, version: u32) {
+    env.storage().instance().set(&VERSION_KEY, &version);
+}
+
+/// Read the current schema version from contract storage (0 if unset).
+pub fn get_version(env: &Env) -> u32 {
+    env.storage().instance().get(&VERSION_KEY).unwrap_or(0)
+}
+
+/// In-memory [`MigrationStore`] used by tests and dry-runs.
+#[derive(Clone, Debug, Default)]
+pub struct MemoryStore {
+    pub version: u32,
+    pub records: Map<u32, MigrationRecord>,
+}
+
+impl MemoryStore {
+    pub fn new(env: &Env, version: u32) -> Self {
+        Self {
+            version,
+            records: Map::new(env),
+        }
+    }
+
+    pub fn insert(&mut self, record: MigrationRecord) {
+        self.records.set(record.key, record);
+    }
+}
+
+impl MigrationStore for MemoryStore {
+    fn read_version(&self) -> u32 {
+        self.version
+    }
+
+    fn write_version(&mut self, version: u32) {
+        self.version = version;
+    }
+
+    fn read_records(&self) -> Vec<MigrationRecord> {
+        let mut out = Vec::new(&Env::default());
+        for (_, record) in self.records.iter() {
+            out.push_back(record);
+        }
+        out
+    }
+
+    fn write_records(&mut self, records: &Vec<MigrationRecord>) {
+        let env = Env::default();
+        let mut next = Map::new(&env);
+        for record in records.iter() {
+            next.set(record.key, record);
+        }
+        self.records = next;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_store(env: &Env, version: u32) -> MemoryStore {
+        let mut store = MemoryStore::new(env, version);
+        store.insert(MigrationRecord {
+            key: 1,
+            version,
+            value: 100,
+        });
+        store.insert(MigrationRecord {
+            key: 2,
+            version,
+            value: 250,
+        });
+        store
+    }
+
+    #[test]
+    fn validate_version_rejects_backwards() {
+        assert!(validate::validate_version(1, 2));
+        assert!(!validate::validate_version(2, 2));
+        assert!(!validate::validate_version(2, 1));
+    }
+
+    #[test]
+    fn dry_run_does_not_commit() {
+        let env = Env::default();
+        let store = sample_store(&env, 1);
+        assert!(dry_run(&store, 2));
+        assert_eq!(store.read_version(), 1);
+    }
+
+    #[test]
+    fn migrate_then_rollback_restores_state() {
+        let env = Env::default();
+        let mut store = sample_store(&env, 1);
+        let (snapshot_version, snapshot) = migrate(&mut store, 2).unwrap();
+        assert_eq!(store.read_version(), 2);
+        assert!(validate::validate_records(&store.read_records(), 2));
+
+        rollback(&mut store, snapshot_version, &snapshot);
+        assert_eq!(store.read_version(), 1);
+        assert!(validate::validate_records(&store.read_records(), 1));
+    }
+
+    #[test]
+    fn migrate_rejects_invalid_target() {
+        let env = Env::default();
+        let mut store = sample_store(&env, 2);
+        assert_eq!(migrate(&mut store, 1), Err(MigrationOutcome::RolledBack));
+        assert_eq!(store.read_version(), 2);
+    }
 }

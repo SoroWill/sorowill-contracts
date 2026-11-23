@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["contracts/will"]
+members = ["contracts/will", "contracts/beneficiary-whitelist"]
 # `fuzz` is a self-contained crate that needs a nightly toolchain and
 # libFuzzer. Keeping it out of the workspace means `cargo test --workspace`
 # and `cargo clippy --all-targets` stay on stable. See docs/FUZZING.md.

@@ -24,19 +24,12 @@ embedded in the WASM as an `SCSpecEntry` XDR stream by `#[contract]` /
 way to extract it is the Stellar CLI's spec-export tooling:
 
 ```bash
-# Build the optimized release wasm
-cargo build -p will --release --target wasm32v1-none
-
-# Export the embedded spec as JSON bindings
-stellar contract bindings json \
-  --wasm target/wasm32v1-none/release/will.wasm \
-  --output spec/will-v$(cargo metadata --no-deps --format-version 1 \
-    | jq -r '.packages[] | select(.name=="will") | .version').json
+scripts/export-spec.sh
+scripts/export-spec.sh --check
 ```
 
-`scripts/export-spec.sh` wraps the two commands above so the process is a
-single, repeatable entry point (see that script for the exact invocation
-used by CI).
+The script uses `stellar contract build` and writes the contract's
+`SCSpecEntry` values as a JSON array.
 
 ## Update process
 
