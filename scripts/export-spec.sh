@@ -12,8 +12,7 @@
 # the crate version currently declared — the case where a public signature
 # changed and the version was bumped but the export step was skipped.
 #
-# Requires: cargo, the wasm32v1-none target, stellar-cli >= 22.0.0 (`cargo install
-# --locked stellar-cli`), and jq.
+# Requires: cargo, the wasm32v1-none target, Stellar CLI >= 25.2.0, and jq.
 #
 # STELLAR_BIN overrides the exporter binary (used by the tests).
 set -euo pipefail
@@ -33,18 +32,17 @@ fi
 version="$(cargo metadata --no-deps --format-version 1 \
   | jq -r '.packages[] | select(.name=="will") | .version')"
 
-wasm_path="target/wasm32v1-none/release/will.wasm"
+wasm_path="${CARGO_TARGET_DIR:-target}/wasm32v1-none/release/will.wasm"
 out_path="spec/will-v${version}.json"
 stellar_bin="${STELLAR_BIN:-stellar}"
 
 echo "Building will contract (release, wasm32v1-none)..."
-cargo build -p will --release --target wasm32v1-none
+"${stellar_bin}" contract build --package will --locked
 
 if [[ "${check_mode}" -eq 0 ]]; then
   echo "Exporting spec to ${out_path}..."
-  "${stellar_bin}" contract bindings json \
-    --wasm "${wasm_path}" \
-    --output "${out_path}"
+  "${stellar_bin}" contract info interface --wasm "${wasm_path}" --output json \
+    | jq . > "${out_path}"
   echo "Done. Diff ${out_path} against the previous version to review drift."
   exit 0
 fi
@@ -63,9 +61,8 @@ trap 'rm -rf "${tmp_dir}"' EXIT
 fresh_path="${tmp_dir}/will-v${version}.json"
 
 echo "Exporting current spec for comparison..."
-"${stellar_bin}" contract bindings json \
-  --wasm "${wasm_path}" \
-  --output "${fresh_path}"
+"${stellar_bin}" contract info interface --wasm "${wasm_path}" --output json \
+  | jq . > "${fresh_path}"
 
 # Compare parsed JSON rather than bytes, so formatting or key ordering from a
 # different stellar-cli build is not reported as a contract change.

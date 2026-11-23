@@ -11,3 +11,120 @@ ignore = [
     # Example (do not uncomment without a real justification):
     # "RUSTSEC-0000-0000", # unreachable from no_std wasm build; tracked in #123
 ]
+
+# ---------------------------------------------------------------------------
+# Contract security audit process (issue #788)
+#
+# This section documents the manual review checklist, the findings log, the
+# remediation tracker, and the final report template used for every audit of
+# the contract crate. It is intentionally data-only so tooling can parse it.
+# ---------------------------------------------------------------------------
+
+[audit]
+version = 1
+
+# Review areas that MUST be checked for every audit. Each item is a concrete
+# question the auditor answers (pass / fail / n/a) with evidence.
+[[audit.checklist]]
+id = "AC-01"
+area = "access-control"
+question = "Are all privileged entry points gated by an explicit auth check (require_auth / admin guard)?"
+
+[[audit.checklist]]
+id = "AC-02"
+area = "access-control"
+question = "Is the admin/owner role set exactly once and protected against re-initialization?"
+
+[[audit.checklist]]
+id = "AR-01"
+area = "arithmetic-safety"
+question = "Do all balance/amount computations use checked arithmetic (checked_add/sub/mul) with no silent overflow?"
+
+[[audit.checklist]]
+id = "AR-02"
+area = "arithmetic-safety"
+question = "Are rounding and division operations documented and free of precision-loss exploits?"
+
+[[audit.checklist]]
+id = "AZ-01"
+area = "authorization"
+question = "Can any caller act on behalf of another account without that account's authorization?"
+
+[[audit.checklist]]
+id = "AZ-02"
+area = "authorization"
+question = "Are cross-contract calls validated (caller identity, return values, reentrancy)?"
+
+[[audit.checklist]]
+id = "ST-01"
+area = "state-transitions"
+question = "Is every state transition atomic and guarded against invalid ordering or double-execution?"
+
+[[audit.checklist]]
+id = "ST-02"
+area = "state-transitions"
+question = "Are pause/upgrade/emergency paths restricted and their effects reversible or documented?"
+
+[[audit.checklist]]
+id = "EV-01"
+area = "events"
+question = "Are all security-relevant state changes emitted as events with sufficient context for monitoring?"
+
+[[audit.checklist]]
+id = "EV-02"
+area = "events"
+question = "Are events free of sensitive data and resistant to spoofing (correct topics/ordering)?"
+
+[[audit.checklist]]
+id = "UV-01"
+area = "upgrade-versioning"
+question = "Is storage layout versioned and are migrations safe against partial or repeated application?"
+
+[[audit.checklist]]
+id = "UV-02"
+area = "upgrade-versioning"
+question = "Are upgrade entry points authorized and is the new wasm hash validated?"
+
+# Findings log. One [[audit.finding]] entry per identified issue. Status flows
+# open -> in-progress -> resolved (or accepted/wontfix with justification).
+#
+# severity: critical | high | medium | low | informational
+# status:   open | in-progress | resolved | accepted | wontfix
+#
+# Example (kept commented so the log starts empty):
+# [[audit.finding]]
+# id = "F-001"
+# title = "Missing auth on set_fee"
+# severity = "high"
+# location = "src/lib.rs:set_fee"
+# description = "set_fee can be called by any address."
+# status = "open"
+# owner = "@auditor"
+# remediation = "Add admin.require_auth() guard."
+# references = ["#123"]
+
+# Remediation tracking. Each finding that requires a fix gets a remediation
+# entry linking back to the finding id and tracking it to closure.
+#
+# status: pending | in-progress | fixed | verified | closed
+#
+# Example:
+# [[audit.remediation]]
+# finding = "F-001"
+# owner = "@maintainer"
+# status = "pending"
+# due = "2025-01-31"
+# verification = "Unit test asserting non-admin call panics."
+
+# Final audit report template. Fill in once all findings are resolved or
+# explicitly accepted, then attach sign-off.
+[audit.report]
+title = "Contract Security Audit Report"
+scope = ""
+methodology = ""
+findings_summary = ""
+resolved_count = 0
+open_count = 0
+accepted_count = 0
+sign_off = ""
+date = ""

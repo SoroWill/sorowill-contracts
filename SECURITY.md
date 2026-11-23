@@ -68,89 +68,103 @@ If you conduct security research in good faith and follow these guidelines, we w
 
 ---
 
-## Contract Security Hardening Guide
+## Contract Security Audit Checklist
 
-This section is the operational companion to the disclosure policy above. It
-covers the checklist, audit preparation, deployment, and monitoring steps that
-maintainers and integrators must follow when shipping or upgrading the SoroWill
-contract.
+Every release of the `will` contract must pass the following review before deployment. Each item should be marked `[x]` (verified), `[ ]` (not yet reviewed), or `N/A` with a justification.
 
-### Security Checklist
+### Access Control & Authorization
+- [ ] Every state-mutating entry point calls `require_auth` on the correct principal (owner, beneficiary, or claimant).
+- [ ] Admin/owner-only functions (e.g. configuration, upgrades) are gated and cannot be invoked by arbitrary callers.
+- [ ] Authorization is checked against the *actual* caller, not a caller-supplied address argument.
+- [ ] No privileged action can be triggered indirectly through a helper that skips the auth check.
 
-Run through this list before every release and before any mainnet deployment:
+### Arithmetic Safety
+- [ ] All balance and allocation arithmetic uses checked operations (`checked_add`, `checked_sub`, `checked_mul`) or is provably bounded.
+- [ ] Token amounts and percentages cannot overflow, underflow, or be truncated by integer division.
+- [ ] Sum of beneficiary allocations equals the total deposited amount (no dust left unassigned or double-counted).
+- [ ] Rounding behavior is documented and cannot be exploited to extract more than deposited.
 
-- [ ] **Authorization**: Every state-changing entry point calls
-      `require_auth` on the correct address (owner, claimant, or admin). No
-      privileged path is reachable without an auth check.
-- [ ] **Reentrancy / ordering**: State is written (e.g. `claimed` flags,
-      balances) *before* any token transfer or external call.
-- [ ] **Arithmetic**: All balance and time math uses checked operations
-      (`checked_add`, `checked_sub`, `checked_mul`) and fails closed on
-      overflow/underflow.
-- [ ] **Commitments**: Hashed beneficiaries are stored as
-      `sha256(beneficiary_address.to_xdr() || salt)` with a random salt of at
-      least 16 bytes; the pre-image is validated against the `claimant`
-      argument.
-- [ ] **Access control**: Admin-only functions (pause, upgrade, config) are
-      gated and documented; no default or hardcoded admin keys.
-- [ ] **Input validation**: Amounts, intervals, and beneficiary lists are
-      validated (non-zero, bounded length, sane time windows).
-- [ ] **Storage**: TTLs are extended for long-lived entries; no unbounded
-      iteration over user-controlled collections.
-- [ ] **Events**: All state transitions emit events with enough data for
-      off-chain monitoring.
-- [ ] **Dependencies**: `Cargo.lock` is committed and `cargo audit` reports no
-      known advisories.
-- [ ] **Tests**: Unit and integration tests cover happy paths, auth failures,
-      replay attempts, and boundary conditions; `cargo test` is green.
+### State Transitions
+- [ ] The will lifecycle (created → active → claimed/expired) is enforced; invalid transitions revert.
+- [ ] Terminal states (fully claimed, cancelled) cannot be re-entered or mutated.
+- [ ] `reveal_and_claim` sets the per-slot `claimed` flag and persists it *before* the token transfer (see Known Risks).
+- [ ] Reentrancy / re-entrant token callbacks cannot corrupt state or double-pay.
 
-### Audit Preparation
+### Events & Observability
+- [ ] Every state-changing operation emits an event with the relevant identifiers and amounts.
+- [ ] Events are emitted after state is finalized so off-chain indexers observe consistent data.
+- [ ] No sensitive pre-images or secrets are leaked in event payloads beyond what is already public on-chain.
 
-Before engaging an external auditor:
+### Upgrade & Versioning
+- [ ] Storage keys and layouts are versioned; migrations are idempotent and tested.
+- [ ] Contract `wasm` hash / version is recorded in `deployments/` for each deployment.
+- [ ] Upgrade path preserves existing will state and cannot orphan user funds.
 
-1. **Freeze scope**: Tag the commit to be audited and record the exact
-   contract ID(s) and storage layout in the audit request.
-2. **Document invariants**: Write down the protocol invariants (e.g. "a slot
-   can be claimed at most once", "sum of allocations never exceeds the
-   deposited balance") so auditors can target them.
-3. **Provide a threat model**: List assets at risk, trusted roles, and known
-   risks (see below) with their mitigations.
-4. **Reproducible builds**: Ensure `cargo build --target wasm32-unknown-unknown
-   --release` produces a deterministic artifact and record its hash.
-5. **Test coverage**: Share the test suite and any fuzzing harnesses; note
-   areas with intentionally limited coverage.
-6. **Triage channel**: Designate a private channel for findings and agree on
-   severity classification (Critical / High / Medium / Low).
+---
 
-### Deployment Procedures
+## Audit Findings Log
 
-1. **Build**: Compile the release WASM from a clean checkout of the tagged
-   commit and record the artifact hash.
-2. **Verify**: Confirm the hash matches CI output and that `cargo test` passed
-   on the same commit.
-3. **Dry run on Testnet**: Deploy to Testnet first, exercise create / check-in /
-   claim / cancel flows, and confirm events are emitted as expected.
-4. **Deploy**: Install the WASM and deploy/upgrade the contract instance using
-   the admin key held in the approved signer setup (never a personal key).
-5. **Initialize**: Set configuration and admin roles, then verify on-chain
-   state matches the intended configuration.
-6. **Record**: Update [`deployments/testnet.json`](./deployments/testnet.json)
-   (and the mainnet equivalent) with the new contract ID and artifact hash.
-7. **Announce**: Publish the deployment notes and any migration steps for
-   integrators.
+All findings from internal reviews and external audits are recorded here. Severity follows the standard **Critical / High / Medium / Low / Informational** scale.
 
-### Monitoring Setup
+| ID | Date | Severity | Area | Location | Description | Status |
+| -- | ---- | -------- | ---- | -------- | ----------- | ------ |
+| F-001 | YYYY-MM-DD | High | Access Control | `contracts/will/src/lib.rs` | _Example: missing auth on config setter_ | Resolved |
+| F-002 | YYYY-MM-DD | Medium | Arithmetic | `contracts/will/src/lib.rs` | _Example: unchecked subtraction on balance_ | Open |
 
-- **Event streaming**: Subscribe to contract events (create, check-in, claim,
-  cancel, upgrade) and alert on unexpected or high-value claims.
-- **Balance watch**: Track the contract's token balance against the sum of
-  outstanding allocations; alert on any divergence.
-- **Failure alerts**: Monitor for spikes in failed invocations, which can
-  indicate replay attempts or misconfigured clients.
-- **Admin actions**: Alert on any admin/upgrade invocation and require
-  out-of-band confirmation.
-- **Health checks**: Periodically read contract state (TTL, config) and alert
-  before storage entries approach expiration.
+**Status values:** `Open` → `In Progress` → `Resolved` → `Verified` (or `Won't Fix` with justification).
+
+---
+
+## Remediation Tracking
+
+Each finding above is tracked to closure. A finding may only be marked `Verified` once a reviewer other than the fix author confirms the remediation.
+
+| Finding | Owner | Status | Fix PR / Commit | Target Date | Verified By |
+| ------- | ----- | ------ | --------------- | ----------- | ----------- |
+| F-001 | @owner | Verified | #000 | YYYY-MM-DD | @reviewer |
+| F-002 | @owner | In Progress | — | YYYY-MM-DD | — |
+
+**Remediation rules:**
+- Every `Critical`/`High` finding must be `Verified` before the next deployment.
+- `Won't Fix` decisions require written justification and maintainer sign-off.
+- Re-test the full checklist after remediation to confirm no regressions.
+
+---
+
+## Final Audit Report
+
+A completed audit is summarized using the template below and stored alongside the release.
+
+```
+# SoroWill Contract Audit Report
+
+- Audit date:        YYYY-MM-DD
+- Auditor(s):        <names / firm>
+- Commit / wasm hash: <git sha / wasm hash>
+- Scope:             contracts/will/ (and any listed dependencies)
+
+## Methodology
+<Manual review, static analysis tooling, unit/fuzz tests, threat modeling.>
+
+## Summary of Findings
+| Severity | Count | Resolved |
+| -------- | ----- | -------- |
+| Critical | 0     | 0        |
+| High     | 0     | 0        |
+| Medium   | 0     | 0        |
+| Low      | 0     | 0        |
+| Info     | 0     | 0        |
+
+## Detailed Findings
+<Reference F-xxx entries from the Audit Findings Log.>
+
+## Conclusion
+<Overall risk assessment and whether the contract is fit for deployment.>
+
+## Sign-off
+- Auditor:  ____________________  Date: __________
+- Maintainer: ________________  Date: __________
+```
 
 ---
 

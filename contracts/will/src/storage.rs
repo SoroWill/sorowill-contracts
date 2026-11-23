@@ -122,6 +122,7 @@ pub(crate) enum DataKey {
     /// Per-will configurable guardian vote expiry window in days (#692).
     /// When unset, falls back to `will.grace_period_days`.
     GuardianVoteExpiryDays(u64),
+    GuardianCooldownDays(u64),
 }
 
 /// The data stored for each guardian vote: the Unix timestamp when the vote

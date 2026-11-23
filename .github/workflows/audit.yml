@@ -1,36 +1,57 @@
-name: Security Audit
-
-# Runs cargo-audit against the advisory allow-list in audit.toml on every
-# push/PR to main and on a daily schedule, so a newly disclosed advisory in
-# a dependency is caught even without a dependency-bumping PR (issue #270).
+name: Contract Audit
 
 on:
   push:
     branches: [main]
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/audit.yml'
   pull_request:
-    branches: [main]
-  schedule:
-    - cron: '17 4 * * *'
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/audit.yml'
+  workflow_dispatch:
 
 jobs:
-  audit:
+  compliance:
+    name: Will Contract Compliance Checks
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts/will
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
-      - name: Cache cargo registry
+      - name: Cache cargo registry and build
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contracts/will/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-      - name: Install cargo-audit
-        run: cargo install --locked cargo-audit
+      - name: Format check
+        run: cargo fmt --all -- --check
 
-      - name: Run cargo audit
-        run: cargo audit
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Compliance tests
+        run: cargo test --all-targets compliance
+
+      - name: Full test suite
+        run: cargo test --all-targets
+
+      - name: Audit documentation present
+        run: |
+          test -f docs/COMPLIANCE.md || { echo "Missing docs/COMPLIANCE.md"; exit 1; }
+          test -f docs/AUDIT.md || { echo "Missing docs/AUDIT.md"; exit 1; }

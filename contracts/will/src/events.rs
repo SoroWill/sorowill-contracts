@@ -73,9 +73,17 @@ pub fn check_in(env: &Env, will_id: u64, owner: &Address, next_deadline: u64) {
 ///
 /// Emits `("triggered", will_id)` with `grace_period_ends` so off-chain
 /// monitors and indexers can track trigger transitions without polling.
-pub fn will_triggered(env: &Env, will_id: u64, grace_period_ends: u64) {
-    env.events()
-        .publish((symbol_short!("triggered"), will_id), grace_period_ends);
+pub fn will_triggered(
+    env: &Env,
+    will_id: u64,
+    grace_period_ends: u64,
+    triggered_at: u64,
+    caller: &Option<Address>,
+) {
+    env.events().publish(
+        (symbol_short!("triggered"), will_id),
+        (grace_period_ends, triggered_at, caller.clone()),
+    );
 }
 
 /// Published when the owner emergency-checks-in during the grace period,
@@ -259,6 +267,14 @@ pub fn top_up(
     env.events().publish(
         (symbol_short!("topup"), will_id),
         (owner.clone(), token.clone(), amount, new_balance),
+    );
+}
+
+/// Published after a successful top-up.
+pub fn will_funded(env: &Env, will_id: u64, owner: &Address, token: &Address, amount: i128) {
+    env.events().publish(
+        (Symbol::new(env, "will_funded"), will_id),
+        (owner.clone(), token.clone(), amount, env.ledger().timestamp()),
     );
 }
 
