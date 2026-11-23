@@ -2654,6 +2654,8 @@ impl WillContract {
     /// Passing `Some(days)` overrides that default for this will only; passing
     /// `None` removes the override so the will follows its grace period again.
     ///
+    /// **DEPRECATED**: Use the variant at line 3022 that takes `expiry_days: u64` instead of `Option<u64>`.
+    ///
     /// Only allowed while the will is `Active`. Changing the window during a
     /// trigger cycle would retroactively revalidate votes already cast, so the
     /// setting is frozen once the will is `Triggered`.
@@ -2677,6 +2679,7 @@ impl WillContract {
     /// // Go back to following the grace period.
     /// client.set_guardian_vote_expiry(&will_id, &owner, &None);
     /// ```
+    #[deprecated(note = "Use set_guardian_vote_expiry(env, will_id, owner, expiry_days: u64) instead")]
     pub fn set_guardian_vote_expiry(env: Env, will_id: u64, owner: Address, days: Option<u64>) {
         owner.require_auth();
         let will = load_owned(&env, will_id, &owner);
@@ -2689,6 +2692,8 @@ impl WillContract {
         storage::set_guardian_vote_expiry(&env, will_id, days);
     }
 
+    /// **DEPRECATED**: Use the variant at line 3039 that calls `get_guardian_vote_expiry_days()` instead.
+    ///
     /// Returns the guardian vote-expiry window, in days, currently in effect
     /// for `will_id` (#740).
     ///
@@ -2708,6 +2713,7 @@ impl WillContract {
     /// ```ignore
     /// let days = client.get_guardian_vote_expiry(&will_id);
     /// ```
+    #[deprecated(note = "Use get_guardian_vote_expiry(env, will_id) variant at line 3039 instead")]
     pub fn get_guardian_vote_expiry(env: Env, will_id: u64) -> u64 {
         let will = load_will(&env, will_id);
         storage::guardian_vote_expiry_days(&env, &will)
@@ -4882,6 +4888,8 @@ impl WillContract {
     ///
     /// # Cursor validation
     ///
+    /// **DEPRECATED**: Use `get_owner_status_page()` for structured pagination with total count.
+    ///
     /// The `cursor` argument is validated before it is parsed (#655). A
     /// malformed cursor — one that is not a well-formed, non-negative decimal
     /// offset — is rejected with [`WillError::InvalidCursor`] rather than
@@ -4903,6 +4911,7 @@ impl WillContract {
     /// ```ignore
     /// let ids = client.get_wills_by_owner(&owner, &None, &None, &20);
     /// ```
+    #[deprecated(note = "Use get_owner_status_page() for structured pagination with total count")]
     pub fn get_wills_by_owner(
         env: Env,
         owner: Address,

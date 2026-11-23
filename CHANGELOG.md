@@ -10,6 +10,11 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ## [Unreleased]
 
+### Added
+- Contract API documentation (JSDoc) for all public functions (#811)
+- Contract best practices guide at `docs/BEST_PRACTICES.md` (#810)
+- Deprecation markers for legacy function variants (#808)
+
 ### Fixed
 - `distribute` now skips the keeper bounty when the caller-supplied keeper
   address equals the contract's own address. Previously, passing the contract
