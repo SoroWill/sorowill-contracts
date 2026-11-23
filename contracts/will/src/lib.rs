@@ -82,6 +82,7 @@ mod events;
 mod migration;
 mod guardian_vote_freshness;
 mod split_uniqueness_check;
+mod status_transition;
 mod storage;
 mod release_lock;
 mod types;
@@ -132,6 +133,11 @@ mod regression_test;
 /// testing. See the module docs for details.
 #[cfg(test)]
 mod test_support;
+
+/// Regression tests for issue #663: stale will snapshots cannot overwrite a
+/// status that has already changed in storage.
+#[cfg(test)]
+mod issue_663_test;
 
 /// Unit tests for the `will_created` event payload extended with
 /// per-token breakdowns (see event_snapshot_test module docs).
@@ -1073,10 +1079,15 @@ impl WillContract {
 
         let now = env.ledger().timestamp();
         assert_timestamp_progression(&env, &will, now);
-        will.status = WillStatus::Active;
         will.last_checkin = now;
         will.confirmation_deadline = None;
-        storage::save_will_guardians_unchanged(&env, &will);
+        status_transition::transition(
+            &env,
+            &mut will,
+            &[WillStatus::PendingConfirmation],
+            WillStatus::Active,
+            WillError::WillNotConfirmed,
+        );
 
         // Record the confirmation in the audit trail so `get_will_history`
         // can reconstruct the full lifecycle (#352).
@@ -1356,10 +1367,15 @@ impl WillContract {
         // whenever a keeper happened to call `trigger_will` (#457). This makes
         // the release time a pure function of the owner's last check-in, so a
         // delayed trigger can neither postpone nor accelerate the release.
-        will.status = WillStatus::Triggered;
         will.trigger_time = Some(deadline);
         let grace_period_ends = grace_deadline(&env, &will);
-        storage::save_will(&env, &will);
+        status_transition::transition(
+            &env,
+            &mut will,
+            &[WillStatus::Active],
+            WillStatus::Triggered,
+            WillError::WillNotActive,
+        );
 
         storage::index_triggered_will(&env, will_id);
 
@@ -1436,7 +1452,6 @@ impl WillContract {
         storage::reset_guardian_votes(&env, &will);
         storage::reset_guardian_cancel_votes(&env, &will);
 
-        will.status = WillStatus::Active;
         will.trigger_time = None;
         will.last_checkin = now;
         will.guardian_vote_weight = 0;
@@ -1445,7 +1460,13 @@ impl WillContract {
         will.guardian_cancel_votes = 0;
         // Never persist a will whose legacy mirror disagrees with the map (#592).
         balance_consistency::sync_primary_balance(&mut will);
-        storage::save_will_guardians_unchanged(&env, &will);
+        status_transition::transition(
+            &env,
+            &mut will,
+            &[WillStatus::Triggered],
+            WillStatus::Active,
+            WillError::WillNotTriggered,
+        );
 
         storage::unindex_triggered_will(&env, will_id);
 
@@ -1695,11 +1716,6 @@ impl WillContract {
         let token_count = will.balances.len();
         // Capture balances for transfer after state is committed.
         let balances_snapshot = will.balances.clone();
-        // `cancel_will` accepts both `Active` and `PendingConfirmation`, so the
-        // audit trail must record whichever state the will actually cancelled
-        // from rather than a hardcoded `Active` (#351).
-        let prior_status = will.status;
-
         // --- EFFECTS: mutate state and persist before any external calls ---
         storage::decrement_active_will_count(&env);
         storage::adjust_locked_for_balances(&env, &balances_snapshot, -1);
@@ -1715,8 +1731,6 @@ impl WillContract {
 
         will.balance = 0;
         will.balances = Map::new(&env);
-        will.status = WillStatus::Cancelled;
-
         // Prune stale index entries (#70): remove the will from the owner
         // index and from every beneficiary's reverse index so that
         // get_wills_by_owner / get_wills_by_beneficiary no longer return it.
@@ -1725,7 +1739,13 @@ impl WillContract {
             storage::remove_beneficiary_index(&env, &beneficiary.address, will_id);
         }
 
-        storage::save_will_guardians_unchanged(&env, &will);
+        let prior_status = status_transition::transition(
+            &env,
+            &mut will,
+            &[WillStatus::Active, WillStatus::PendingConfirmation],
+            WillStatus::Cancelled,
+            WillError::WillNotActive,
+        );
 
         record_transition(
             &env,
@@ -1772,8 +1792,13 @@ impl WillContract {
             WillError::WillNotReleased,
         );
 
-        will.status = WillStatus::Settled;
-        storage::save_will_guardians_unchanged(&env, &will);
+        status_transition::transition(
+            &env,
+            &mut will,
+            &[WillStatus::Released],
+            WillStatus::Settled,
+            WillError::WillNotReleased,
+        );
 
         // Record the Released -> Settled transition so the audit trail from
         // `get_will_history` has no gaps (#352).
@@ -3784,7 +3809,6 @@ impl WillContract {
             // starts clean if the will is ever triggered again.
             storage::reset_guardian_votes(&env, &will);
 
-            will.status = WillStatus::Active;
             will.trigger_time = None;
             will.last_checkin = now;
             will.guardian_vote_weight = 0;
@@ -3796,7 +3820,13 @@ impl WillContract {
             // re-snapshots whatever the beneficiary list is at that point
             // (#657).
             will.triggered_beneficiaries = None;
-            storage::save_will_guardians_unchanged(&env, &will);
+            status_transition::transition(
+                &env,
+                &mut will,
+                &[WillStatus::Triggered],
+                WillStatus::Active,
+                WillError::WillNotTriggered,
+            );
 
             storage::unindex_triggered_will(&env, will_id);
 
@@ -4742,7 +4772,6 @@ impl WillContract {
         // Mark will_b as cancelled with zero balance
         will_b.balances = Map::new(&env);
         will_b.balance = 0;
-        will_b.status = WillStatus::Cancelled;
         will_b.guardian_votes = 0;
         will_b.guardian_cancel_votes = 0;
 
@@ -4756,7 +4785,13 @@ impl WillContract {
 
         // Save both wills
         storage::save_will(&env, &will_a);
-        storage::save_will(&env, &will_b);
+        status_transition::transition(
+            &env,
+            &mut will_b,
+            &[WillStatus::Active],
+            WillStatus::Cancelled,
+            WillError::WillNotBothActive,
+        );
 
         // Record the status change on the consumed will (#381). The consumed
         // will really does move `Active` → `Cancelled` here, so its audit
@@ -6773,8 +6808,6 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     // it has now either been paid out or never held anything to reserve.
     will.balances = hashed_reserves;
     will.balance = will.balances.get(will.token.clone()).unwrap_or(0);
-    will.status = WillStatus::Released;
-
     // Prune stale index entries (#71): remove the released will from the
     // owner index and from every beneficiary's reverse index.
     storage::remove_owner_index(env, &will.owner, will.id);
@@ -6787,7 +6820,13 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     // its purpose and is cleared so it can never be mistaken for live state
     // (#657).
     will.triggered_beneficiaries = None;
-    storage::save_will_guardians_unchanged(env, will);
+    status_transition::transition(
+        env,
+        will,
+        &[WillStatus::Active, WillStatus::Triggered],
+        WillStatus::Released,
+        WillError::WillNotTriggered,
+    );
 
     // --- INTERACTIONS: external token transfers execute after state is settled ---
     //
