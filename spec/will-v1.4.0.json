@@ -1,0 +1,2566 @@
+[
+  {
+    "udt_union_v0": {
+      "doc": "Each will has its own log. Protocol-wide maintenance has a separate log.",
+      "lib": "",
+      "name": "ActionLogScope",
+      "cases": [
+        {
+          "tuple_v0": {
+            "doc": "",
+            "name": "Will",
+            "type": [
+              "u64"
+            ]
+          }
+        },
+        {
+          "void_v0": {
+            "doc": "",
+            "name": "Protocol"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "udt_union_v0": {
+      "doc": "",
+      "lib": "",
+      "name": "EmergencyAction",
+      "cases": [
+        {
+          "void_v0": {
+            "doc": "",
+            "name": "OwnerCheckIn"
+          }
+        },
+        {
+          "void_v0": {
+            "doc": "",
+            "name": "GuardianTriggerVote"
+          }
+        },
+        {
+          "void_v0": {
+            "doc": "",
+            "name": "GuardianCancelVote"
+          }
+        },
+        {
+          "void_v0": {
+            "doc": "",
+            "name": "MigrateWill"
+          }
+        },
+        {
+          "void_v0": {
+            "doc": "",
+            "name": "ArchiveWill"
+          }
+        },
+        {
+          "void_v0": {
+            "doc": "",
+            "name": "RetryPayout"
+          }
+        },
+        {
+          "void_v0": {
+            "doc": "",
+            "name": "RepairProtocolStats"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "",
+      "lib": "",
+      "name": "EmergencyActionRecord",
+      "fields": [
+        {
+          "doc": "",
+          "name": "action",
+          "type": {
+            "udt": {
+              "name": "EmergencyAction"
+            }
+          }
+        },
+        {
+          "doc": "Authenticated actor, when the entry point requires one.",
+          "name": "actor",
+          "type": {
+            "option": {
+              "value_type": "address"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "sequence",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "timestamp",
+          "type": "u64"
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Adds `amount` of a specific `token` to an existing will's locked\\nbalance. Possible while the will is `Active`, and also while it is\\n`Triggered` and still inside its grace period (#724): the owner may top\\nup a will whose check-in was missed until the grace deadline passes.\\nThe token does not\\nneed to have been part of the original `create_will` call \\xe2\\x80\\x94 new tokens\\ncan be added via `top_up`, up to the same [`MAX_TOKENS`]\\ndistinct-token cap `create_will` enforces.\\n\\nTopping up a `token` the will already holds a balance for is not a\\ndistinct code path: `will.balances` is a `Map<Address, i128>`, whose\\nkeys are unique by construction, so there is no way for a token to\\nappear twice regardless of how many times `top_up` is called for it.\\nEach call reads the existing entry (`0` if genuinely new) and writes\\nback `existing + amount` \\xe2\\x80\\x94 repeated top-ups of the same token always\\naccumulate; they never overwrite or duplicate (#499).\\n\\n# Panics\\n- [`WillError::NotOwner`] if `owner` does not own `will_id`.\\n- [`WillError::WillNo",
+      "name": "top_up",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "amount",
+          "type": "i128"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Resets the check-in countdown for `will_id`. Must be called by the\\nwill's owner or the designated delegate, and the will must be `Active`.\\n\\n# Panics\\n- [`WillError::WillNotFound`] if no will exists with this id.\\n- [`WillError::WillNotActive`] if the will is not `Active`.\\n- [`WillError::NotOwner`] if `caller` is neither the owner nor the delegate.\\n\\n# Examples\\n\\n```ignore\\n// Continuing from a will created with create_will \\xe2\\x80\\xa6\\n// Advance time to just before the deadline, then check in.\\nenv.ledger().with_mut(|l| l.timestamp += 80 * 86_400); // 80 days later\\n\\nclient.check_in(&will_id, &owner);\\n\\n// The countdown resets; the will is still Active.\\nassert_eq!(client.get_will(&will_id).status, WillStatus::Active);\\n```\\nRecords an owner check-in and restarts the check-in countdown.\\n\\nTimestamps have one-second granularity. Two check-ins in the same second\\nstore the same `last_checkin`, so the countdown lands on the same deadline\\nwhichever one ran first. The outcome does not depend on their order (#624).\\n\\n# Parameters\\n- `wil",
+      "name": "check_in",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "caller",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns the full on-chain state of `will_id`.\\n\\n# Parameters\\n- `will_id`: the will to read.\\n\\n# Returns\\nThe stored [`Will`] record.\\n\\n# Example\\n```ignore\\nlet will = client.get_will(&will_id);\\nassert_eq!(will.owner, owner);\\n```",
+      "name": "get_will",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        }
+      ],
+      "outputs": [
+        {
+          "udt": {
+            "name": "Will"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Fetches a caller-chosen set of wills by their ids in a single call.\\n\\nThis is useful for application dashboards that already know a handful\\nof relevant will ids (e.g. collected from prior events) and want a\\nfresh read of just those wills without re-deriving the owner/beneficiary\\nindexes.\\n\\n# Parameters\\n- `ids`: the list of will ids to fetch. Must not exceed\\n[`MAX_GET_WILLS_IDS`] entries.\\n\\n# Returns\\nA `Vec<Will>` containing only the wills that exist. Any id that does\\nnot map to a stored will is silently skipped (no panic). The result\\npreserves the input order, minus the missing ids.\\n\\n**Duplicate ids are not deduplicated.** If the same id appears more\\nthan once in `ids`, the corresponding `Will` struct is returned once\\nper occurrence. Callers performing client-side aggregation (e.g.\\nsumming balances across the returned batch) must deduplicate the input\\nids themselves to avoid double-counting.\\n\\n**Skipping vs. panicking:** the owner/beneficiary index functions\\n(`get_wills_by_owner`, `get_wills_by_beneficiary`) also",
+      "name": "get_wills",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "ids",
+          "type": {
+            "vec": {
+              "element_type": "u64"
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "vec": {
+            "element_type": {
+              "udt": {
+                "name": "Will"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Clones an existing will's configuration into a new will with fresh\\ntoken balances.\\n\\nCopies beneficiaries, guardian list, check-in period, and grace period\\nfrom the source will. The new will gets a fresh balance (funded by the\\n`tokens` parameter), a new id, and starts with `Active` status and a\\nfresh check-in deadline.\\n\\nThe guardian list is copied with every consent reset to\\n[`GuardianConsent::Pending`] (addresses and vote weights are preserved),\\nexactly like [`create_will`]: a guardian must be asked about the clone\\nbefore they can vote on it, so consent recorded on the source will does\\nnot carry over (#375).\\n\\nThe source will must be `Active` or `Triggered`. Cloning is\\ndeliberately *not* allowed from a `Cancelled`, `Released`, or\\n`Settled` source: an owner who let a will resolve to one of those\\nterminal states may have done so specifically because the\\nbeneficiary/guardian configuration no longer reflects their wishes\\n(e.g. cancelling because a beneficiary is no longer trusted), and\\nsilently letting that config",
+      "name": "clone_will",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "source_will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "tokens",
+          "type": {
+            "vec": {
+              "element_type": {
+                "tuple": {
+                  "value_types": [
+                    "address",
+                    "i128"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "outputs": [
+        "u64"
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Explicitly marks a `Released` will as `Settled`, completing the\\narchival step separate from the payout moment. Only the owner may\\nclose a will, and only after it has been released.\\n\\n# Panics\\n- [`WillError::NotOwner`] if `owner` does not own `will_id`.\\n- [`WillError::WillNotReleased`] if the will is not `Released`.\\n\\n# Parameters\\n- `will_id`: the released will to close.\\n- `owner`: the will's owner; must authorize this call.\\n\\n# Example\\n```ignore\\nclient.close_will(&will_id, &owner);\\n```",
+      "name": "close_will",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Carves a subset of beneficiaries and balance out of an existing will\\ninto a new, fully independent child will.\\n\\nThe original will's balance is reduced by `tokens` and any beneficiaries\\npresent in `beneficiaries_to_split` are removed from it; the new will\\nreceives those beneficiaries with percentages renormalised to 100, and\\nit starts `Active` with the same check-in period, grace period,\\nco-owners, and threshold as the original.\\n\\nThe child inherits the source's guardians and threshold, but every\\nguardian's consent is reset to [`GuardianConsent::Pending`] (addresses\\nand vote weights are preserved), exactly like [`create_will`]: a\\nguardian must be asked about the child will before they can vote on it,\\nso consent recorded on the source does not carry over (#375).\\n\\n# Parameters\\n- `will_id`: the source will to split from.\\n- `owner`: must be the primary owner of the source will.\\n- `beneficiaries_to_split`: subset of beneficiaries to move to the new will.\\nEvery address must already be a beneficiary of the source will",
+      "name": "split_will",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "beneficiaries_to_split",
+          "type": {
+            "vec": {
+              "element_type": {
+                "udt": {
+                  "name": "Beneficiary"
+                }
+              }
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "tokens",
+          "type": {
+            "vec": {
+              "element_type": {
+                "tuple": {
+                  "value_types": [
+                    "address",
+                    "i128"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "outputs": [
+        "u64"
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Cancels the will and refunds every locked token balance to the owner.\\n\\nThe refund is sent to the owner address the will was created with (#645).\\nSoroban has no account-validity state to check first, so the owner is\\nnot re-validated here. A refund that cannot be sent panics and the cancel\\nis rolled back.\\nOnly possible while the will is `Active`, i.e. before it has ever\\nbeen triggered by a missed check-in (an owner who is mid-grace-period\\nmust first call `emergency_checkin` to return the will to `Active`).\\n\\n# Panics\\n- [`WillError::NotOwner`] if `owner` does not own `will_id`.\\n- [`WillError::WillNotActive`] if the will is neither `Active` nor\\n`PendingConfirmation`.\\n\\n# Parameters\\n- `will_id`: the will to cancel.\\n- `owner`: the will's owner; must authorize this call.\\n\\n# Example\\n```ignore\\nclient.cancel_will(&will_id, &owner);\\n```",
+      "name": "cancel_will",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Creates a new will, locking one or more token balances in the contract.\\n\\nIf `confirmation_delay_seconds` is **0** the will starts `Active`\\nimmediately (backwards-compatible behaviour). If it is **> 0** the will\\nstarts in `PendingConfirmation` and the owner must call `confirm_will`\\nwithin that window; the check-in clock does not start until confirmation.\\n\\n# Parameters\\n- `owner`: the address creating the will; must authorize this call.\\n- `tokens`: a list of `(token_address, amount)` pairs to lock. Each\\ntoken address must be unique, each amount must be positive, and the\\nlist must contain between 1 and `MAX_TOKENS` entries.\\n- `beneficiaries`: 1 to `MAX_BENEFICIARIES` entries. Each entry carries\\nan [`Allocation`], which is one of two kinds:\\n- `Allocation::Percentage(bps)` \\xe2\\x80\\x94 a share of the will's balance. **All\\npercentage allocations together must sum to exactly 10,000 basis\\npoints**, and each individual percentage must be greater than\\nzero.\\n- `Allocation::FixedAmount(amount)` \\xe2\\x80\\x94 an exact claim on the will's\\n**p",
+      "name": "create_will",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "tokens",
+          "type": {
+            "vec": {
+              "element_type": {
+                "tuple": {
+                  "value_types": [
+                    "address",
+                    "i128"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "beneficiaries",
+          "type": {
+            "vec": {
+              "element_type": {
+                "udt": {
+                  "name": "Beneficiary"
+                }
+              }
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "checkin_period_days",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "grace_period_days",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "guardians",
+          "type": {
+            "vec": {
+              "element_type": "address"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "guardian_threshold",
+          "type": "u32"
+        },
+        {
+          "doc": "",
+          "name": "keeper_bounty_bps",
+          "type": {
+            "option": {
+              "value_type": "u32"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "confirmation_delay_seconds",
+          "type": "u64"
+        }
+      ],
+      "outputs": [
+        "u64"
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Merges two active wills owned by the same address into a single will.\\n\\nThe merge policy is:\\n- The surviving will (will_id_a) receives the combined balance.\\n- Beneficiaries from both wills are merged, with percentages recalculated\\nproportionally based on the combined balance. If a beneficiary appears\\nin both wills, their percentages are summed first, then recalculated.\\n- Guardians are combined by **address** (#379). An address named on both\\nwills yields a single entry: its weight becomes the greater of the two\\n(so the surviving will's already-validated `guardian_threshold` stays\\nreachable, and the weight is still counted exactly once toward quorum),\\nand its consent becomes the more advanced of the two, ranked `Accepted`\\n> `Pending` > `Rejected`. A guardian `Rejected` on both wills stays\\n`Rejected` and cannot vote until the owner re-appoints them through\\n`update_guardians`.\\n- Check-in period: use the minimum (most conservative).\\n- Grace period: use the maximum (most conservative).\\n- The consumed will (will_id_b",
+      "name": "merge_wills",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "will_id_a",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "will_id_b",
+          "type": "u64"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Archives a Released or Cancelled will, removing it from active\\nstorage and indexes so it no longer appears in owner/beneficiary\\nqueries. The archived will data will eventually be garbage-collected\\nby Soroban's state archival system.\\n\\n**Callable by anyone**: no `require_auth` is enforced. Once a will\\nreaches a terminal state (`Released` or `Cancelled`) any party may\\ncall this function to reclaim on-chain storage and reduce ledger-rent\\ncosts. The design is intentional \\xe2\\x80\\x94 a will's final asset distributions\\nare already complete before this point \\xe2\\x80\\x94 but it creates an observable\\nrace condition described below.\\n\\n# What archival removes\\n\\nBeyond the will entry and the owner/beneficiary/Triggered indexes,\\narchival also drops the will's on-chain `WillHistory` entry and every\\n`GuardianVote` / `GuardianCancelVote` entry belonging to its guardians\\n(#393). Those keys are only ever read to describe a *live* will, so\\nleaving them behind would strand ledger state \\xe2\\x80\\x94 paid for out of the\\nprotocol's rent \\xe2\\x80\\x94 for entries no que",
+      "name": "archive_will",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Transitions a will from `PendingConfirmation` to `Active`, starting the\\ncheck-in clock. Must be called by the owner within the confirmation window.\\n\\n# Panics\\n- [`WillError::WillNotFound`] if the will does not exist.\\n- [`WillError::NotOwner`] if `owner` does not own the will.\\n- [`WillError::WillNotConfirmed`] if the will is not `PendingConfirmation`.\\n- [`WillError::ConfirmationWindowExpired`] if the confirmation deadline has passed.\\n- [`WillError::TooManyBeneficiaries`], [`WillError::InvalidPercentages`],\\n[`WillError::DuplicateBeneficiary`] or [`WillError::FixedAmountExceedsBalance`]\\nif the stored beneficiary list no longer passes the same validation\\n`create_will` applied (issue #448).\\n\\n# Re-validation at confirmation time (#493)\\n\\n- **Ownership** is checked against the will's *stored* owner on every\\ncall (`load_owned` plus `owner.require_auth()`), never against\\nanything captured at creation. No entry point reassigns an existing\\nwill's `owner`; if one is ever added, a confirmation by the previous\\nowner is rejec",
+      "name": "confirm_will",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Migrates a will to the latest schema version. The owner must authorize\\nthis call. This is an owner-initiated per-will migration that allows\\nusers to opt-in to new contract versions without being forced to do so.\\n\\nRuns every step in [`migration::upgrade`] between the will's stored\\n`schema_version` and [`CURRENT_SCHEMA_VERSION`] and persists the\\nresult. Wills written with an older layout are still readable before\\nmigrating (see [`migration::decode_will`]); migrating rewrites them in\\nthe current layout.\\n\\n# Current behavior (v0 \\xe2\\x86\\x92 v1)\\nSets the schema_version field to 1.\\n# Current behavior is a placeholder\\n[`CURRENT_SCHEMA_VERSION`] (defined in [`storage`] and re-exported at\\nthe crate root) is `1`, and every will created by this\\ncontract version is already stamped with `schema_version:\\nCURRENT_SCHEMA_VERSION` at creation time (see [`create_will`] and\\n[`batch_create_wills`]). Because of that, `old_version >=\\nCURRENT_SCHEMA_VERSION` is true for any will this contract could\\nactually produce, so the early return belo",
+      "name": "migrate_will",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Sets or replaces the delegate address for `will_id`. Only callable\\nby the owner while the will is `Active`. Pass `None` to clear.\\n\\n# Parameters\\n- `will_id`: the will to update.\\n- `owner`: the will's owner; must authorize this call.\\n- `delegate`: the new delegate, or `None` to remove the current one.\\n\\n# Example\\n```ignore\\n// Appoint a delegate who may call `check_in` on the owner's behalf.\\nclient.set_delegate(&will_id, &owner, &Some(delegate));\\n// Remove the delegate again.\\nclient.set_delegate(&will_id, &owner, &None);\\n```",
+      "name": "set_delegate",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "delegate",
+          "type": {
+            "option": {
+              "value_type": "address"
+            }
+          }
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Starts the grace period for `will_id` once the check-in deadline has\\npassed. Callable by anyone.\\n\\nThe grace period is anchored to the missed check-in deadline\\n(`last_checkin + checkin_period_days`), which is stored in\\n`trigger_time` \\xe2\\x80\\x94 not to the ledger time at which this function happens\\nto be called (#457). Release therefore becomes available at exactly\\n`last_checkin + checkin_period_days + grace_period_days`, however late\\nthe trigger is submitted. If the trigger arrives after that point the\\nwill is immediately releasable.\\n\\n`caller` is the optional keeper address recorded in the `triggered`\\nevent for audit purposes. It grants no privilege: anyone may trigger.\\n\\n# Panics\\n- [`WillError::WillNotActive`] if the will is not `Active`.\\n- [`WillError::CheckinNotDue`] if the check-in deadline has not passed yet.\\n\\n# Examples\\n\\n```ignore\\n// Continuing from a will created with a 90-day check-in period \\xe2\\x80\\xa6\\n// Advance past the check-in deadline without calling check_in.\\nenv.ledger().with_mut(|l| l.timestamp += 91 * 86_400",
+      "name": "trigger_will",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "caller",
+          "type": {
+            "option": {
+              "value_type": "address"
+            }
+          }
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Batch check-in across multiple wills in a single transaction.\\nAll wills must be owned by `owner` and in `Active` status.\\nPanics if any will ID is invalid, not owned by `owner`, or not `Active`.\\n\\nAt most `batch_check_in_limit::MAX_BATCH_CHECK_IN` (50) IDs are accepted\\nper call; longer inputs panic with [`WillError::BatchTooLarge`]. Every ID\\nmust also be distinct \\xe2\\x80\\x94 a repeated ID panics with\\n[`WillError::DuplicateWillId`] rather than being processed once per\\noccurrence, which would otherwise rewrite the same will and emit a\\nredundant `check_in` event for each repeat (#355).\\n\\n# Panics\\n- [`WillError::BatchTooLarge`] if more than\\n`batch_check_in_limit::MAX_BATCH_CHECK_IN` ids are supplied.\\n- [`WillError::DuplicateWillId`] if the same will id appears more than once.\\n- [`WillError::WillNotFound`] if any id names no will.\\n- [`WillError::NotOwner`] if any of those wills is not owned by `owner`.\\n- [`WillError::WillNotActive`] if any of those wills is not `Active`.\\n\\n# Parameters\\n- `will_ids`: the wills to check in on. ",
+      "name": "batch_check_in",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_ids",
+          "type": {
+            "vec": {
+              "element_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Updates the check-in and/or grace period for an active will.\\nOnly callable by the owner while the will is `Active`.\\n\\n# Parameters\\n- `will_id`: the will to update\\n- `owner`: the will's owner; must authorize this call\\n- `checkin_period_days`: new check-in period (optional); if specified,\\nmust be 1 to `MAX_PERIOD_DAYS`\\n- `grace_period_days`: new grace period (optional); if specified,\\nmust be 1 to `MAX_PERIOD_DAYS`\\n\\n# Panics\\n- [`WillError::NotOwner`] if `owner` does not own `will_id`.\\n- [`WillError::WillNotActive`] if the will is not `Active`.\\n- [`WillError::InvalidPeriod`] if either period is zero or exceeds\\n[`MAX_PERIOD_DAYS`].\\n\\n# Events\\nEmits [`events::periods_updated`] whose `next_deadline` field is the\\ndeadline [`Self::trigger_will`] actually enforces, namely\\n`last_checkin + checkin_period_days * SECONDS_PER_DAY`. This function\\nnever touches `last_checkin`, so that value is independent of when the\\nowner happens to call: an indexer that schedules reminders from the event\\nstays in sync with the on-chain rule i",
+      "name": "update_periods",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "checkin_period_days",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "grace_period_days",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns aggregate statistics for every will owned by `owner`\\n(issue #447).\\n\\nComplements the paginated [`Self::get_wills_by_owner`]: a client can\\nfetch one page of wills plus this summary in two calls instead of\\nwalking every page to compute totals. The owner index is capped at\\n`storage::MAX_WILLS_PER_INDEX`, which bounds the work done here.\\n\\n`total_wills` counts every indexed will regardless of status;\\n`active_wills` and `total_locked_by_token` cover only non-terminal\\nwills (`PendingConfirmation`, `Active`, `Triggered`), matching how\\n[`ProtocolStats`] counts locked value.\\n\\n# Parameters\\n- `owner`: the address to summarise.\\n\\n# Returns\\nThe [`OwnerStats`] aggregate for every will `owner` holds.\\n\\n# Example\\n```ignore\\nlet stats = client.get_owner_stats(&owner);\\n```",
+      "name": "get_owner_stats",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "udt": {
+            "name": "OwnerStats"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns just the lifecycle status of `will_id`.\\n\\nNote: This function still loads the full `Will` struct from persistent\\nstorage and deserializes it. The dominant cost is the storage read and\\ndeserialization, not the return-value encoding. Use this method instead\\nof [`Self::get_will`] only when you need the status and do not require\\nother will fields.\\n\\n# Panics\\n- [`WillError::WillNotFound`] if no will exists with this id.\\n\\n# Parameters\\n- `will_id`: the will to read.\\n\\n# Returns\\nThe will's current [`WillStatus`].\\n\\n# Example\\n```ignore\\nlet status = client.get_will_status(&will_id);\\n```",
+      "name": "get_will_status",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        }
+      ],
+      "outputs": [
+        {
+          "udt": {
+            "name": "WillStatus"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns the audit trail for `will_id`, recording every status\\ntransition since creation.\\n\\n# Bounded length\\n\\nThe retained trail holds at most [`storage::MAX_HISTORY_ENTRIES`]\\ntransitions. Once a will exceeds that many \\xe2\\x80\\x94 a long-lived will cycling\\n`Active` \\xe2\\x86\\x92 `Triggered` \\xe2\\x86\\x92 `Active` through repeated emergency check-ins \\xe2\\x80\\x94\\nthe **oldest** entry is dropped to make room, so this always returns the\\nmost recent transitions, oldest-first. The cap keeps the persistent\\n`WillHistory` entry inside Soroban's per-entry size limit and keeps this\\nread bounded (#392).\\n\\nFor the full, untrimmed history, follow the off-chain event log: every\\nstate-mutating entry point publishes an event, and that log is never\\ntrimmed. Callers who want to walk the retained trail in bounded slices\\nshould prefer [`WillContract::get_will_history_page`].\\n\\n# Parameters\\n- `will_id`: the will whose trail to read.\\n\\n# Returns\\nThe retained [`WillStatusTransition`] entries, oldest first.\\n\\n# Example\\n```ignore\\nlet trail = client.get_will_history(&will_id);",
+      "name": "get_will_history",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        }
+      ],
+      "outputs": [
+        {
+          "vec": {
+            "element_type": {
+              "udt": {
+                "name": "WillStatusTransition"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Casts a guardian vote to force an early release of `will_id`, for use\\nwhen the owner is known to be incapacitated. Once\\n`guardian_threshold` distinct guardians have voted, all balances are\\nimmediately distributed to beneficiaries, bypassing the check-in and\\ngrace-period flow entirely.\\n\\nKeeper bounties are never paid on a guardian-triggered release:\\n`distribute` is called with `keeper = None`, so `keeper_bounty_bps`\\nhas no effect in this path. Only [`release_inheritance`]'s\\ncaller-supplied `Option<Address>` can trigger a bounty payment.\\n\\nEnforces a cooldown after a guardian-list change: if the current\\nguardian list was updated less than [`GUARDIAN_COOLDOWN_DAYS`] days ago,\\nthe vote is rejected with [`WillError::GuardianCooldownActive`].\\n\\n# Parameters\\n- `reason`: the reason the guardian is casting the vote.\\n\\n# Reason codes are informational metadata \\xe2\\x80\\x94 there is no on-chain consensus requirement\\n\\nEach guardian supplies their own [`GuardianVoteReason`] independently.\\nThe contract records that reason in the guard",
+      "name": "guardian_trigger",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "guardian",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "reason",
+          "type": {
+            "udt": {
+              "name": "GuardianVoteReason"
+            }
+          }
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Verifies a pre-image against a stored commitment hash and, if correct,\\nimmediately transfers that beneficiary's share to the revealed address.\\n\\nThe pre-image must be `claimant.clone().to_xdr() || salt`: the XDR encoding of\\nthe beneficiary `Address` followed by a random salt chosen at\\nregistration time. The contract checks that the pre-image starts with\\nthe XDR of `claimant`, so the commitment is bound to one payout address.\\n\\n# Replay protection (#440)\\n\\n- Each hashed slot has a `claimed` flag that is set and persisted in\\nthe same invocation that pays out; a second call with the same\\npre-image fails with [`WillError::AlreadyClaimed`], so a replayed\\ntransaction cannot pay out twice.\\n- Because the pre-image is bound to `claimant` and `claimant` must\\nauthorize the call, an attacker who observes the pre-image in a\\npending or past transaction cannot resubmit it with their own\\naddress as the recipient ([`WillError::InvalidPreimage`]).\\n- Soroban authorization entries carry their own nonce and expiration\\nledger, so the",
+      "name": "reveal_and_claim",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "claimant",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "preimage",
+          "type": "bytes"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Replaces the guardian list for `will_id`. Only possible while the will\\nis `Active`. Any votes cast against the previous guardian list are\\ncleared so every updated list starts a fresh voting cycle. Consent\\nentries for the old guardians are also cleared.\\n\\nRecords the current timestamp as `guardian_list_updated_at` so that\\n[`guardian_trigger`] enforces a cooldown before the new list takes\\neffect (see [`GUARDIAN_COOLDOWN_DAYS`]).\\n\\n# Panics\\n- [`WillError::NotOwner`] if `owner` does not own `will_id`.\\n- [`WillError::WillNotActive`] if the will is not `Active`.\\n- [`WillError::TooManyBeneficiaries`] if more than `MAX_GUARDIANS`\\nguardians are supplied.\\n- [`WillError::InvalidGuardianThreshold`] if the new guardian list is\\nnon-empty and the will's current `guardian_threshold` exceeds the new\\nlist length (i.e. the threshold would become permanently unreachable).\\nThis entry point cannot change the threshold itself; the owner must\\ncall [`Self::update_guardians_weighted`], whose optional\\n`guardian_threshold` argument sets i",
+      "name": "update_guardians",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "guardians",
+          "type": {
+            "vec": {
+              "element_type": "address"
+            }
+          }
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Cancels an in-progress trigger during the grace period, proving the\\nowner is alive, and resets the check-in countdown.\\n\\nThe grace deadline second belongs to the owner: this call is valid while\\n`now <= trigger_time + grace_period_days * SECONDS_PER_DAY` and panics\\nwith [`WillError::GracePeriodExpired`] strictly after it. The rule in\\n[`Self::release_inheritance`] is the exact complement of this one, so\\nprecisely one of the two succeeds at every timestamp (#354).\\n\\n# Panics\\n- [`WillError::NotOwner`] if `owner` does not own `will_id`.\\n- [`WillError::WillNotTriggered`] if the will is not `Triggered`.\\n- [`WillError::GracePeriodExpired`] if the grace period has already\\nelapsed, i.e. `now` is strictly greater than the grace deadline.\\n\\n# Parameters\\n- `will_id`: the triggered will to rescue.\\n- `owner`: the will's owner; must authorize this call.\\n\\n# Example\\n```ignore\\n// During the grace period, the owner cancels the trigger.\\nclient.emergency_checkin(&will_id, &owner);\\n```",
+      "name": "emergency_checkin",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Creates multiple wills in a single transaction.\\n\\nEach entry in `will_specs` is a tuple of:\\n- `tokens`: `(token_address, amount)` pairs to lock.\\n- `beneficiaries`: beneficiary list with basis-point shares.\\n- `checkin_period_days`: check-in period in days.\\n- `grace_period_days`: grace period in days.\\n- `guardians`: guardian address list.\\n\\nThe owner must authorize the entire call. All wills are created under\\nthe same `owner`.\\n\\nEach will's audit trail is seeded with a `create` transition exactly\\nlike [`create_will`], so `get_will_history` starts with the same\\nentry regardless of which creation path produced the will.\\n\\n# Returns\\nA `Vec<u64>` of newly allocated will ids, one per spec.\\n\\n# Panics\\n- [`WillError::TooManyBeneficiaries`] if the batch is empty or exceeds\\n[`BATCH_MAX`], or if any individual spec violates the\\nbeneficiary/guardian caps.\\n- [`WillError::InvalidTokenCount`] if any individual spec's token list\\nis empty or exceeds `MAX_TOKENS`.\\n- Any error that [`create_will`] would panic with for an individual s",
+      "name": "batch_create_wills",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "will_specs",
+          "type": {
+            "vec": {
+              "element_type": {
+                "tuple": {
+                  "value_types": [
+                    {
+                      "vec": {
+                        "element_type": {
+                          "tuple": {
+                            "value_types": [
+                              "address",
+                              "i128"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "vec": {
+                        "element_type": {
+                          "udt": {
+                            "name": "Beneficiary"
+                          }
+                        }
+                      }
+                    },
+                    "u64",
+                    "u64",
+                    {
+                      "vec": {
+                        "element_type": "address"
+                      }
+                    },
+                    "u32"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "vec": {
+            "element_type": "u64"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns aggregate protocol statistics for all wills currently tracked on-chain.\\n\\nThe counters are maintained incrementally and reflect only successful\\noperations: a failed invocation rolls back all of its writes, so it\\ncan never be counted. See [`ProtocolStats`] for the consistency\\ninvariant and [`Self::audit_protocol_stats`] to verify it.\\n\\n# Returns\\nThe [`ProtocolStats`] counters maintained by the contract.\\n\\n# Example\\n```ignore\\nlet stats = client.get_protocol_stats();\\n```",
+      "name": "get_protocol_stats",
+      "inputs": [],
+      "outputs": [
+        {
+          "udt": {
+            "name": "ProtocolStats"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns a page of wills owned by `owner`.\\n\\nSupports bounded pagination to avoid hitting Soroban resource limits\\nfor addresses with many wills.\\n\\n# Parameters\\n- `owner`: the address to query wills for.\\n- `cursor`: optional will id to paginate after (exclusive). Pass `None`\\nor `0` for the first page.\\n- `limit`: maximum number of wills to return. Capped at\\n[`storage::MAX_PAGE_SIZE`].\\n\\nFor totals across all pages (will count, locked value per token) call\\n[`Self::get_owner_stats`] instead of iterating every page.\\n\\n# Consistency\\nThe cursor is an id bound (\"ids greater than `cursor`\"), not a\\nposition, so wills added or removed between pages never cause an\\nentry to be skipped or repeated; new wills appear on later pages.\\nPages are not a snapshot. See `docs/PAGINATION_CONSISTENCY.md` (#591).\\n\\n# Returns\\nA page of [`Will`] records owned by `owner`.\\n\\n# Example\\n```ignore\\nlet first = client.get_wills_by_owner(&owner, &None, &20);\\n```",
+      "name": "get_wills_by_owner",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "cursor",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "limit",
+          "type": "u32"
+        }
+      ],
+      "outputs": [
+        {
+          "vec": {
+            "element_type": {
+              "udt": {
+                "name": "Will"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Checks in every will in `will_ids` and reports the outcome per will\\n(#714). Unlike [`WillContract::batch_check_in`], a failing id does not\\nrevert the batch.\\n\\nEach will is handled on its own:\\n- Its checks run first. If any check fails, that will is left untouched.\\n- If they pass, its `last_checkin`, audit entry and `check_in` event are\\nwritten together. A will that succeeds keeps its check-in even when\\nanother id in the same call fails.\\n\\nReturns a `Vec<u32>` the same length as `will_ids`. Entry `i` is `0`\\nwhen `will_ids[i]` was checked in. Otherwise it is the numeric\\n[`WillError`] code for that id: `WillNotFound` (1), `NotOwner` (2),\\n`WillNotActive` (3), or `DuplicateWillId` for a repeat of an earlier id\\nin the same call. Only the first occurrence of a repeated id is checked\\nin.\\n\\n# Panics\\n- [`WillError::BatchTooLarge`] if more than\\n`batch_check_in_limit::MAX_BATCH_CHECK_IN` ids are supplied. This\\ncheck runs before any will is touched.",
+      "name": "batch_check_in_each",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_ids",
+          "type": {
+            "vec": {
+              "element_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "vec": {
+            "element_type": "u32"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns the list of will ids currently in `Triggered` status.\\nReturns a page of the will ids currently in `Triggered` status.\\n\\nThis is the on-chain index that lets keeper bots and monitoring tools\\nefficiently discover wills that are past their check-in deadline and\\nwithin their grace period, without having to replay every\\n`will_triggered` event off-chain.\\n\\n# Parameters\\n- `cursor`: optional will id to paginate after (exclusive). Pass `None`\\nor `0` for the first page.\\n- `limit`: maximum number of ids to return. Capped at\\n[`storage::MAX_PAGE_SIZE`].\\n\\n# Paging\\n\\nPass the last id of the previous page back as `cursor` to fetch the\\nnext one; page until a page comes back shorter than the `limit` you\\nasked for (or empty), which means you have seen the whole index.\\n\\n# Bounding\\n\\nThe index only ever holds wills that are *currently* `Triggered`:\\n`emergency_checkin`, `guardian_cancel_trigger`, `release_inheritance`,\\n`guardian_trigger`, `cancel_will`, and `archive_will` all remove the\\nid again, using order-preserving removal",
+      "name": "get_triggered_wills",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "cursor",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "limit",
+          "type": "u32"
+        }
+      ],
+      "outputs": [
+        {
+          "vec": {
+            "element_type": "u64"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Distributes all token balances to beneficiaries proportionally to\\ntheir configured percentages. Callable by anyone once the grace\\nperiod has fully elapsed.\\n\\nThe grace deadline second itself is **not** releasable: this call\\nrequires `now` to be strictly greater than\\n`trigger_time + grace_period_days * SECONDS_PER_DAY` and panics with\\n[`WillError::GracePeriodNotExpired`] at or before it. The boundary second\\ntherefore belongs to the owner's [`Self::emergency_checkin`], which\\naccepts `now <= deadline`. Exactly one of the two succeeds at any\\ntimestamp, so the outcome no longer depends on which transaction the\\nledger happens to order first (#354).\\n\\nTokens are transferred directly to each beneficiary (\"push\" mode);\\nthere is no pull mode and no `claim_share` entry point. Whatever the\\nvisible beneficiaries' allocations do not claim \\xe2\\x80\\x94 a will made up only\\nof `Allocation::FixedAmount` entries, or the share a renounced\\npercentage beneficiary leaves behind (#362) \\xe2\\x80\\x94 is refunded to the owner\\nrather than stranded in the c",
+      "name": "release_inheritance",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "caller",
+          "type": {
+            "option": {
+              "value_type": "address"
+            }
+          }
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Delivers a payout that failed during a previous `distribute` call\\n(#459) \\xe2\\x80\\x94 a beneficiary share, an owner refund, or a keeper bounty that\\ncould not be transferred at the time, e.g. because the token was\\npaused or the recipient was frozen/unauthorized.\\n\\nPermissionless, like triggering a release: anyone may call this for\\nanyone, since it can only deliver funds to the exact recipient\\n`distribute` already computed and reserved for them, not redirect them\\nanywhere else. Deliberately does not load or validate the parent will\\nat all -- the recorded amount is self-sufficient -- so this keeps\\nworking even after the will has been archived.\\n\\n# Panics\\n- [`WillError::NoFailedPayout`] if no failed payout is recorded for\\nthis exact `(will_id, token, recipient)` tuple (never failed,\\nalready retried successfully, or the arguments don't match).\\n- Propagates the token contract's own panic if this attempt also\\nfails; the record is left in place for a future retry.\\n\\n# Parameters\\n- `will_id`: the will the failed payout belongs to",
+      "name": "retry_failed_payout",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "recipient",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Allows a named guardian to accept their role on a will.\\n\\nA guardian must call this to explicitly accept their role before they can\\nvote via [`guardian_trigger`]. This ensures guardians actively consent\\nbefore they can force an early release of funds.\\n\\n# Parameters\\n- `will_id`: the will to accept guardianship for\\n- `guardian`: the guardian address accepting the role; must authorize\\n\\n# Events\\nEmits [`events::guardian_accepted_role`] (topic `\"gaccept\"`) with the\\naccepting guardian as the payload, after the consent change is saved.\\n\\n# Panics\\n- [`WillError::WillNotFound`] if the will does not exist.\\n- [`WillError::NotGuardian`] if `guardian` is not named on this will.\\n- [`WillError::WillNotActive`] if the will is in a terminal status\\n(`Released`, `Cancelled` or `Settled`).\\n- [`WillError::InvalidConsentTransition`] if the guardian already\\n`Rejected` their role, which is irrevocable.\\n\\n# Example\\n```ignore\\nclient.accept_guardian_role(&will_id, &guardian);\\n```",
+      "name": "accept_guardian_role",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "guardian",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Read-only invariant check (#441): recomputes the protocol stats by\\nwalking every will in storage and compares them with the stored,\\nincrementally maintained counters.\\n\\nTokens are compared by total, so a token present in one side with a\\nzero total and absent from the other still counts as consistent.\\n\\nCost grows linearly with the number of wills ever created; once that\\nexceeds the per-invocation budget, run it via simulation only.\\n\\n# Returns\\nA [`ProtocolStatsAudit`] comparing the stored counters with the recomputed values.\\n\\n# Example\\n```ignore\\nlet audit = client.audit_protocol_stats();\\n```",
+      "name": "audit_protocol_stats",
+      "inputs": [],
+      "outputs": [
+        {
+          "udt": {
+            "name": "ProtocolStatsAudit"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns the contract version as a `u32` encoded semver value:\\n`major * 1_000_000 + minor * 1_000 + patch`.\\n\\nSDKs and apps can call this to detect version mismatches before\\nsubmitting transactions that depend on specific contract behaviour.\\n\\n# Why this returns a compiled-in constant, not something read back out\\nof the deployed Wasm at call time (#501)\\n\\nA Soroban contract's execution environment has no host function that\\nlets a contract inspect its own deployed Wasm binary's custom sections\\n(which is where `soroban_sdk::contractmeta!`'s `\"Version\"` entry,\\ndeclared further up this file, actually lives) -- `CONTRACT_VERSION`\\n*is* \"the binary\" as far as on-chain execution can observe: it is\\ncompiled directly into the function body that returns it, so there is\\nno separate copy inside the same binary it could drift from at\\nruntime. What *can* drift, because they are three independent literals\\na human edits, are:\\n- `CONTRACT_VERSION` here vs. the crate `version` in\\n`contracts/will/Cargo.toml` -- checked by `cargo tes",
+      "name": "get_contract_version",
+      "inputs": [],
+      "outputs": [
+        "u32"
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Allows a named guardian to reject their role on a will.\\n\\nA guardian can reject their role to prevent themselves from voting via\\n[`guardian_trigger`]. Once rejected, the guardian cannot vote and\\n[`accept_guardian_role`] can no longer undo it: `Rejected` is terminal\\nfor that guardian entry. The only way back to `Pending` is the owner\\nre-appointing them through `update_guardians` / `update_guardians_weighted`.\\n\\n# Consent state machine\\n\\n| from \\\\ to | `Pending` | `Accepted` | `Rejected` |\\n|-----------|-----------|------------|------------|\\n| `Pending`  | \\xe2\\x80\\x94 | `Accepted` | `Rejected` |\\n| `Accepted` | \\xe2\\x80\\x94 | no-op     | `Rejected` |\\n| `Rejected` | \\xe2\\x80\\x94 | `InvalidConsentTransition` | no-op |\\n\\n`Rejected` is terminal: a guardian who declined is not asked again, so\\nsilently flipping them back to `Accepted` would resurrect a decision\\nthey already made.\\n\\n# Parameters\\n- `will_id`: the will to reject guardianship for\\n- `guardian`: the guardian address rejecting the role; must authorize\\n\\nIf the guardian already cast a trigger",
+      "name": "reject_guardian_role",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "guardian",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Allows a beneficiary to renounce their inheritance share in advance.\\nThe renouncing beneficiary is removed from the beneficiary list, and\\ntheir percentage is redistributed proportionally among the remaining\\n**percentage-based** beneficiaries.\\n\\n# Where the renounced share goes\\n\\nA `Percentage` share can only be redistributed to another\\n`Percentage` entry, so what happens to it depends on who is left:\\n\\n- **At least one `Percentage` beneficiary remains** \\xe2\\x80\\x94 the renounced\\nbasis points are redistributed across them in proportion to their\\ncurrent shares, with the last one absorbing the rounding remainder so\\nthe total stays exactly 10,000 bps.\\n- **No `Percentage` beneficiary remains** (a will that mixed one\\n`Percentage` entry with `FixedAmount` entries, where the percentage\\nholder is the one renouncing) \\xe2\\x80\\x94 the renunciation is still accepted,\\nand the share is **returned to the owner** at release rather than\\nreassigned (#362). `assert_valid_allocations` deliberately allows a\\n`FixedAmount`-only list to leave headroom,",
+      "name": "renounce_beneficiary",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "beneficiary",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Replaces the beneficiary list for `will_id`. Only possible while the\\nwill is `Active`. The new basis points must sum to exactly 10,000.\\n\\n# State constraints (#728)\\n\\nThe list is frozen for every status other than `Active`, including\\n`Triggered` (grace period running), `PendingConfirmation`, `Released`,\\n`Cancelled` and `Settled`. A `Triggered` will's beneficiaries are\\nsnapshotted at trigger time, so an update attempted during the grace\\nperiod is refused with [`WillError::WillNotActive`] and leaves the\\nsnapshot untouched. The owner must call `emergency_checkin` to return\\nthe will to `Active` before the list can change.\\n\\n# Panics\\n- [`WillError::NotOwner`] if `owner` does not own `will_id`.\\n- [`WillError::WillNotActive`] if the will is not `Active`, including\\nany update attempted while the will is `Triggered`.\\n- [`WillError::TooManyBeneficiaries`] if the new list is empty or too large.\\n- [`WillError::InvalidPercentages`] if the new basis points do not sum to 10,000.\\n- [`WillError::DuplicateBeneficiary`] if the sam",
+      "name": "update_beneficiaries",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "beneficiaries",
+          "type": {
+            "vec": {
+              "element_type": {
+                "udt": {
+                  "name": "Beneficiary"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Atomically updates multiple will settings (beneficiaries, guardians, and periods)\\nin a single transaction. Only callable by the owner while the will is `Active`.\\n\\nAny unspecified field (passed as `None`) is left unchanged. This allows callers\\nto update only the settings they need without specifying the others.\\n\\n# Parameters\\n- `will_id`: the will to update\\n- `owner`: the will's owner; must authorize this call\\n- `beneficiaries`: new beneficiary list (optional); if specified, must be valid\\n- `guardians`: new guardian list (optional); if specified, must be valid\\n- `checkin_period_days`: new check-in period (optional)\\n- `grace_period_days`: new grace period (optional)\\n\\n# Events\\nAlways emits [`events::will_settings_updated`] with an `updated_fields`\\n`Vec<Symbol>` listing every field that changed (`\"benef\"`, `\"guard\"`,\\n`\"checkin\"`, `\"grace\"`). This is the canonical way to detect which settings\\nwere modified in a single call.\\n\\nWhen `guardians` is `Some(\\xe2\\x80\\xa6)`, this function **also** emits\\n[`events::guardians_updated`]",
+      "name": "update_will_settings",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "beneficiaries",
+          "type": {
+            "option": {
+              "value_type": {
+                "vec": {
+                  "element_type": {
+                    "udt": {
+                      "name": "Beneficiary"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "guardians",
+          "type": {
+            "option": {
+              "value_type": {
+                "vec": {
+                  "element_type": "address"
+                }
+              }
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "checkin_period_days",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "grace_period_days",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Reads up to 50 immutable action records, oldest first. Pass the last\\nreturned sequence as the exclusive cursor for the next page.\\n\\nRecords survive will archival. Ledger entries archived by Stellar may\\nrequire restoration before they can be read.",
+      "name": "get_emergency_actions",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "scope",
+          "type": {
+            "udt": {
+              "name": "ActionLogScope"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "after",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "limit",
+          "type": "u32"
+        }
+      ],
+      "outputs": [
+        {
+          "vec": {
+            "element_type": {
+              "udt": {
+                "name": "EmergencyActionRecord"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns a page of wills owned by `owner` with the given `status`,\\ntogether with the total number of matching wills and the cursor for\\nthe next page (#455).\\n\\nCallers can page through every match with a single query per page and\\nknow up front how many results exist:\\n\\n```ignore\\nlet mut cursor = None;\\nloop {\\nlet page = client.get_owner_status_page(&owner, &status, &cursor, &20);\\n// page.total_count is the same on every page.\\nhandle(page.wills);\\nmatch page.next_cursor {\\nSome(c) => cursor = Some(c),\\nNone => break,\\n}\\n}\\n```\\n\\n# Parameters\\n- `owner`: the address to query wills for.\\n- `status`: the will status to filter by.\\n- `cursor`: optional will id to paginate after (exclusive). Pass `None`\\nor `0` for the first page.\\n- `limit`: maximum number of wills to return. Capped at\\n[`storage::MAX_PAGE_SIZE`].\\n\\n# Returns\\nA [`WillPage`] with the matching wills, the total number of matches, and the cursor for the next page.",
+      "name": "get_owner_status_page",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "status",
+          "type": {
+            "udt": {
+              "name": "WillStatus"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "cursor",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "limit",
+          "type": "u32"
+        }
+      ],
+      "outputs": [
+        {
+          "udt": {
+            "name": "WillPage"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns a bounded page of `will_id`'s audit trail, oldest-first.\\n\\nThe paged counterpart to [`WillContract::get_will_history`], for callers\\nthat would rather not pull the whole retained trail in one call. The\\ntrail is itself capped at [`storage::MAX_HISTORY_ENTRIES`] transitions\\n(#392); this bounds the *per-call* cost on top of that.\\n\\n# Parameters\\n- `will_id`: the will whose trail to read.\\n- `cursor`: optional zero-based offset into the trail. Pass `None` or `0`\\nfor the first page.\\n- `limit`: maximum number of transitions to return. Capped at\\n[`storage::MAX_PAGE_SIZE`].\\n\\n# Pagination\\n1. Call with `cursor=None, limit=N`.\\n2. If the page has `N` entries, call again with `cursor = offset + N`.\\n3. Repeat until a page comes back shorter than `N`.\\n\\nThe cursor is positional, not keyed. It is stable for the duration of a\\nwalk as long as no transition is appended past the cursor, but a\\nconcurrent write that trips the history cap trims the front of the\\ntrail and shifts every earlier offset \\xe2\\x80\\x94 restart the walk in that ca",
+      "name": "get_will_history_page",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "cursor",
+          "type": {
+            "option": {
+              "value_type": "u32"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "limit",
+          "type": "u32"
+        }
+      ],
+      "outputs": [
+        {
+          "vec": {
+            "element_type": {
+              "udt": {
+                "name": "WillStatusTransition"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Repairs bookkeeping drift (#441) by overwriting the stored protocol\\nstats with the values recomputed from storage, and returns them.\\n\\nCallable by anyone: the written values are derived purely from\\non-chain will state, so a caller cannot influence them. Tokens whose\\nrecomputed total is zero are dropped from the stored list.\\n\\n# Returns\\nThe [`ProtocolStats`] values after the repair.\\n\\n# Example\\n```ignore\\nlet stats = client.repair_protocol_stats();\\n```",
+      "name": "repair_protocol_stats",
+      "inputs": [],
+      "outputs": [
+        {
+          "udt": {
+            "name": "ProtocolStats"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Sets the guardian-list cooldown, in days, for an active will (#721).\\n\\nThe cooldown is the delay after a guardian-list change before a guardian\\nmay vote in `guardian_trigger` or `guardian_cancel_trigger`. It defaults\\nto `GUARDIAN_COOLDOWN_DAYS` and can be raised here for a longer window.\\n\\nThe cooldown can only be increased. Shortening it would let a compromised\\nowner shrink the delay and swap guardians after a short wait.\\n\\n# Errors\\n\\n- [`WillError::NotOwner`] if `owner` is not the will's owner.\\n- [`WillError::WillNotActive`] if the will is not `Active`.\\n- [`WillError::InvalidPeriod`] if `days` is `0` or above `MAX_PERIOD_DAYS`.\\n- [`WillError::GuardianCooldownCannotDecrease`] if `days` is below the\\ncooldown currently in effect.",
+      "name": "set_guardian_cooldown",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "days",
+          "type": "u64"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Registers a hashed beneficiary on an existing active will.\\n\\nOnly the owner (or co-owner set meeting the threshold) may add hashed\\nbeneficiaries. The combined percentages of `beneficiaries` and\\n`hashed_beneficiaries` must still sum to 100.\\n\\n# Parameters\\n- `will_id`: the will to add the hashed beneficiary to.\\n- `owner`: must be the primary owner.\\n- `commitment`: SHA-256 hash of the pre-image `address_bytes || salt_bytes`.\\nMust be exactly 32 bytes \\xe2\\x80\\x94 see the validation rules below.\\nThe contract cannot verify the salt's entropy: use 32 bytes from a\\ncryptographically secure RNG, fresh per commitment (see\\n`docs/HASHED_BENEFICIARY_SALT_GUIDANCE.md`, #589).\\n- `percentage`: share of the will's balance for this beneficiary, in\\nbasis points. Must be greater than zero.\\n\\n# Validation\\n\\nA commitment is only useful if some pre-image can ever hash to it, and\\nonly claimable if exactly one slot matches it, so this entry point\\nrejects three shapes that would otherwise strand a reserved share\\nforever (#371):\\n\\n- A `commitment` th",
+      "name": "add_hashed_beneficiary",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "commitment",
+          "type": "bytes"
+        },
+        {
+          "doc": "",
+          "name": "percentage",
+          "type": "u32"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns the number of seconds until `will_id`'s next relevant\\ndeadline, or `None` if the will's current status has no deadline.\\n\\nThe deadline depends on status:\\n- `Active`: seconds until the check-in deadline\\n(`last_checkin + checkin_period_days`).\\n- `Triggered`: seconds until the grace period expires\\n(`trigger_time + grace_period_days`, where `trigger_time` is the\\nmissed check-in deadline \\xe2\\x80\\x94 see [`Self::trigger_will`]).\\n- `PendingConfirmation`, `Released`, `Cancelled`, `Settled`: no deadline\\napplies; returns `None`.\\n\\nThe returned value is negative when the deadline has already passed\\n(e.g. an `Active` will whose check-in deadline elapsed but which has\\nnot yet been `trigger_will`-ed, or a `Triggered` will whose grace\\nperiod has expired but has not yet been released) \\xe2\\x80\\x94 callers should\\ntreat any non-positive value as \"actionable now\" rather than treating\\nonly `None` as the past-due signal.\\n\\nA `Triggered` will reporting exactly `0` is sitting on its grace\\ndeadline second, which still belongs to the owner:\\n[`Se",
+      "name": "get_time_until_deadline",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        }
+      ],
+      "outputs": [
+        {
+          "option": {
+            "value_type": "i64"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Casts a guardian vote to **cancel** an in-progress trigger and return\\nthe will to `Active` status. This mirrors [`guardian_trigger`] but\\noperates on the opposite outcome: instead of forcing a release, a quorum\\nof guardians can collectively decide that the owner is still alive and\\nthe trigger was premature.\\n\\nVote records are stored under a separate `GuardianCancelVote` key so\\nthat a guardian's release-vote and their cancel-vote are completely\\nindependent \\xe2\\x80\\x94 casting one does **not** prevent casting the other, but\\na single guardian's vote cannot count toward both outcomes\\nsimultaneously (each namespace is deduplicated on its own).\\n\\nWhen the accumulated cancel-vote weight reaches `guardian_threshold`,\\nthe will is returned to `Active`, `last_checkin` is reset to now\\n(starting a fresh check-in countdown), and all cancel-vote records are\\ncleared.\\n\\n# Grace period\\n\\nA cancel vote is only meaningful *during* the grace period, and this\\nentrypoint enforces the same deadline [`emergency_checkin`] does: once\\n`trigger_time ",
+      "name": "guardian_cancel_trigger",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "guardian",
+          "type": "address"
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns the guardian vote-expiry window, in days, currently in effect\\nfor `will_id` (#740).\\n\\nThis is the override set by [`Self::set_guardian_vote_expiry`] when one\\nexists, and otherwise the will's `grace_period_days`.\\n\\n# Parameters\\n- `will_id`: the will to query.\\n\\n# Returns\\nThe window in days.\\n\\n# Panics\\n- If `will_id` does not exist.\\n\\n# Example\\n```ignore\\nlet days = client.get_guardian_vote_expiry(&will_id);\\n```",
+      "name": "get_guardian_vote_expiry",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        }
+      ],
+      "outputs": [
+        "u64"
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns `guardian`'s current vote record for `will_id`'s active\\ntrigger cycle -- the timestamp their `guardian_trigger` vote was cast\\nand the reason they gave -- or `None` if they have not voted, or their\\nvote has since expired past the will's grace period.\\n\\nLets a guardian's own dashboard show \"you already voted\" state\\ndirectly from chain state, without replaying `guardian_voted` events\\noff-chain (#263).\\n\\nExpiry is decided by the same [`storage::vote_is_live`] rule\\n`has_guardian_voted` and `has_guardian_cancel_voted` use, so this read\\ncan never panic on a record whose timestamp is later than the current\\nledger time (#359). Unlike those quorum counters, a record timestamped\\nafter `now` is reported as-is here rather than hidden: this is a\\nread-only query over stored state, and swallowing the record would make\\na skewed ledger clock look like \"no vote was ever cast\".\\n\\n# Parameters\\n- `will_id`: the will to read.\\n- `guardian`: the guardian whose vote to look up.\\n\\n# Returns\\nThe guardian's [`GuardianVoteRecord`] if ",
+      "name": "get_guardian_vote_status",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "guardian",
+          "type": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "option": {
+            "value_type": {
+              "udt": {
+                "name": "GuardianVoteRecord"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns wills `beneficiary` is named in, with optional pagination.\\n\\n# Parameters\\n- `beneficiary`: the address to query for\\n- `cursor`: optional will id to start pagination after (exclusive)\\n- `limit`: maximum number of wills to return (capped at MAX_PAGE_SIZE)\\n\\n# Pagination\\nTo fetch all wills in pages:\\n1. Call with `cursor=None, limit=N`\\n2. If result has N wills, call again with `cursor=last_will_id`\\n3. Repeat until result has fewer than N wills\\n\\n# Returns\\nA page of [`Will`] records that name `beneficiary`.\\n\\n# Example\\n```ignore\\nlet wills = client.get_wills_by_beneficiary(&beneficiary, &None, &20);\\n```",
+      "name": "get_wills_by_beneficiary",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "beneficiary",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "cursor",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "limit",
+          "type": "u32"
+        }
+      ],
+      "outputs": [
+        {
+          "vec": {
+            "element_type": {
+              "udt": {
+                "name": "Will"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Sets or clears the guardian vote-expiry window for one will (#740).\\n\\nA guardian's release or cancel vote counts toward quorum only while it is\\nyounger than the window. By default the window equals the will's\\n`grace_period_days`, which is the behaviour before this setting existed.\\nPassing `Some(days)` overrides that default for this will only; passing\\n`None` removes the override so the will follows its grace period again.\\n\\nOnly allowed while the will is `Active`. Changing the window during a\\ntrigger cycle would retroactively revalidate votes already cast, so the\\nsetting is frozen once the will is `Triggered`.\\n\\n# Parameters\\n- `will_id`: the will to configure.\\n- `owner`: must be the will's owner and must authorize the call.\\n- `days`: the new window in days, or `None` to restore the default. A\\n`Some` value must be between 1 and [`MAX_PERIOD_DAYS`] inclusive.\\n\\n# Panics\\n- [`WillError::NotOwner`] if `owner` does not own `will_id`.\\n- [`WillError::WillNotActive`] if the will is not `Active`.\\n- [`WillError::InvalidPeri",
+      "name": "set_guardian_vote_expiry",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "days",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Updates the guardian list with custom per-guardian vote weights.\\nOnly callable by the owner while the will is `Active`.\\n\\n# Parameters\\n- `will_id`: the will to update\\n- `owner`: the will's owner; must authorize this call\\n- `guardians`: list of `GuardianSpec` entries containing address and weight\\n- `guardian_threshold`: optional threshold required for quorum\\n\\n# Panics\\n- [`WillError::NotOwner`] if `owner` does not own `will_id`.\\n- [`WillError::WillNotActive`] if the will is not `Active`.\\n- [`WillError::InvalidGuardianThreshold`] if a guardian's weight exceeds\\n[`MAX_GUARDIAN_WEIGHT`], if the weights sum to more than `u32::MAX`, or\\nif the resulting threshold is not in `1..=total_weight`. The sum is\\naccumulated with [`u32::checked_add`], so an unrepresentable total is\\nreported as a typed error rather than an arithmetic trap (#356).\\nAlso raised if any guardian's `weight` is `0`: zero weights are\\nrejected rather than silently normalised to `1`, so the threshold is\\nalways validated against the weights actually stored ",
+      "name": "update_guardians_weighted",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "will_id",
+          "type": "u64"
+        },
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "guardians",
+          "type": {
+            "vec": {
+              "element_type": {
+                "udt": {
+                  "name": "GuardianSpec"
+                }
+              }
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "guardian_threshold",
+          "type": {
+            "option": {
+              "value_type": "u32"
+            }
+          }
+        }
+      ],
+      "outputs": []
+    }
+  },
+  {
+    "function_v0": {
+      "doc": "Returns a page of wills owned by `owner` with the given `status`.\\n\\nSupports bounded pagination to avoid hitting Soroban resource limits\\nfor addresses with many wills. The status filter is applied *before*\\nthe page is cut, so a page is only shorter than `limit` when there are\\nno further matching wills (#455).\\n\\nPrefer [`Self::get_owner_status_page`], which also returns\\nthe total number of matches and an explicit `next_cursor`.\\n\\n# Parameters\\n- `owner`: the address to query wills for.\\n- `status`: the will status to filter by.\\n- `cursor`: optional will id to paginate after (exclusive). Pass `None`\\nor `0` for the first page.\\n- `limit`: maximum number of wills to return. Capped at\\n[`storage::MAX_PAGE_SIZE`]. A `limit` of `0` returns an empty page,\\nmatching [`Self::get_wills_by_owner`] and\\n[`Self::get_wills_by_beneficiary`], which build their pages through\\n[`storage::paginate_ids`] (#360).\\n\\n# Returns\\nA page of matching [`Will`] records.\\n\\n# Example\\n```ignore\\nlet active = client.get_wills_by_owner_and_status(&owner, &W",
+      "name": "get_wills_by_owner_and_status",
+      "inputs": [
+        {
+          "doc": "",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "status",
+          "type": {
+            "udt": {
+              "name": "WillStatus"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "cursor",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "limit",
+          "type": "u32"
+        }
+      ],
+      "outputs": [
+        {
+          "vec": {
+            "element_type": {
+              "udt": {
+                "name": "Will"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "The full on-chain state of a single will.",
+      "lib": "",
+      "name": "Will",
+      "fields": [
+        {
+          "doc": "The amount of `token` currently locked in the will, in the token's base units.\\nA legacy mirror of `balances[token]` kept for backward compatibility;\\nevery writer that touches the primary token's balance must update both\\nfields together until this mirror is fully removed.",
+          "name": "balance",
+          "type": "i128"
+        },
+        {
+          "doc": "Map of token contract address \\xe2\\x86\\x92 amount currently locked in the will,\\nin each token's base units. A will may hold any number of distinct\\nSEP-41 compliant tokens simultaneously.",
+          "name": "balances",
+          "type": {
+            "map": {
+              "key_type": "address",
+              "value_type": "i128"
+            }
+          }
+        },
+        {
+          "doc": "The visible beneficiaries of the will and how each is allocated.\\n\\nEntries may mix two allocation kinds (see [`Allocation`]), so this\\nlist does **not** always describe a split of 10,000 basis points.\\n`assert_valid_allocations` enforces, on every write:\\n- every `Allocation::Percentage(bp)` is non-zero, and the `Percentage`\\nentries together sum to exactly 10,000 basis points. This check only\\napplies when at least one `Percentage` entry is present \\xe2\\x80\\x94 a\\n`FixedAmount`-only list has no percentage total to check;\\n- every `Allocation::FixedAmount(amount)` is positive, and their sum\\ndoes not exceed the will's **primary-token** balance\\n([`Will::token`]). A sum *below* that balance is allowed, since the\\nheadroom is reserved for a later `add_hashed_beneficiary` and is\\notherwise refunded to the owner at release;\\n- no address appears twice ([`crate::WillError::DuplicateBeneficiary`]).\\n\\nSo: percentages must sum to 10,000 when present, while fixed amounts\\nare bounded above by the primary-token balance and need not account fo",
+          "name": "beneficiaries",
+          "type": {
+            "vec": {
+              "element_type": {
+                "udt": {
+                  "name": "Beneficiary"
+                }
+              }
+            }
+          }
+        },
+        {
+          "doc": "How many days the owner may go without checking in before the will\\ncan be triggered.",
+          "name": "checkin_period_days",
+          "type": "u64"
+        },
+        {
+          "doc": "Unix timestamp (seconds) by which the owner must call `confirm_will`\\nto move from `PendingConfirmation` to `Active` (issue #43).\\n`None` once the will is confirmed or if no delay was requested.",
+          "name": "confirmation_deadline",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "Optional delegate address that may call `check_in` on the owner's\\nbehalf. `None` means only the owner can check in.",
+          "name": "delegate",
+          "type": {
+            "option": {
+              "value_type": "address"
+            }
+          }
+        },
+        {
+          "doc": "How many days after being triggered the owner has to prove they are\\nalive (via `emergency_checkin`) before inheritance can be released.",
+          "name": "grace_period_days",
+          "type": "u64"
+        },
+        {
+          "doc": "Accumulated weight of guardian votes cast toward cancelling the current\\ntrigger. Reaches quorum at `guardian_threshold`, returning the will to\\n`Active` and resetting the check-in deadline.",
+          "name": "guardian_cancel_vote_weight",
+          "type": "u32"
+        },
+        {
+          "doc": "Number of distinct guardians who have voted to cancel the current trigger.",
+          "name": "guardian_cancel_votes",
+          "type": "u32"
+        },
+        {
+          "doc": "Unix timestamp (seconds) of the last guardian-list change.\\n`guardian_trigger` is only effective after a cooldown period has\\nelapsed since this timestamp, preventing a compromised owner from\\nswapping guardians right before a malicious action.",
+          "name": "guardian_list_updated_at",
+          "type": "u64"
+        },
+        {
+          "doc": "The weight that a guardian quorum must accumulate to take effect.\\n\\nThis is compared against the **accumulated vote weight**\\n([`Will::guardian_vote_weight`], and\\n[`Will::guardian_cancel_vote_weight`] for the cancel path), not against\\n[`Will::guardian_votes`]. With every guardian weighted 1 the two are\\nequivalent, but a weighted guardian list installed via\\n`update_guardians_weighted` lets a single guardian of weight 3 satisfy a\\nthreshold of 3 on its own.\\n\\nIt is validated in `1..=total_weight`, where `total_weight` is\\n`guardians.len()` for the unweighted lists that `create_will`,\\n`update_guardians` and `update_will_settings` produce, and the sum of\\nthe supplied weights for a weighted list. Shrinking a non-empty guardian\\nlist below the stored threshold is rejected, since the quorum would\\nbecome unreachable. An empty guardian list disables the mechanism and no\\nthreshold is checked.",
+          "name": "guardian_threshold",
+          "type": "u32"
+        },
+        {
+          "doc": "Accumulated weight of live guardian votes cast in the current cycle.\\nRecomputed from the current guardian list on every vote (issue #453),\\nso votes from removed, rejected or expired guardians are never counted.\\nAccumulated weight of guardian votes cast in the current cycle.\\nQuorum is reached when this reaches (or exceeds) `guardian_threshold`;\\nsee [`Will::guardian_threshold`] for the comparison and\\n[`Will::guardian_votes`] for the corresponding head count.",
+          "name": "guardian_vote_weight",
+          "type": "u32"
+        },
+        {
+          "doc": "Number of distinct guardians on the current list with a live vote to\\ntrigger the current guardian-release cycle. Never exceeds\\n`guardians.len()`. Release triggers when this reaches `guardian_threshold`.",
+          "name": "guardian_votes",
+          "type": "u32"
+        },
+        {
+          "doc": "Optional guardians (up to 3) who may force an early release\\nvia a weight-based quorum using `guardian_trigger`.",
+          "name": "guardians",
+          "type": {
+            "vec": {
+              "element_type": {
+                "udt": {
+                  "name": "Guardian"
+                }
+              }
+            }
+          }
+        },
+        {
+          "doc": "Privacy-preserving beneficiaries registered by commitment hash (issue #46).\\n\\nEach `HashedBeneficiary::percentage` is expressed in the same basis\\npoints (1 bp = 0.01 %, 10,000 = 100 %) as `Allocation::Percentage`, not\\nin whole percent. They are withheld from the visible beneficiaries'\\nshare of each token and are claimable later via `reveal_and_claim` once\\nthe pre-image is revealed.\\n\\n`assert_valid_percentages` requires the visible `Percentage` entries\\nplus every hashed percentage to total at most 10,000 basis points \\xe2\\x80\\x94 the\\nhashed entries take priority, and the remainder is what the visible\\npercentage split divides. Unlike `beneficiaries`, a will with no\\npercentage beneficiaries at all is legal, and its leftover primary-token\\nbalance is refunded to the owner on release.",
+          "name": "hashed_beneficiaries",
+          "type": {
+            "vec": {
+              "element_type": {
+                "udt": {
+                  "name": "HashedBeneficiary"
+                }
+              }
+            }
+          }
+        },
+        {
+          "doc": "Unique, monotonically increasing identifier for this will.",
+          "name": "id",
+          "type": "u64"
+        },
+        {
+          "doc": "Whether the held asset is native XLM (as opposed to a token contract).\\nWhen `true`, transfers use `env.transfer()` instead of the token client.",
+          "name": "is_native",
+          "type": "bool"
+        },
+        {
+          "doc": "Optional keeper bounty in basis points (e.g., 10 = 0.1%).\\nWhen set, a portion of the inheritance is paid to callers who trigger\\nor release the will (not to the owner). Defaults to 0.",
+          "name": "keeper_bounty_bps",
+          "type": "u32"
+        },
+        {
+          "doc": "Unix timestamp (seconds) of the owner's last check-in.",
+          "name": "last_checkin",
+          "type": "u64"
+        },
+        {
+          "doc": "The primary owner address. Used for backwards-compatible single-owner\\nflows and as the refund destination on cancellation.",
+          "name": "owner",
+          "type": "address"
+        },
+        {
+          "doc": "Schema version for this will. Used to track which contract version\\nwrote this state and enable forward/backward compatible migrations.\\nSee `migration.rs` and the \"Storage schema versioning\" section of\\nCONTRIBUTING.md for how new versions are introduced.",
+          "name": "schema_version",
+          "type": "u32"
+        },
+        {
+          "doc": "Current lifecycle state of the will.",
+          "name": "status",
+          "type": {
+            "udt": {
+              "name": "WillStatus"
+            }
+          }
+        },
+        {
+          "doc": "The token contract (e.g. a USDC Stellar Asset Contract) held by the will.",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "doc": "Unix timestamp (seconds) at which the grace period started, if the\\nwill is triggered. This is the missed check-in deadline\\n(`last_checkin + checkin_period_days`), not the time `trigger_will`\\nwas called, so the release time does not drift with keeper delays.",
+          "name": "trigger_time",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "Frozen snapshot of [`Will::beneficiaries`] taken at the moment the will\\ntransitioned to `Triggered` (issue #657).\\n\\n`None` while the will has never been triggered. Once `trigger_will`\\nmoves the will to `Triggered`, this holds a clone of the beneficiary\\nlist as it stood at that instant, preserving both order and\\nallocations.\\n\\n# Immutability guarantee\\n\\nFrom the moment the will is triggered until it is released (or\\ncancelled back to `Active`), the beneficiary order and allocations used\\nfor distribution are frozen. Later `update_beneficiaries` calls cannot\\naffect an in-flight release: distribution reads this snapshot rather\\nthan the live list, so reordering or editing `beneficiaries` between\\ntrigger and release can never cause a percentage to be applied to a\\ndifferent beneficiary than the one it was computed for.\\n\\nUse [`Will::distribution_beneficiaries`] to obtain the list that\\ndistribution should actually use.",
+          "name": "triggered_beneficiaries",
+          "type": {
+            "option": {
+              "value_type": {
+                "vec": {
+                  "element_type": {
+                    "udt": {
+                      "name": "Beneficiary"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "A guardian entry: an address paired with a vote weight and consent status.\\n\\nGuardians with higher weights count for more when reaching quorum.\\nIf all guardians have weight 1, the threshold is a simple majority count.\\nA guardian must accept their role via `accept_guardian_role` before they\\ncan vote in `guardian_trigger`.",
+      "lib": "",
+      "name": "Guardian",
+      "fields": [
+        {
+          "doc": "",
+          "name": "address",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "consent",
+          "type": {
+            "udt": {
+              "name": "GuardianConsent"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "weight",
+          "type": "u32"
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "A page of wills returned by a filtered, paginated query (#455).\\n\\nCarries the total number of matching wills so callers know how many\\nresults exist in all, and an explicit `next_cursor` so they never have to\\ninfer \"more pages?\" from the page length.",
+      "lib": "",
+      "name": "WillPage",
+      "fields": [
+        {
+          "doc": "Cursor to pass to fetch the next page, or `None` if this is the last page.",
+          "name": "next_cursor",
+          "type": {
+            "option": {
+              "value_type": "u64"
+            }
+          }
+        },
+        {
+          "doc": "Total number of wills matching the filter across all pages.",
+          "name": "total_count",
+          "type": "u32"
+        },
+        {
+          "doc": "The wills on this page, in ascending id order.",
+          "name": "wills",
+          "type": {
+            "vec": {
+              "element_type": {
+                "udt": {
+                  "name": "Will"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "udt_union_v0": {
+      "doc": "How a beneficiary's share of a will is calculated.\\n\\n- `Percentage(bp)` is a share expressed in basis points (1 bp = 0.01 %) of\\nwhatever balance remains *after* every `FixedAmount` beneficiary on the\\nsame will has been paid, applied to **every** token the will holds. All\\n`Percentage` shares on a will must sum to exactly 10,000 (100 % of the\\nremainder).\\n- `FixedAmount(amount)` entitles the beneficiary to exactly `amount` of\\nthe will's **primary token** ([`Will::token`], the first entry of the\\n`tokens` list passed to `create_will`), paid before any percentage-based\\nsplit is computed. The sum of all `FixedAmount` entries on a will can\\nnever exceed that token's balance (enforced by\\n`assert_valid_allocations`).\\n\\n# Fixed amounts and multi-token wills\\n\\nA `FixedAmount` is a claim on one specific token, not on \"the will's\\nvalue\". A will holding two tokens and a `FixedAmount(100)` beneficiary\\npays that beneficiary 100 units of the primary token **in total** \\xe2\\x80\\x94 the\\nsecondary token's balance is not drawn on to satisfy it",
+      "lib": "",
+      "name": "Allocation",
+      "cases": [
+        {
+          "tuple_v0": {
+            "doc": "",
+            "name": "Percentage",
+            "type": [
+              "u32"
+            ]
+          }
+        },
+        {
+          "tuple_v0": {
+            "doc": "",
+            "name": "FixedAmount",
+            "type": [
+              "i128"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "Aggregate statistics for the wills owned by a single address (issue #447).\\n\\nReturned by `get_owner_stats` so clients can show ownership totals\\nalongside a paginated `get_wills_by_owner` listing without walking every\\npage themselves.",
+      "lib": "",
+      "name": "OwnerStats",
+      "fields": [
+        {
+          "doc": "Number of those wills that are still non-terminal\\n(`PendingConfirmation`, `Active` or `Triggered`).",
+          "name": "active_wills",
+          "type": "u32"
+        },
+        {
+          "doc": "Locked balances by token, summed across the owner's non-terminal wills.",
+          "name": "total_locked_by_token",
+          "type": {
+            "vec": {
+              "element_type": {
+                "udt": {
+                  "name": "TokenLockedBalance"
+                }
+              }
+            }
+          }
+        },
+        {
+          "doc": "Total number of wills indexed under this owner, in any status.",
+          "name": "total_wills",
+          "type": "u32"
+        }
+      ]
+    }
+  },
+  {
+    "udt_union_v0": {
+      "doc": "Lifecycle state of a will.\\n\\n```text\\ncreate_will --(confirmation delay)--> PendingConfirmation\\ncreate_will --(no delay)------------> Active\\n|                                    |\\n|--(confirm_will)--> Active <--------+\\n|\\n|   Active --(missed check-in / trigger_will)--> Triggered\\n|      |                                            |\\n|      |--(cancel_will)--> Cancelled               |--(grace period expires)--> Released\\n|      |                                            |    |\\n|      |--(emergency_checkin)--> Active            |    |--(close_will)--> Settled\\n|      |--(guardian_cancel_trigger)--> Active       |    |\\n|      |--(guardian_trigger quorum)--> Released ----+    |\\n|                                                          |\\n+--(cancel_will)--> Cancelled <--(cancel_will, PendingConfirmation)\\n\\nPendingConfirmation --(cancel_will)--> Cancelled\\n```\\n\\nEvery arrow above is a real transition performed by the named entry point;\\n`check_in` and the other settings updates do not change `status`.",
+      "lib": "",
+      "name": "WillStatus",
+      "cases": [
+        {
+          "void_v0": {
+            "doc": "The will has just been created and is waiting for the owner to confirm\\nit within the confirmation window (issue #43). No check-in clock runs\\nwhile a will is in this state.",
+            "name": "PendingConfirmation"
+          }
+        },
+        {
+          "void_v0": {
+            "doc": "The will is funded and the owner is checking in on schedule.",
+            "name": "Active"
+          }
+        },
+        {
+          "void_v0": {
+            "doc": "The owner missed a check-in deadline; the grace period is running.",
+            "name": "Triggered"
+          }
+        },
+        {
+          "void_v0": {
+            "doc": "The grace period expired (or guardians reached quorum) and funds were\\ndistributed to beneficiaries (lump sum or final vested claim).",
+            "name": "Released"
+          }
+        },
+        {
+          "void_v0": {
+            "doc": "The owner cancelled the will and withdrew the remaining balance.",
+            "name": "Cancelled"
+          }
+        },
+        {
+          "void_v0": {
+            "doc": "A Released will that has been explicitly closed/archived by the owner.",
+            "name": "Settled"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "A single beneficiary entry: an address and how much of the will's balance\\nit is entitled to receive when the inheritance is released.\\n\\nSee [`Allocation`] for how `allocation` is interpreted and validated.",
+      "lib": "",
+      "name": "Beneficiary",
+      "fields": [
+        {
+          "doc": "",
+          "name": "address",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "allocation",
+          "type": {
+            "udt": {
+              "name": "Allocation"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "A guardian definition used by the weighted-guardian API.",
+      "lib": "",
+      "name": "GuardianSpec",
+      "fields": [
+        {
+          "doc": "",
+          "name": "address",
+          "type": "address"
+        },
+        {
+          "doc": "",
+          "name": "weight",
+          "type": "u32"
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "Aggregate protocol statistics that can be queried directly on-chain.\\n\\n# Consistency invariant\\n\\nThese counters are maintained incrementally by every entry point that\\ncreates a will, moves funds in or out of one, or moves it into a terminal\\nstate. They are assumed to always equal what\\n[`WillContract::audit_protocol_stats`](crate::WillContract::audit_protocol_stats)\\nrecomputes from storage:\\n\\n- `active_will_count` == number of wills in `PendingConfirmation`,\\n`Active` or `Triggered` status.\\n- each `total_locked` == sum of that token's entry in `Will::balances`\\nacross those same wills.\\n\\n# Successful operations only\\n\\nThe stats reflect only *successful* state transitions. A Soroban\\ninvocation that fails (panics or returns a contract error) rolls back\\nevery storage write it made, so a failed operation cannot be counted\\non-chain. Failure rates must be measured off-chain from transaction\\nresults.",
+      "lib": "",
+      "name": "ProtocolStats",
+      "fields": [
+        {
+          "doc": "The number of wills that are still in a non-terminal state.",
+          "name": "active_will_count",
+          "type": "u64"
+        },
+        {
+          "doc": "Locked balances by token for all currently active wills.",
+          "name": "total_locked_by_token",
+          "type": {
+            "vec": {
+              "element_type": {
+                "udt": {
+                  "name": "TokenLockedBalance"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "udt_enum_v0": {
+      "doc": "Consent status for a named guardian.\\n\\nA guardian must explicitly accept before they can cast a `guardian_trigger`\\nvote. The owner may also reject a guardian's acceptance.",
+      "lib": "",
+      "name": "GuardianConsent",
+      "cases": [
+        {
+          "doc": "Guardian has been named but has not yet responded.",
+          "name": "Pending",
+          "value": 0
+        },
+        {
+          "doc": "Guardian has accepted the role and may vote.",
+          "name": "Accepted",
+          "value": 1
+        },
+        {
+          "doc": "Guardian has declined the role.",
+          "name": "Rejected",
+          "value": 2
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "A privacy-preserving beneficiary entry (issue #46).\\n\\nInstead of a raw address the owner stores a SHA-256 commitment hash of the\\npre-image `<address.to_xdr()> || <salt_bytes>`. At claim time the\\nbeneficiary calls `reveal_and_claim` with the pre-image. The contract checks\\nthat the pre-image's address prefix is the caller's own address, checks that\\nits hash matches the stored commitment, and pays out to that address\\n(issue #452).",
+      "lib": "",
+      "name": "HashedBeneficiary",
+      "fields": [
+        {
+          "doc": "Whether this hashed beneficiary has already been claimed.",
+          "name": "claimed",
+          "type": "bool"
+        },
+        {
+          "doc": "32-byte SHA-256 hash of the pre-image (XDR-encoded address concatenated\\nwith salt).",
+          "name": "commitment",
+          "type": "bytes"
+        },
+        {
+          "doc": "Percentage of the will's balance this beneficiary receives.",
+          "name": "percentage",
+          "type": "u32"
+        }
+      ]
+    }
+  },
+  {
+    "udt_enum_v0": {
+      "doc": "Reasons a guardian can provide when casting a trigger vote.",
+      "lib": "",
+      "name": "GuardianVoteReason",
+      "cases": [
+        {
+          "doc": "The owner is confirmed deceased.",
+          "name": "Deceased",
+          "value": 0
+        },
+        {
+          "doc": "The owner is incapacitated and unable to check in.",
+          "name": "Incapacitated",
+          "value": 1
+        },
+        {
+          "doc": "The owner cannot be reached or located.",
+          "name": "Unreachable",
+          "value": 2
+        },
+        {
+          "doc": "Any other reason not covered by the above.",
+          "name": "Other",
+          "value": 3
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "Result of comparing the incrementally-maintained [`ProtocolStats`] against\\na fresh recomputation from every will's stored balance (#441, #498).\\n\\nReturned by `WillContract::audit_protocol_stats`. `consistent` is the\\nsingle field most callers need; `stored`/`computed` are kept alongside it\\nso a caller who finds `consistent == false` can pinpoint exactly which\\ncounter (and, within `total_locked_by_token`, which token) drifted,\\nwithout a second call.",
+      "lib": "",
+      "name": "ProtocolStatsAudit",
+      "fields": [
+        {
+          "doc": "The stats freshly recomputed by scanning every will's stored balance\\n(see `storage::recompute_protocol_stats`) \\xe2\\x80\\x94 the ground truth this\\naudit checks `stored` against.",
+          "name": "computed",
+          "type": {
+            "udt": {
+              "name": "ProtocolStats"
+            }
+          }
+        },
+        {
+          "doc": "True when `stored` and `computed` agree on `active_will_count` and\\nevery token's `total_locked`.",
+          "name": "consistent",
+          "type": "bool"
+        },
+        {
+          "doc": "The stats currently persisted in instance storage, maintained\\nincrementally by every entry point that touches a will.",
+          "name": "stored",
+          "type": {
+            "udt": {
+              "name": "ProtocolStats"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "Aggregate protocol statistics that can be queried directly on-chain.",
+      "lib": "",
+      "name": "TokenLockedBalance",
+      "fields": [
+        {
+          "doc": "The token contract address.",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "doc": "The total amount of this token that is currently locked in active wills.",
+          "name": "total_locked",
+          "type": "i128"
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "A single entry in a will's on-chain audit trail, recording one status\\ntransition. The full history of a will can be reconstructed by reading\\nall entries in insertion order.",
+      "lib": "",
+      "name": "WillStatusTransition",
+      "fields": [
+        {
+          "doc": "A short label describing what caused the transition\\n(e.g. \"create\", \"checkin\", \"trigger\", \"release\").",
+          "name": "action",
+          "type": "symbol"
+        },
+        {
+          "doc": "The address that initiated the transition, or the contract address\\nfor transitions triggered by anyone (e.g. `trigger_will`,\\n`release_inheritance`).",
+          "name": "actor",
+          "type": "address"
+        },
+        {
+          "doc": "The status before the transition.",
+          "name": "from_status",
+          "type": {
+            "udt": {
+              "name": "WillStatus"
+            }
+          }
+        },
+        {
+          "doc": "Monotonically increasing sequence number, unique per will and\\nassigned in append order by `storage::append_history` (#500).\\n\\nUnlike an entry's position in the retained trail -- which shifts\\nwhenever `storage::MAX_HISTORY_ENTRIES` trims the oldest entry, so the\\nsame index can silently point at a different, newer entry over time --\\n`seq` never changes once assigned. A caller that stores a `seq` it has\\nalready seen can detect a gap (entries trimmed out from under it)\\ninstead of misreading a shifted position as unchanged, which is what\\nmade `check_in`/`emergency_checkin` history reads stale under\\n`paginate_history`'s positional cursor.",
+          "name": "seq",
+          "type": "u64"
+        },
+        {
+          "doc": "Unix timestamp (seconds) when the transition occurred (#668).\\nRecorded alongside `seq` so temporal ordering is unambiguous even when\\nmultiple transitions occur in rapid succession.",
+          "name": "timestamp",
+          "type": "u64"
+        },
+        {
+          "doc": "The status after the transition.",
+          "name": "to_status",
+          "type": {
+            "udt": {
+              "name": "WillStatus"
+            }
+          }
+        },
+        {
+          "doc": "The will this transition belongs to.",
+          "name": "will_id",
+          "type": "u64"
+        }
+      ]
+    }
+  },
+  {
+    "udt_error_enum_v0": {
+      "doc": "Errors returned by the SoroWill contract.\\n\\nEvery error variant is surfaced to callers as a `#[contracterror]` so that\\nSDK and client code can match on a stable numeric code instead of parsing\\npanic messages.",
+      "lib": "",
+      "name": "WillError",
+      "cases": [
+        {
+          "doc": "No will exists for the given identifier.",
+          "name": "WillNotFound",
+          "value": 1
+        },
+        {
+          "doc": "The caller is not the owner of the will.",
+          "name": "NotOwner",
+          "value": 2
+        },
+        {
+          "doc": "The requested action requires the will to be `Active`. Also returned by\\n`update_beneficiaries` while the will is `Triggered`: the beneficiary\\nlist is frozen during a grace period; call `emergency_checkin` first to\\nmake it editable again (#732).",
+          "name": "WillNotActive",
+          "value": 3
+        },
+        {
+          "doc": "The requested action requires the will to be `Triggered`.",
+          "name": "WillNotTriggered",
+          "value": 4
+        },
+        {
+          "doc": "`release_inheritance` was called before the grace period elapsed.",
+          "name": "GracePeriodNotExpired",
+          "value": 5
+        },
+        {
+          "doc": "`emergency_checkin` (or `guardian_cancel_trigger`) was called after the\\ngrace period already elapsed.",
+          "name": "GracePeriodExpired",
+          "value": 6
+        },
+        {
+          "doc": "Beneficiary percentages did not sum to exactly 10,000.",
+          "name": "InvalidPercentages",
+          "value": 7
+        },
+        {
+          "doc": "The guardian has already voted to trigger this will.",
+          "name": "AlreadyVoted",
+          "value": 8
+        },
+        {
+          "doc": "The caller is not a designated guardian of this will.",
+          "name": "NotGuardian",
+          "value": 9
+        },
+        {
+          "doc": "`trigger_will` was called before the check-in deadline passed.",
+          "name": "CheckinNotDue",
+          "value": 10
+        },
+        {
+          "doc": "An amount of zero (or less) was supplied where a positive amount is required.",
+          "name": "ZeroAmount",
+          "value": 11
+        },
+        {
+          "doc": "Too many beneficiaries (or guardians/tokens) were supplied, or the list\\nwas empty. A will may name at most `MAX_BENEFICIARIES` (10)\\nbeneficiaries; see the README FAQ for why the cap exists.\\nA list-length cap was exceeded. Raised by:\\n- a `beneficiaries` list that is empty or longer than\\n`MAX_BENEFICIARIES` \\xe2\\x80\\x94 `create_will`, `update_beneficiaries`,\\n`update_will_settings` and each `batch_create_wills` spec;\\n- a `renounce_beneficiary` call that would leave the will with no\\nbeneficiaries at all: the last remaining beneficiary cannot renounce,\\nbecause a will with an empty list would have nobody for\\n`release_inheritance` to pay (#361);\\n- a `guardians` list longer than `MAX_GUARDIANS` \\xe2\\x80\\x94 from\\n`assert_valid_guardians`, reached by every entry point that installs\\nor replaces a guardian list;\\n- a `batch_create_wills` spec list that is empty or longer than\\n`BATCH_MAX`.\\n\\nToken-list bounds are deliberately *not* reported here: an empty or\\nover-long `tokens` list raises [`WillError::InvalidTokenCount`] (#390).",
+          "name": "TooManyBeneficiaries",
+          "value": 12
+        },
+        {
+          "doc": "The requested action requires the will to be `Released` or `Cancelled`.",
+          "name": "WillNotSettled",
+          "value": 13
+        },
+        {
+          "doc": "The requested action requires the will to be `Released`.",
+          "name": "WillNotReleased",
+          "value": 23
+        },
+        {
+          "doc": "Cannot merge: both wills must be owned by the same address.",
+          "name": "NotSameOwner",
+          "value": 24
+        },
+        {
+          "doc": "Cannot merge: one or both wills are not in Active status.",
+          "name": "WillNotBothActive",
+          "value": 14
+        },
+        {
+          "doc": "Cannot merge: same will id provided for both wills.",
+          "name": "SameWillId",
+          "value": 15
+        },
+        {
+          "doc": "Cannot merge: merging would result in too many beneficiaries or guardians.",
+          "name": "MergeWouldExceedLimits",
+          "value": 16
+        },
+        {
+          "doc": "A check-in or grace period was zero, or long enough that the resulting\\ndeadline could not be represented as a ledger timestamp.",
+          "name": "InvalidPeriod",
+          "value": 25
+        },
+        {
+          "doc": "The same address was supplied more than once in a guardian list.",
+          "name": "DuplicateGuardian",
+          "value": 26
+        },
+        {
+          "doc": "The guardian-list cooldown has not yet elapsed; guardian_trigger is\\nblocked until the cooldown period passes after the last guardian-list\\nchange.",
+          "name": "GuardianCooldownActive",
+          "value": 27
+        },
+        {
+          "doc": "The owner cannot designate themselves as a guardian of their own will.",
+          "name": "OwnerCannotBeGuardian",
+          "value": 17
+        },
+        {
+          "doc": "A beneficiary is not found in the will's beneficiary list.",
+          "name": "BeneficiaryNotFound",
+          "value": 18
+        },
+        {
+          "doc": "Keeper bounty basis points exceed the maximum allowed (100 bps/1%).",
+          "name": "KeeperBountyExceedsMax",
+          "value": 19
+        },
+        {
+          "doc": "`guardian_threshold` lies outside the range the will's guardian list can\\nactually reach.\\n\\nQuorum in `guardian_trigger` / `guardian_cancel_trigger` is compared\\nagainst the **accumulated vote weight** of the consenting guardians, not\\nagainst a head count, so the reachable maximum depends on how the list\\nwas installed:\\n- unweighted lists \\xe2\\x80\\x94 `create_will`, `update_guardians` and\\n`update_will_settings` give every guardian weight 1, so the valid\\nrange is `1..=guardians.len()`;\\n- weighted lists \\xe2\\x80\\x94 `update_guardians_weighted` validates against\\n`1..=sum(guardian weights)`.\\n\\nA threshold of 0, or one above the reachable maximum, is rejected there.\\n`update_guardians_weighted` also raises it for any `GuardianSpec` whose\\n`weight` is `0`: zero weights are rejected, not normalised to `1` (#489).\\nThe same error is also raised when *shrinking* a non-empty guardian list\\nwould leave the will's already-stored `guardian_threshold`\\npermanently unreachable, and when `update_guardians_weighted` is called\\nwithout a threshold on a li",
+          "name": "InvalidGuardianThreshold",
+          "value": 20
+        },
+        {
+          "doc": "The sum of every `Allocation::FixedAmount` entry on a will exceeds the\\nwill's **primary-token** balance (`Will::token`, the first entry of the\\n`tokens` list). Secondary tokens are not drawn on to satisfy a fixed\\namount, so they never contribute to this check (#384).\\n\\n`assert_valid_allocations` rejects only that over-commitment. A will\\nwhose `FixedAmount` entries do *not* exactly account for the whole\\nprimary-token balance is deliberately allowed: the unallocated headroom\\nis what a later `add_hashed_beneficiary` call reserves for a\\nnot-yet-disclosed beneficiary (#181/#186), and if none is ever added the\\nleftover is refunded to the owner at release time\\n(`events::leftover_refunded`, #383) rather than stranded in the\\ncontract. Every `Percentage` share, by contrast, must still sum to\\nexactly 10,000 basis points, or `InvalidPercentages` is raised.",
+          "name": "FixedAmountExceedsBalance",
+          "value": 21
+        },
+        {
+          "doc": "A supplied token address does not respond to a read-only `decimals()`\\nprobe, indicating it is not a valid SEP-41 token.",
+          "name": "InvalidToken",
+          "value": 28
+        },
+        {
+          "doc": "The same beneficiary address was supplied more than once.",
+          "name": "DuplicateBeneficiary",
+          "value": 29
+        },
+        {
+          "doc": "`confirm_will` was called on a will that is not `PendingConfirmation`.",
+          "name": "WillNotConfirmed",
+          "value": 30
+        },
+        {
+          "doc": "`confirm_will` was called after the confirmation deadline elapsed.",
+          "name": "ConfirmationWindowExpired",
+          "value": 31
+        },
+        {
+          "doc": "`get_wills` was called with more ids than `MAX_GET_WILLS_IDS`.",
+          "name": "TooManyIds",
+          "value": 32
+        },
+        {
+          "doc": "`split_will` was asked to move more of a token than the will\\ncurrently holds of it.",
+          "name": "InsufficientBalance",
+          "value": 33
+        },
+        {
+          "doc": "`split_will` was called with an empty beneficiary-to-split list, or a\\nsplit that would leave the source or new will with an invalid state.",
+          "name": "InvalidSplit",
+          "value": 34
+        },
+        {
+          "doc": "`reveal_and_claim` was called with a pre-image that does not match any\\nstored `HashedBeneficiary` commitment on the will.",
+          "name": "InvalidPreimage",
+          "value": 35
+        },
+        {
+          "doc": "`reveal_and_claim` was called for a hashed beneficiary slot that has\\nalready been claimed.",
+          "name": "AlreadyClaimed",
+          "value": 36
+        },
+        {
+          "doc": "An owner or beneficiary index list is already at\\n`MAX_WILLS_PER_INDEX` and cannot accept another will id.",
+          "name": "TooManyWills",
+          "value": 37
+        },
+        {
+          "doc": "A guardian has not accepted their role and cannot vote.",
+          "name": "GuardianNotConsented",
+          "value": 38
+        },
+        {
+          "doc": "`distribute` computed per-beneficiary shares that do not add up to\\nthe will's balance for some token. Aborts the release rather than\\nsilently leaving (or over-paying) funds in the contract (#456).",
+          "name": "DistributionMismatch",
+          "value": 39
+        },
+        {
+          "doc": "A stored will could not be decoded as the current `Will` layout or any\\nknown legacy layout (see `migration.rs`).\\n\\n#751 \\xe2\\x80\\x94 previously also `= 39`, colliding with `DistributionMismatch`:\\na hard compile error (duplicate discriminant), found while fixing\\nunrelated issues in this same file and corrected alongside them since\\nnothing else in this repo could compile until it was.",
+          "name": "UnsupportedSchemaVersion",
+          "value": 51
+        },
+        {
+          "doc": "Cannot merge: the two wills' primary tokens differ, so summing their\\nlegacy `balance` fields would be nonsensical.\\n\\n#751 \\xe2\\x80\\x94 previously also `= 39`; see `UnsupportedSchemaVersion` above.",
+          "name": "PrimaryTokenMismatch",
+          "value": 52
+        },
+        {
+          "doc": "The same token address was supplied more than once in a `tokens`\\nlist. `create_will` documents each token address as unique, and a\\nduplicated entry would make the legacy `balance` mirror disagree with\\nthe accumulated `balances` map (#350).",
+          "name": "DuplicateToken",
+          "value": 40
+        },
+        {
+          "doc": "A `batch_check_in` call supplied more will ids than\\n`batch_check_in_limit::MAX_BATCH_CHECK_IN` (50).",
+          "name": "BatchTooLarge",
+          "value": 41
+        },
+        {
+          "doc": "The `tokens` list supplied to `create_will`, `clone_will`, `split_will`\\nor `batch_create_wills` was empty, or held more than `MAX_TOKENS`\\nentries (#390). Also raised by `top_up` when the token being topped up\\nis not already in the will's `balances` map and that map already holds\\n`MAX_TOKENS` distinct tokens, since each new entry is another storage\\nread on every release or refund (#358); topping up a token the will\\nalready holds stays allowed at the cap.",
+          "name": "InvalidTokenCount",
+          "value": 42
+        },
+        {
+          "doc": "`reveal_and_claim` was called with a pre-image that is not exactly\\n`SHA256_DIGEST_LEN` bytes. A shorter or longer pre-image could never\\nhash to a stored 32-byte commitment, so it is rejected before the\\ndigest is computed (#370).",
+          "name": "InvalidPreimageLength",
+          "value": 43
+        },
+        {
+          "doc": "A hashed-beneficiary commitment was not exactly `SHA256_DIGEST_LEN`\\nbytes and therefore could never be matched by a pre-image (#371).",
+          "name": "InvalidCommitmentLength",
+          "value": 44
+        },
+        {
+          "doc": "The same commitment hash is already registered on this will, making\\nthe second slot unreachable by `reveal_and_claim` (#371).",
+          "name": "DuplicateCommitment",
+          "value": 45
+        },
+        {
+          "doc": "`reveal_and_claim` was called with a pre-image whose first 32 bytes are\\nnot a valid Soroban address, or that decode to an address other than\\n`claimant`. The pre-image is public (it sits in the transaction\\narguments, in simulation results, and in the mempool), so without this\\nbinding any third party who observes it could replay it with their own\\naddress as `claimant` and take the reserved share before the real\\nbeneficiary does (#369).",
+          "name": "PreimageAddressMismatch",
+          "value": 46
+        },
+        {
+          "doc": "`merge_wills` was called while either will still carried hashed\\nbeneficiaries that had not revealed. `merge_beneficiaries` only merges\\n*visible* beneficiaries, so the consumed will's commitments and their\\ncommitted percentages would be dropped while its balance moved to the\\nsurvivor \\xe2\\x80\\x94 silently stranding those beneficiaries' claim (#380).",
+          "name": "MergeWithHashedBeneficiaries",
+          "value": 47
+        },
+        {
+          "doc": "A `batch_check_in` `will_ids` list named the same will more than once,\\nso one will would otherwise be processed \\xe2\\x80\\x94 and emit a redundant\\n`check_in` event \\xe2\\x80\\x94 up to `MAX_BATCH_CHECK_IN` times in a single call,\\nmaking the reported count meaningless (#355).",
+          "name": "DuplicateWillId",
+          "value": 48
+        },
+        {
+          "doc": "`accept_guardian_role` was called by a guardian who had already\\n`Rejected` the role. `Rejected` is terminal for a guardian entry: they\\ncan only be asked again if the owner re-appoints them through\\n`update_guardians` / `update_guardians_weighted`, which resets the list\\nto `Pending` (#374).",
+          "name": "InvalidConsentTransition",
+          "value": 49
+        },
+        {
+          "doc": "`retry_failed_payout` was called for a `(will_id, token, recipient)`\\ntuple with no recorded failed payout \\xe2\\x80\\x94 either it was never recorded,\\nit was already retried successfully, or the arguments do not match any\\npayout `distribute` attempted (#459).",
+          "name": "NoFailedPayout",
+          "value": 50
+        },
+        {
+          "doc": "`update_guardians`, `update_guardians_weighted` or the guardian branch\\nof `update_will_settings` was called while guardian-cancel votes were\\nstill recorded against the current guardian list. Replacing the list\\nwould wipe those votes and let a fresh trigger bypass a cancel that was\\naccumulating against it, so the update is refused (#488).",
+          "name": "GuardianCancelInProgress",
+          "value": 53
+        },
+        {
+          "doc": "A schema migration produced a will that violates a structural\\ninvariant (the version did not advance by exactly one step, a\\n`Triggered` will has no `trigger_time`, a vote tally exceeds the\\nguardian list, or the list caps / percentage total are exceeded), so\\nthe migrated state is rejected instead of being persisted (#596).",
+          "name": "MigrationInvariantViolation",
+          "value": 54
+        },
+        {
+          "doc": "`distribute` was asked to pay out more transfers than the\\n`MAX_RELEASE_PAYOUTS` budget (beneficiaries x tokens) allows, so the\\nrelease is rejected up front instead of running out of Soroban\\ntransaction resources partway through the payout loop (#597).",
+          "name": "DistributionTooLarge",
+          "value": 55
+        },
+        {
+          "doc": "A pagination cursor string was malformed and could not be decoded into\\na valid cursor. Cursors are opaque, contract-produced values; a caller\\nthat supplies a truncated, corrupted or otherwise ill-formed string is\\nrejected with this error instead of being parsed, so a bad cursor can\\nnever reach the pagination logic and cause a panic (#655).",
+          "name": "InvalidCursor",
+          "value": 56
+        },
+        {
+          "doc": "`merge_wills` was called with a will that is already `Released` (or\\notherwise not `Active`). Merging a released will into an active one\\nwould let the distribution logic process the same beneficiary twice,\\nso both wills must be `Active` before a merge is accepted (#656).",
+          "name": "MergeWithReleasedWill",
+          "value": 57
+        },
+        {
+          "doc": "A beneficiary (or hashed-beneficiary claimant) address is invalid for\\nreceiving payouts \\xe2\\x80\\x94 for example, the contract's own address, which would\\nlock distributed funds inside the contract with no withdrawal path (#711).",
+          "name": "InvalidBeneficiaryAddress",
+          "value": 58
+        },
+        {
+          "doc": "Guardian weights exceed the tally range.",
+          "name": "GuardianWeightOverflow",
+          "value": 59
+        },
+        {
+          "doc": "A release is already in progress for this will.",
+          "name": "ReleaseInProgress",
+          "value": 60
+        },
+        {
+          "doc": "The amount would exceed the maximum will balance.",
+          "name": "BalanceExceedsMax",
+          "value": 61
+        },
+        {
+          "doc": "The will has already released its inheritance.",
+          "name": "AlreadyReleased",
+          "value": 62
+        },
+        {
+          "doc": "The guardian cooldown cannot be reduced.",
+          "name": "GuardianCooldownCannotDecrease",
+          "value": 63
+        },
+        {
+          "doc": "The beneficiary preimage salt is all zeros.",
+          "name": "WeakPreimageSalt",
+          "value": 64
+        },
+        {
+          "doc": "The owner cannot name themselves as a beneficiary.",
+          "name": "OwnerCannotBeBeneficiary",
+          "value": 65
+        },
+        {
+          "doc": "The ledger timestamp precedes the last check-in.",
+          "name": "InvalidTimestamp",
+          "value": 66
+        },
+        {
+          "doc": "The token contract rejected a required transfer.",
+          "name": "TokenTransferFailed",
+          "value": 67
+        }
+      ]
+    }
+  },
+  {
+    "udt_struct_v0": {
+      "doc": "The data stored for each guardian vote: the Unix timestamp when the vote\\nwas cast and the reason code the guardian provided.",
+      "lib": "",
+      "name": "GuardianVoteRecord",
+      "fields": [
+        {
+          "doc": "",
+          "name": "reason",
+          "type": {
+            "udt": {
+              "name": "GuardianVoteReason"
+            }
+          }
+        },
+        {
+          "doc": "",
+          "name": "timestamp",
+          "type": "u64"
+        }
+      ]
+    }
+  }
+]

@@ -82,6 +82,8 @@ mod events;
 mod migration;
 mod guardian_vote_freshness;
 mod split_uniqueness_check;
+mod action_log;
+pub use action_log::{ActionLogScope, EmergencyAction, EmergencyActionRecord};
 mod storage;
 mod release_lock;
 mod types;
@@ -475,14 +477,14 @@ pub use types::{
 /// so that SDKs and apps can detect version mismatches at runtime via
 /// [`WillContract::get_contract_version`].
 ///
-/// Current value: **1.3.2** → `1_003_002`. 1.1.0 made `get_triggered_wills`
+/// Current value: **1.4.0** → `1_004_000`. 1.1.0 made `get_triggered_wills`
 /// take a `(cursor, limit)` page instead of returning the whole index (#368);
 /// 1.2.0 bound `reveal_and_claim` to the address in the pre-image (#369);
 /// 1.3.0 added `WillStatusTransition::seq` and made `check_in`/
 /// `batch_check_in` append audit-trail entries (#500);
 /// 1.3.2 added a contract-address guard to the keeper-bounty eligibility
 /// check in `distribute` (#662).
-pub const CONTRACT_VERSION: u32 = 1_003_002;
+pub const CONTRACT_VERSION: u32 = 1_004_000;
 
 /// Number of seconds in a day, used to convert the day-denominated periods
 /// stored on a `Will` into absolute ledger timestamps.
@@ -653,7 +655,7 @@ soroban_sdk::contractmeta!(
 );
 // Kept in sync with CONTRACT_VERSION's semver-decoded form by
 // issue_272_test.rs; bump both together.
-soroban_sdk::contractmeta!(key = "Version", val = "1.3.2");
+soroban_sdk::contractmeta!(key = "Version", val = "1.4.0");
 soroban_sdk::contractmeta!(
     key = "Homepage",
     val = "https://github.com/SoroWill/sorowill-contracts"
@@ -948,6 +950,7 @@ impl WillContract {
             is_native: false,
             balance: primary_amount,
             beneficiaries,
+            triggered_beneficiaries: None,
             hashed_beneficiaries: Vec::new(&env),
             checkin_period_days,
             grace_period_days,
@@ -1358,6 +1361,7 @@ impl WillContract {
         // delayed trigger can neither postpone nor accelerate the release.
         will.status = WillStatus::Triggered;
         will.trigger_time = Some(deadline);
+        will.triggered_beneficiaries = Some(will.beneficiaries.clone());
         let grace_period_ends = grace_deadline(&env, &will);
         storage::save_will(&env, &will);
 
@@ -1411,7 +1415,7 @@ impl WillContract {
 
         // #751 — this used to also bind a local `grace_deadline` via
         // `grace_period_end(&env, &will)`, which shadowed the `grace_deadline`
-        // function below and made `grace_deadline(&will)` a call on a `u64`
+        // function below and made `grace_deadline(&env, &will)` a call on a `u64`
         // (a compile error). `grace_deadline()` is the one shared helper every
         // other grace-period check (release_inheritance, reveal_and_claim,
         // get_time_until_deadline) already goes through, per its own doc
@@ -1426,7 +1430,7 @@ impl WillContract {
         if now < trigger_time {
             panic_with_error!(&env, WillError::CheckinNotDue);
         }
-        if now > grace_deadline(&will) {
+        if now > grace_deadline(&env, &will) {
             panic_with_error!(&env, WillError::GracePeriodExpired);
         }
         assert_timestamp_progression(&env, &will, now);
@@ -1438,6 +1442,7 @@ impl WillContract {
 
         will.status = WillStatus::Active;
         will.trigger_time = None;
+        will.triggered_beneficiaries = None;
         will.last_checkin = now;
         will.guardian_vote_weight = 0;
         will.guardian_votes = 0;
@@ -1459,6 +1464,12 @@ impl WillContract {
         );
 
         let next_deadline = now + will.checkin_period_days * SECONDS_PER_DAY;
+        action_log::append(
+            &env,
+            ActionLogScope::Will(will_id),
+            EmergencyAction::OwnerCheckIn,
+            Some(owner.clone()),
+        );
         events::emergency_checkin(&env, will_id, &owner, next_deadline, now);
     }
 
@@ -1586,22 +1597,6 @@ impl WillContract {
             symbol_short!("release"),
         );
 
-        // Release the protocol's locked-value total for *every* token the will
-        // held, not just the primary-token mirror. `distribute` pays the
-        // balances out to beneficiaries, so without this the totals stay
-        // inflated at their pre-release value forever — the same class of bug
-        // #353 fixed for `cancel_will`, which was the only other terminal path
-        // that moved value out of a will.
-        //
-        // `cancel_will` does the mirror of this: it decrements before mutating
-        // the will, keeping the changes-then-interactions ordering, because
-        // `distribute` performs the token transfers below.
-        for (token_addr, balance) in will.balances.iter() {
-            if balance > 0 {
-                storage::adjust_locked_value(&env, &token_addr, -balance);
-            }
-        }
-
         // Re-validate status and size immediately before any funds move
         // (#490, #491). See `assert_release_preconditions`.
         assert_release_preconditions(&env, will_id, &will);
@@ -1653,6 +1648,12 @@ impl WillContract {
         );
 
         storage::remove_failed_payout(&env, will_id, &token, &recipient);
+        action_log::append(
+            &env,
+            ActionLogScope::Will(will_id),
+            EmergencyAction::RetryPayout,
+            None,
+        );
         events::payout_retried(&env, will_id, &token, &recipient, amount);
     }
 
@@ -1703,16 +1704,6 @@ impl WillContract {
         // --- EFFECTS: mutate state and persist before any external calls ---
         storage::decrement_active_will_count(&env);
         storage::adjust_locked_for_balances(&env, &balances_snapshot, -1);
-        // Decrement the protocol locked-value total for *every* token the will
-        // held, not just the primary-token mirror, so a multi-token
-        // cancellation does not leave the other tokens' totals permanently
-        // inflated (#353).
-        for (token_addr, balance) in balances_snapshot.iter() {
-            if balance > 0 {
-                storage::adjust_locked_value(&env, &token_addr, -balance);
-            }
-        }
-
         will.balance = 0;
         will.balances = Map::new(&env);
         will.status = WillStatus::Cancelled;
@@ -1872,7 +1863,7 @@ impl WillContract {
         will.guardian_cancel_votes = 0;
         will.guardian_cancel_vote_weight = 0;
 
-        will.beneficiaries = beneficiaries;
+        let old_beneficiaries = core::mem::replace(&mut will.beneficiaries, beneficiaries);
         storage::save_will_guardians_unchanged(&env, &will);
 
         events::beneficiaries_updated(
@@ -2686,7 +2677,10 @@ impl WillContract {
                 panic_with_error!(&env, WillError::InvalidPeriod);
             }
         }
-        storage::set_guardian_vote_expiry(&env, will_id, days);
+        match days {
+            Some(days) => storage::set_guardian_vote_expiry_days(&env, will_id, days),
+            None => storage::clear_guardian_vote_expiry_days(&env, will_id),
+        }
     }
 
     /// Returns the guardian vote-expiry window, in days, currently in effect
@@ -2710,7 +2704,7 @@ impl WillContract {
     /// ```
     pub fn get_guardian_vote_expiry(env: Env, will_id: u64) -> u64 {
         let will = load_will(&env, will_id);
-        storage::guardian_vote_expiry_days(&env, &will)
+        storage::get_guardian_vote_expiry_days(&env, &will)
     }
 
     /// Adds `amount` of a specific `token` to an existing will's locked
@@ -2762,7 +2756,7 @@ impl WillContract {
         match will.status {
             WillStatus::Active => {}
             WillStatus::Triggered => {
-                if env.ledger().timestamp() > grace_deadline(&will) {
+                if env.ledger().timestamp() > grace_deadline(&env, &will) {
                     panic_with_error!(&env, WillError::GracePeriodExpired);
                 }
             }
@@ -3018,29 +3012,6 @@ impl WillContract {
         }
     }
 
-    /// Configures a custom guardian vote expiry window (in days) for `will_id` (#692).
-    pub fn set_guardian_vote_expiry(
-        env: Env,
-        will_id: u64,
-        owner: Address,
-        expiry_days: u64,
-    ) {
-        owner.require_auth();
-        let will = load_owned(&env, will_id, &owner);
-        assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
-        if !(1..=MAX_PERIOD_DAYS).contains(&expiry_days) {
-            panic_with_error!(&env, WillError::InvalidPeriod);
-        }
-        storage::set_guardian_vote_expiry_days(&env, will_id, expiry_days);
-    }
-
-    /// Returns the guardian vote expiry window (in days) for `will_id` (#692).
-    /// Defaults to `will.grace_period_days` if no custom window has been set.
-    pub fn get_guardian_vote_expiry(env: Env, will_id: u64) -> u64 {
-        let will = load_will(&env, will_id);
-        storage::get_guardian_vote_expiry_days(&env, &will)
-    }
-
     /// Returns aggregate protocol statistics for all wills currently tracked on-chain.
     ///
     /// The counters are maintained incrementally and reflect only successful
@@ -3114,6 +3085,12 @@ impl WillContract {
             total_locked_by_token,
         };
         storage::save_protocol_stats(&env, &repaired);
+        action_log::append(
+            &env,
+            ActionLogScope::Protocol,
+            EmergencyAction::RepairProtocolStats,
+            None,
+        );
         repaired
     }
 
@@ -3193,13 +3170,21 @@ impl WillContract {
         cursor: Option<u64>,
         limit: u32,
     ) -> Vec<Will> {
-        // The owner's id list is read once and paged in memory. The page is capped
-        // at `MAX_PAGE_SIZE`, so one call's response stays bounded however many
-        // wills the owner holds (#644).
+        // Owner indexes add only newly allocated IDs and preserve their order
+        // on removal. Seek to the exclusive cursor before reading the page.
         let ids = storage::get_owner_wills(&env, &owner);
-        let page = storage::paginate_ids(&env, &ids, cursor, limit);
+        let start = match cursor {
+            Some(id) => match ids.binary_search(id) {
+                Ok(index) => index + 1,
+                Err(index) => index,
+            },
+            None => 0,
+        };
+        let end = start
+            .saturating_add(limit.min(storage::MAX_PAGE_SIZE))
+            .min(ids.len());
         let mut wills = Vec::new(&env);
-        for id in page.iter() {
+        for id in ids.slice(start..end) {
             wills.push_back(match storage::load_will(&env, id) {
                 Ok(will) => will,
                 Err(e) => panic_with_error!(&env, e),
@@ -3649,6 +3634,12 @@ impl WillContract {
         // Events are part of this invocation: if the release below fails, the
         // host discards this event along with the state (see
         // docs/EVENT_ATOMICITY.md, #594).
+        action_log::append(
+            &env,
+            ActionLogScope::Will(will_id),
+            EmergencyAction::GuardianTriggerVote,
+            Some(guardian.clone()),
+        );
         events::guardian_voted(&env, will_id, &guardian, weight, will.guardian_vote_weight);
 
         if (will.guardian_vote_weight as u64) >= (will.guardian_threshold as u64)
@@ -3768,6 +3759,12 @@ impl WillContract {
         will.guardian_cancel_vote_weight = vote_weight;
         storage::save_will_guardians_unchanged(&env, &will);
 
+        action_log::append(
+            &env,
+            ActionLogScope::Will(will_id),
+            EmergencyAction::GuardianCancelVote,
+            Some(guardian.clone()),
+        );
         events::guardian_cancel_voted(
             &env,
             will_id,
@@ -3953,7 +3950,7 @@ impl WillContract {
         // Withdraw any vote the guardian had already cast in this cycle, so a
         // rejected guardian stops contributing weight toward quorum (#374).
         let weight = g_weight(&will, &guardian);
-        let expiry_days = storage::guardian_vote_expiry_days(&env, &will);
+        let expiry_days = storage::get_guardian_vote_expiry_days(&env, &will);
         if storage::has_guardian_voted(&env, will_id, &guardian, now, expiry_days) {
             storage::clear_guardian_vote(&env, will_id, &guardian);
             will.guardian_vote_weight = will.guardian_vote_weight.saturating_sub(weight);
@@ -4068,7 +4065,7 @@ impl WillContract {
             token::Client::new(&env, &token_addr).transfer(
                 &owner,
                 &env.current_contract_address(),
-                amount,
+                &amount,
             );
             let prev = balances.get(token_addr.clone()).unwrap_or(0);
             balances.set(token_addr, checked_balance_add(&env, prev, amount));
@@ -4327,7 +4324,7 @@ impl WillContract {
                 token::Client::new(&env, &token_addr).transfer(
                     &owner,
                     &env.current_contract_address(),
-                    amount,
+                    &amount,
                 );
                 let prev = balances.get(token_addr.clone()).unwrap_or(0);
                 balances.set(token_addr, checked_balance_add(&env, prev, amount));
@@ -4370,6 +4367,7 @@ impl WillContract {
                 is_native: false,
                 balance: primary_amount,
                 beneficiaries,
+                triggered_beneficiaries: None,
                 hashed_beneficiaries: Vec::new(&env),
                 checkin_period_days,
                 grace_period_days,
@@ -4476,6 +4474,12 @@ impl WillContract {
         will = migration::upgrade(&env, will);
 
         storage::save_will(&env, &will);
+        action_log::append(
+            &env,
+            ActionLogScope::Will(will_id),
+            EmergencyAction::MigrateWill,
+            Some(owner.clone()),
+        );
         events::will_migrated(&env, will_id, &owner, old_version, CURRENT_SCHEMA_VERSION);
     }
 
@@ -4877,75 +4881,18 @@ impl WillContract {
         storage::paginate_history(&env, will_id, cursor, limit)
     }
 
-    /// Returns a page of wills owned by `owner`, optionally filtered by
-    /// `status`, using an opaque cursor for pagination.
+    /// Reads up to 50 immutable action records, oldest first. Pass the last
+    /// returned sequence as the exclusive cursor for the next page.
     ///
-    /// # Cursor validation
-    ///
-    /// The `cursor` argument is validated before it is parsed (#655). A
-    /// malformed cursor — one that is not a well-formed, non-negative decimal
-    /// offset — is rejected with [`WillError::InvalidCursor`] rather than
-    /// being parsed leniently and panicking. Pass `None` to start a walk.
-    ///
-    /// # Panics
-    /// - [`WillError::InvalidCursor`] if `cursor` is not well-formed.
-    ///
-    /// # Parameters
-    /// - `owner`: the address to query.
-    /// - `status`: only return wills in this status, or `None` for all statuses.
-    /// - `cursor`: an opaque cursor from a previous page, or `None` to start from the beginning.
-    /// - `limit`: the maximum number of ids to return.
-    ///
-    /// # Returns
-    /// A page of will ids owned by `owner`.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let ids = client.get_wills_by_owner(&owner, &None, &None, &20);
-    /// ```
-    pub fn get_wills_by_owner(
+    /// Records survive will archival. Ledger entries archived by Stellar may
+    /// require restoration before they can be read.
+    pub fn get_emergency_actions(
         env: Env,
-        owner: Address,
-        status: Option<WillStatus>,
-        cursor: Option<u32>,
+        scope: ActionLogScope,
+        after: Option<u64>,
         limit: u32,
-    ) -> Vec<u64> {
-        validate_cursor(&env, &cursor);
-        storage::paginate_ids(&env, &owner, status, cursor, limit)
-    }
-
-    /// Returns a page of wills naming `beneficiary`, using an opaque cursor
-    /// for pagination.
-    ///
-    /// # Cursor validation
-    ///
-    /// As with [`WillContract::get_wills_by_owner`], the `cursor` is validated
-    /// before parsing and a malformed value is rejected with
-    /// [`WillError::InvalidCursor`] (#655).
-    ///
-    /// # Panics
-    /// - [`WillError::InvalidCursor`] if `cursor` is not well-formed.
-    ///
-    /// # Parameters
-    /// - `beneficiary`: the address to query.
-    /// - `cursor`: an opaque cursor from a previous page, or `None` to start from the beginning.
-    /// - `limit`: the maximum number of ids to return.
-    ///
-    /// # Returns
-    /// A page of will ids that name `beneficiary`.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let ids = client.get_wills_by_beneficiary(&beneficiary, &None, &20);
-    /// ```
-    pub fn get_wills_by_beneficiary(
-        env: Env,
-        beneficiary: Address,
-        cursor: Option<u32>,
-        limit: u32,
-    ) -> Vec<u64> {
-        validate_cursor(&env, &cursor);
-        storage::paginate_ids_by_beneficiary(&env, &beneficiary, cursor, limit)
+    ) -> Vec<EmergencyActionRecord> {
+        action_log::page(&env, scope, after, limit)
     }
 
     /// Archives a Released or Cancelled will, removing it from active
@@ -5053,6 +5000,12 @@ impl WillContract {
         };
         storage::archive_will(&env, &will);
 
+        action_log::append(
+            &env,
+            ActionLogScope::Will(will_id),
+            EmergencyAction::ArchiveWill,
+            None,
+        );
         events::will_archived(
             &env,
             will_id,
@@ -5273,6 +5226,7 @@ impl WillContract {
             is_native: false,
             balance: primary_amount,
             beneficiaries: normalised_split.clone(),
+            triggered_beneficiaries: None,
             hashed_beneficiaries: Vec::new(&env),
             checkin_period_days: source.checkin_period_days,
             grace_period_days: source.grace_period_days,
@@ -5295,7 +5249,6 @@ impl WillContract {
         storage::index_by_owner(&env, &source.owner, new_id);
         // The child is a new live will. Its balance moved out of the source,
         // so the locked totals are unchanged.
-        storage::increment_active_will_count(&env);
         storage::increment_active_will_count(&env);
 
         // Seed the child's audit trail with the same `create` transition
@@ -5516,7 +5469,7 @@ impl WillContract {
         // grace-period error, not the generic status error, so the caller can
         // tell "wait for grace to end" apart from "not released yet" (#722).
         if will.status == WillStatus::Triggered
-            && !grace_boundary::grace_elapsed(env.ledger().timestamp(), grace_deadline(&will))
+            && !grace_boundary::grace_elapsed(env.ledger().timestamp(), grace_deadline(&env, &will))
         {
             panic_with_error!(&env, WillError::GracePeriodNotExpired);
         }
@@ -6560,8 +6513,6 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     // The bounty is at most `MAX_KEEPER_BOUNTY_BPS` (1%) of one token's balance and
     // is taken out of that balance before the beneficiary split, so it can never
     // exceed the balance it is paid from (#653).
-    let mut bounty_amount: i128 = 0;
-    let mut bounty_computed = false;
     // A keeper bounty is due only to a caller other than the owner, and the
     // keeper must not be the contract itself — a transfer to the contract
     // address would be circular and would lock the bounty amount in the
@@ -6640,26 +6591,11 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
             continue;
         }
 
-        // Calculate bounty from first token's balance if applicable. The
-        // bounty is carved out of this token's balance *before* beneficiary
-        // shares are computed; paying it on top of a full distribution would
-        // spend funds belonging to other wills held by this contract (#458).
-        let mut token_bounty: i128 = 0;
-        if should_pay_bounty && !bounty_computed {
-            bounty_computed = true;
-            bounty_amount = bounty_rounding::keeper_bounty(total, will.keeper_bounty_bps);
-            token_bounty = bounty_amount;
-        }
-
-        // Deduct the keeper bounty only from the token it was computed from.
-        // Comparing the address (rather than relying on iteration position)
-        // keeps the deduction and the payout tied to the same token (#378).
-        let mut available = total;
-        if let Some((bounty_addr, bounty_amount)) = &bounty_token {
-            if bounty_addr == &token_addr {
-                available = (total - bounty_amount).max(0);
-            }
-        }
+        let token_bounty = bounty_token
+            .as_ref()
+            .filter(|(address, _)| address == &token_addr)
+            .map_or(0, |(_, amount)| *amount);
+        let mut available = total - token_bounty;
 
         if hashed_bps > 0 {
             let hashed_reserve = proportional_share(available, hashed_bps);
@@ -6709,14 +6645,13 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
                 } else {
                     // Never round a non-final share below one unit while the
                     // balance can still cover every later beneficiary (#599).
-                    let portion = distribute_limits::min_one_unit_share(
+                    distribute_limits::min_one_unit_share(
                         proportional_share(remaining, bp),
                         percentage_remaining,
                         percentage_count - percentage_index,
-                    );
-                    percentage_remaining -= portion;
-                    portion
+                    )
                 };
+                percentage_remaining -= share;
                 if beneficiary.address == contract_address {
                     owner_refund += share;
                 } else {
@@ -6725,13 +6660,8 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
             }
         }
 
-        // A will with only `FixedAmount` beneficiaries has no percentage
-        // beneficiary to absorb the leftover (e.g. after a `top_up`). Give it
-        // to the final beneficiary instead of leaving it stranded in the
-        // contract once the balances map is cleared (#456).
-        // Any dust or leftover remainder after payouts is refunded to the
-        // owner at the end so funds are neither stranded nor distorted.
-        let total_refund = remaining.saturating_add(owner_refund);
+        // Refund unallocated funds and any shares addressed to the contract.
+        let total_refund = percentage_remaining + owner_refund;
         if total_refund > 0 {
             refund_plan.push_back((token_addr.clone(), total_refund));
         }
@@ -6739,7 +6669,7 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
         // Conservation check (#456): the planned payouts and refund for this token must
         // account for exactly its balance. Anything else means funds would be
         // silently lost in, or over-drawn from, the contract.
-        let mut planned: i128 = token_bounty;
+        let mut planned = token_bounty + hashed_reserves.get(token_addr.clone()).unwrap_or(0);
         for (_, share) in shares.iter() {
             if share < 0 {
                 panic_with_error!(env, WillError::DistributionMismatch);
@@ -7192,29 +7122,6 @@ fn purge_removed_guardian_votes(
         tally_guardian_votes(env, will, now, storage::has_guardian_cancel_voted);
     will.guardian_cancel_votes = cancel_votes;
     will.guardian_cancel_vote_weight = cancel_weight;
-}
-
-/// Validates a pagination cursor before it is handed to the storage layer
-/// (#655).
-///
-/// Cursors in this contract are positional offsets encoded as a `u32`. The
-/// type system already rules out negative or non-numeric values, but a cursor
-/// can still be malformed in ways that would make the pagination logic panic
-/// if it were trusted blindly — most notably an offset that cannot be
-/// represented as a valid index (`u32::MAX`, which would overflow when the
-/// page length is added to it). This helper rejects such values up front with
-/// a typed [`WillError::InvalidCursor`] error instead of letting the storage
-/// layer unwrap or overflow.
-///
-/// `None` is always valid: it means "start from the beginning".
-fn validate_cursor(env: &Env, cursor: &Option<u32>) {
-    if let Some(offset) = cursor {
-        // A cursor at or beyond `u32::MAX` cannot be advanced by a page
-        // length without overflowing, so it is not a well-formed offset.
-        if *offset == u32::MAX {
-            panic_with_error!(env, WillError::InvalidCursor);
-        }
-    }
 }
 
 /// Records a status transition in `will_id`'s on-chain audit trail.
