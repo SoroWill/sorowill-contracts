@@ -417,14 +417,8 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 <!-- handsoff-issue-438 -->
 - #438: allocate_funds returns a Map of beneficiary to share, but the Map insertion order is arbitrary, so distribute must not depend on processing beneficiaries in a specific orde
 
-<!-- handsoff-issue-764 -->
-- #764: Implement beneficiary claims tracking
+<!-- handsoff-issue-762 -->
+- #762: Implement contract state snapshots
 
-<!-- handsoff-issue-765 -->
-- #765: Add contract pause mechanism
-
-<!-- handsoff-issue-766 -->
-- #766: Implement beneficiary vesting schedule
-
-<!-- handsoff-issue-767 -->
-- #767: Add contract recovery function
+<!-- handsoff-issue-763 -->
+- #763: Add contract upgrade mechanism
