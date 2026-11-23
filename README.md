@@ -417,8 +417,8 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 <!-- handsoff-issue-438 -->
 - #438: allocate_funds returns a Map of beneficiary to share, but the Map insertion order is arbitrary, so distribute must not depend on processing beneficiaries in a specific orde
 
-<!-- handsoff-issue-800 -->
-- #800: Add contract integer overflow protection
+<!-- handsoff-issue-762 -->
+- #762: Implement contract state snapshots
 
-<!-- handsoff-issue-801 -->
-- #801: Implement contract underflow protection
+<!-- handsoff-issue-763 -->
+- #763: Add contract upgrade mechanism
