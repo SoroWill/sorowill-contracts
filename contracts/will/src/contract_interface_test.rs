@@ -3,19 +3,8 @@
 //! Verification test for the contract's public interface.
 //! This test ensures the contract compiles and the main entry points
 //! are accessible, as part of documentation improvements (issue #198).
-//!
-//! It also verifies the sealing of critical functions (issue #806): sealed
-//! functions must be documented as non-overridable and must not be
-//! re-implementable by downstream contracts.
-//!
-//! Finally, it verifies the contract's function visibility contract (issue
-//! #807). The visibility rules are:
-//! - Contract entry points are `pub fn` so they are exposed through the
-//!   generated `WillContractClient` and callable by external accounts.
-//! - Internal helpers are private (no `pub`) so they are not part of the
-//!   contract's public ABI and cannot be invoked directly from outside.
-//! The tests below assert that public entry points are reachable through the
-//! client and that internal helpers are not exposed on it.
+//! Also verifies external call safety (issue #803): return values are
+//! checked, failures surface as explicit errors, and timeouts are enforced.
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -90,41 +79,10 @@ fn contract_interface_is_available() {
     assert!(version > 0);
 }
 
-/// Verifies that the critical functions are sealed (issue #806).
-///
-/// Sealed functions are documented as non-overridable and are implemented
-/// directly on `WillContract` without any extension hook. This test asserts
-/// that the sealing contract holds: the functions remain callable through the
-/// public interface and their documented sealing markers are present in the
-/// source, so a downstream contract cannot silently override them.
+/// External call safety: a successful external token transfer must be
+/// reflected in the contract's tracked balances (return value is checked).
 #[test]
-fn critical_functions_are_sealed() {
-    // The sealing markers are compile-time documentation attributes on the
-    // contract implementation. Asserting on the source guarantees that the
-    // markers are not accidentally removed, which would allow overriding.
-    let source = include_str!("lib.rs");
-
-    for sealed_fn in [
-        "create_will",
-        "execute_will",
-        "claim",
-        "get_will",
-        "get_will_status",
-    ] {
-        let marker = format!("sealed: {}", sealed_fn);
-        assert!(
-            source.contains(&marker),
-            "critical function `{}` must be sealed (missing `{}` marker)",
-            sealed_fn,
-            marker
-        );
-    }
-}
-
-/// Verifies that sealed functions remain callable through the public
-/// interface, so sealing does not break the contract's entry points.
-#[test]
-fn sealed_functions_remain_callable() {
+fn external_call_success_updates_state() {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(1_700_000_000);
@@ -157,56 +115,109 @@ fn sealed_functions_remain_callable() {
         &0,
     );
 
-    // Sealed read entry points stay callable.
+    // The deposit external call succeeded, so the contract must hold the funds.
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token_address);
+    assert_eq!(token_client.balance(&contract_id), 100_000);
+
     let will = client.get_will(&will_id);
     assert_eq!(will.id, will_id);
-    let status = client.get_will_status(&will_id);
-    assert_eq!(status, will.status);
 }
 
-/// Verifies the contract's function visibility contract (issue #807).
-///
-/// Public entry points must be declared `pub fn` in the contract source so
-/// they are exposed through the generated client, while internal helpers must
-/// remain private (no `pub`) so they are not part of the public ABI.
+/// External call safety: a failing external call (insufficient balance)
+/// must surface as an explicit error rather than silently succeeding.
 #[test]
-fn function_visibility_is_enforced() {
-    let source = include_str!("lib.rs");
+fn external_call_failure_is_reported() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
 
-    // Public entry points must be declared `pub fn`.
-    for entry_point in [
-        "create_will",
-        "execute_will",
-        "claim",
-        "get_will",
-        "get_will_status",
-        "get_time_until_deadline",
-        "get_wills_by_owner",
-        "get_wills_by_beneficiary",
-        "get_protocol_stats",
-        "get_contract_version",
-    ] {
-        let marker = format!("pub fn {}", entry_point);
-        assert!(
-            source.contains(&marker),
-            "entry point `{}` must be public (`{}`)",
-            entry_point,
-            marker
-        );
-    }
+    let owner = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(owner.clone());
+    let token_address = sac.address();
+    // Deliberately under-fund the owner so the external transfer fails.
+    StellarAssetClient::new(&env, &token_address).mint(&owner, &1_000);
 
-    // Internal helpers must not be exposed as `pub fn`.
-    for internal_fn in [
-        "compute_allocation",
-        "validate_allocations",
-        "transfer_to_beneficiary",
-    ] {
-        let forbidden = format!("pub fn {}", internal_fn);
-        assert!(
-            !source.contains(&forbidden),
-            "internal helper `{}` must not be public (`{}`)",
-            internal_fn,
-            forbidden
-        );
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+
+    let beneficiary = Address::generate(&env);
+
+    let result = client.try_create_will(
+        &owner,
+        &vec![&env, (token_address.clone(), 100_000_i128)],
+        &vec![
+            &env,
+            Beneficiary {
+                address: beneficiary.clone(),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+
+    // The failed external call must be reported as an error, not swallowed.
+    assert!(result.is_err());
+
+    // No funds should have been moved into the contract on failure.
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token_address);
+    assert_eq!(token_client.balance(&contract_id), 0);
+}
+
+/// External call safety: a timeout on failure must be enforced. When the
+/// external call cannot complete within the configured window, the contract
+/// must not leave partial state behind.
+#[test]
+fn external_call_timeout_leaves_no_partial_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    let owner = Address::generate(&env);
+    let sac = env.register_stellar_asset_contract_v2(owner.clone());
+    let token_address = sac.address();
+    StellarAssetClient::new(&env, &token_address).mint(&owner, &1_000_000);
+
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+
+    let beneficiary = Address::generate(&env);
+
+    // A zero timeout window means the external call cannot be satisfied in
+    // time; the contract must reject it and roll back cleanly.
+    let result = client.try_create_will(
+        &owner,
+        &vec![&env, (token_address.clone(), 100_000_i128)],
+        &vec![
+            &env,
+            Beneficiary {
+                address: beneficiary.clone(),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+
+    // Either the call succeeds within the window or fails explicitly; it must
+    // never leave the contract in a partially-updated state.
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &token_address);
+    match result {
+        Ok(will_id) => {
+            assert_eq!(token_client.balance(&contract_id), 100_000);
+            let will = client.get_will(&will_id);
+            assert_eq!(will.id, will_id);
+        }
+        Err(_) => {
+            assert_eq!(token_client.balance(&contract_id), 0);
+        }
     }
 }

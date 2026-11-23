@@ -68,3 +68,47 @@ fn doc_example_creates_a_single_beneficiary_will() {
     assert_eq!(stored.address, beneficiary);
     assert_eq!(stored.allocation, Allocation::Percentage(10_000));
 }
+
+/// A contract account (a deployed contract's address) is a valid owner.
+///
+/// `Address` in Soroban can wrap either an account or a contract, and both are
+/// legitimate Stellar StrKey addresses. `create_will` must accept a contract
+/// account as the owner rather than rejecting it as "invalid".
+#[test]
+fn create_will_accepts_contract_account_as_owner() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+
+    // A deployed contract address used as the owner.
+    let owner = env.register(WillContract, ());
+    let usdc_id = env
+        .register_stellar_asset_contract_v2(owner.clone())
+        .address();
+    StellarAssetClient::new(&env, &usdc_id).mint(&owner, &1_000_000);
+
+    let beneficiary = Address::generate(&env);
+
+    let will_id = client.create_will(
+        &owner,
+        &vec![&env, (usdc_id.clone(), 1_000_000_i128)],
+        &vec![
+            &env,
+            Beneficiary {
+                address: beneficiary.clone(),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
+        &90,
+        &7,
+        &vec![&env],
+        &1,
+        &None,
+        &0,
+    );
+
+    let will = client.get_will(&will_id);
+    assert_eq!(will.owner, owner);
+    assert_eq!(will.status, WillStatus::Active);
+}

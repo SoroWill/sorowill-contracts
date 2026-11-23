@@ -14,25 +14,14 @@
 //! [`sync_primary_balance`], so the invariant
 //! `balance == balances[primary_token]` holds whenever a will is saved.
 //!
-//! ## State invariants (#805)
+//! # Contract invariants (#771)
 //!
-//! The following constraints must hold for any persisted will:
-//!
-//! 1. **Balance mirror**: `balance == balances[token]` (0 when the primary
-//!    token is absent from the map). See [`is_consistent`].
-//! 2. **Non-negative balances**: every entry in `balances` is `>= 0`.
-//! 3. **Beneficiary integrity**: the beneficiary list is non-empty and the
-//!    per-beneficiary percentages sum to exactly 100.
-//! 4. **Status/deadline coherence**: a will that has not yet been triggered
-//!    must have a deadline strictly in the future relative to the current
-//!    ledger time; a triggered/claimed will is not bound by that deadline.
-//!
-//! [`check_state`] validates all of the above and returns a
-//! [`ConsistencyError`] describing the first violated invariant, so callers
-//! can surface a contract error instead of silently proceeding on corrupt
-//! state.
+//! Beyond the balance mirror, a will must always satisfy a small set of
+//! structural invariants. They are checked by [`check_invariants`] on every
+//! mutating path; a violation surfaces as [`InvariantError`] so a buggy
+//! transition can never be persisted silently.
 
-use soroban_sdk::{Address, Env, Vec};
+use soroban_sdk::{contracterror, Address};
 
 use crate::types::Will;
 
@@ -54,57 +43,38 @@ pub fn is_consistent(will: &Will) -> bool {
     will.balance == will.balances.get(will.token.clone()).unwrap_or(0)
 }
 
-/// Describes which state invariant was violated.
+/// Error returned when a will violates one of its structural invariants.
+#[contracterror]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ConsistencyError {
-    /// `balance` disagrees with `balances[token]`.
-    BalanceMismatch,
-    /// A token balance is negative.
-    NegativeBalance,
-    /// The beneficiary list is empty.
-    NoBeneficiaries,
-    /// Beneficiary percentages do not sum to 100.
-    InvalidAllocation,
-    /// An untriggered will has a deadline that is not in the future.
-    DeadlineInPast,
+#[repr(u32)]
+pub enum InvariantError {
+    /// `balance` disagrees with `balances[primary_token]`.
+    BalanceMismatch = 1,
+    /// A balance entry is negative.
+    NegativeBalance = 2,
+    /// A will with a positive balance has no beneficiary to pay.
+    MissingBeneficiary = 3,
+    /// A will with a positive balance has no deadline to unlock it.
+    MissingDeadline = 4,
 }
 
-/// Validates every state invariant documented at the module level.
-///
-/// Returns `Ok(())` when the will is internally consistent, or the first
-/// [`ConsistencyError`] encountered otherwise. Callers should map an `Err`
-/// to a contract error rather than persisting or acting on the will.
-pub fn check_state(env: &Env, will: &Will) -> Result<(), ConsistencyError> {
-    // 1. Balance mirror.
+/// Verifies every structural invariant of `will`, returning the first
+/// violation found. Callers invoke this before persisting a mutated will so
+/// an inconsistent state can never be written.
+pub fn check_invariants(will: &Will) -> Result<(), InvariantError> {
     if !is_consistent(will) {
-        return Err(ConsistencyError::BalanceMismatch);
+        return Err(InvariantError::BalanceMismatch);
     }
-
-    // 2. Non-negative balances.
-    let tokens: Vec<Address> = will.balances.keys();
-    for token in tokens.iter() {
-        if will.balances.get(token.clone()).unwrap_or(0) < 0 {
-            return Err(ConsistencyError::NegativeBalance);
+    if will.balance < 0 {
+        return Err(InvariantError::NegativeBalance);
+    }
+    if will.balance > 0 {
+        if will.beneficiary.is_none() {
+            return Err(InvariantError::MissingBeneficiary);
+        }
+        if will.deadline == 0 {
+            return Err(InvariantError::MissingDeadline);
         }
     }
-
-    // 3. Beneficiary integrity.
-    if will.beneficiaries.is_empty() {
-        return Err(ConsistencyError::NoBeneficiaries);
-    }
-    let mut total: u32 = 0;
-    for beneficiary in will.beneficiaries.iter() {
-        total = total.saturating_add(beneficiary.percentage);
-    }
-    if total != 100 {
-        return Err(ConsistencyError::InvalidAllocation);
-    }
-
-    // 4. Status/deadline coherence: only untriggered wills are bound by the
-    //    deadline. A triggered or claimed will has already passed it.
-    if !will.triggered && will.deadline <= env.ledger().timestamp() {
-        return Err(ConsistencyError::DeadlineInPast);
-    }
-
     Ok(())
 }
