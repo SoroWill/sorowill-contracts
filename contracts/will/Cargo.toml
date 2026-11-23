@@ -28,3 +28,17 @@ testutils = ["soroban-sdk/testutils"]
 # cargo-fuzz targets under `fuzz/`). Enabling it links `std` and the Soroban
 # test host, so it must never be enabled for a wasm build. See docs/FUZZING.md.
 fuzzing = ["soroban-sdk/testutils", "dep:arbitrary"]
+
+# Gas optimization benchmarks (issue #769).
+#
+# The benchmark suite lives in `tests/gas_benchmarks.rs` and is gated behind
+# this feature so it never runs as part of the default test matrix. It reuses
+# the Soroban test host to measure CPU instructions and memory for every will
+# contract operation, then asserts the documented budgets in
+# `docs/GAS_BENCHMARKS.md`.
+#
+# Run with:
+#   cargo test -p will --features gas-benchmarks --test gas_benchmarks -- --nocapture
+#
+# The feature implies `testutils` because the benchmarks need the test host.
+gas-benchmarks = ["testutils"]
