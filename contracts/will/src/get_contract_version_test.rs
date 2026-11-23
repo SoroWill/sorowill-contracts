@@ -47,6 +47,35 @@ fn test_get_contract_version_matches_constant() {
     assert_eq!(version, expected);
 }
 
+#[test]
+fn test_get_contract_version_is_stable_across_calls() {
+    let (_env, client, _owner) = setup();
+
+    // The version is a compile-time constant, so repeated queries must return
+    // the same value. This guards against accidentally making the query
+    // stateful or dependent on ledger state.
+    let first = client.get_contract_version();
+    let second = client.get_contract_version();
+    assert_eq!(first, second);
+    assert_eq!(first, CONTRACT_VERSION);
+}
+
+#[test]
+fn test_get_contract_version_encoding_is_well_formed() {
+    let (_env, client, _owner) = setup();
+
+    let version = client.get_contract_version();
+    let major = version / 1_000_000;
+    let minor = (version / 1_000) % 1_000;
+    let patch = version % 1_000;
+
+    // Each component must fit within its 3-digit slot so distinct versions
+    // remain distinguishable when encoded as a single u32.
+    assert!(major < 1_000, "major version must fit in 3 digits");
+    assert!(minor < 1_000, "minor version must fit in 3 digits");
+    assert!(patch < 1_000, "patch version must fit in 3 digits");
+}
+
 // NOTE: two tests previously here (`..._with_migrate_will_version_check` and
 // `..._with_mismatched_version_fails_migrate`) asserted that `migrate_will`
 // takes a caller-supplied version and rejects a mismatch against
