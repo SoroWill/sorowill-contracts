@@ -131,6 +131,7 @@ pub enum GuardianQuorumAction {
     TriggerByDeadline,
     EmergencyCheckin,
     AdvanceDays { days: u8 },
+    QueryEmergencyLog { after: Option<u64>, limit: u8 },
     UpdateWeighted {
         guardian_slots: Vec<u8>,
         weights: Vec<u32>,
@@ -973,7 +974,7 @@ pub fn run_guardian_quorum(input: &GuardianQuorumInput) -> Outcome {
                     .map(|_| ())
             }
             GuardianQuorumAction::TriggerByDeadline => {
-                scenario.client.try_trigger_will(&will_id).map(|_| ())
+                scenario.client.try_trigger_will(&will_id, &None).map(|_| ())
             }
             GuardianQuorumAction::EmergencyCheckin => scenario
                 .client
@@ -981,7 +982,29 @@ pub fn run_guardian_quorum(input: &GuardianQuorumInput) -> Outcome {
                 .map(|_| ()),
             GuardianQuorumAction::AdvanceDays { days } => {
                 scenario.advance_days(*days as u64);
-                Ok(Ok(()))
+                Ok(())
+            }
+            GuardianQuorumAction::QueryEmergencyLog { after, limit } => {
+                let page = scenario.client.get_emergency_actions(
+                    &crate::ActionLogScope::Will(will_id),
+                    after,
+                    &u32::from(*limit),
+                );
+                check(
+                    page.len() <= u32::from(*limit).min(crate::storage::MAX_PAGE_SIZE),
+                    input,
+                    "emergency log exceeded the page limit",
+                );
+                let mut previous = after.unwrap_or(0);
+                for entry in page {
+                    check(
+                        previous.checked_add(1) == Some(entry.sequence),
+                        input,
+                        "emergency log skipped or repeated a sequence",
+                    );
+                    previous = entry.sequence;
+                }
+                Ok(())
             }
             GuardianQuorumAction::UpdateWeighted {
                 guardian_slots,
