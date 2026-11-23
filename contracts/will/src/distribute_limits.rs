@@ -1,9 +1,29 @@
-//! Share-rounding helpers for `distribute` (#599).
+//! Share-rounding helpers for `distribute` (#599, #782).
 //!
 //! The release path computes percentage shares as
 //! `floor(remaining * bps / 10_000)`. For a small balance that floor is zero
 //! for any beneficiary with a small allocation, so they would receive nothing
 //! while the final percentage beneficiary absorbed their value.
+//!
+//! ## Dust prevention strategy (#782)
+//!
+//! "Dust" is any leftover value that would otherwise be stranded or swept
+//! into the final percentage beneficiary purely because of integer rounding.
+//! The strategy is:
+//!
+//! 1. **Collect** — every non-final percentage beneficiary is paid at least
+//!    one unit via [`min_one_unit_share`], so rounding dust is never silently
+//!    dropped from a small allocation.
+//! 2. **Distribute** — the final percentage beneficiary absorbs the exact
+//!    remainder (`percentage_remaining`), which is the sum of all rounding
+//!    dust. Because the plan sums exactly to the balance, no tiny leftover
+//!    remains after distribution.
+//! 3. **Bound** — [`min_one_unit_share`] never over-allocates: it leaves one
+//!    unit for each later beneficiary, so the remainder stays non-negative and
+//!    the final absorber always has a well-defined share.
+//!
+//! Together these guarantee that the distributed total equals the balance
+//! exactly, with no stranded dust.
 
 use soroban_sdk::{panic_with_error, Env};
 
@@ -63,6 +83,9 @@ pub(crate) fn checked_div_or_error(env: &Env, numerator: i128, divisor: i128) ->
 /// each later beneficiary, so the plan still sums exactly to the balance. When
 /// the balance is too small to give every beneficiary a unit, the later
 /// beneficiaries receive what is left.
+///
+/// This is the dust-collection step of the dust prevention strategy (#782):
+/// rounding dust is folded into the final absorber rather than stranded.
 pub(crate) fn min_one_unit_share(
     floor_share: i128,
     percentage_remaining: i128,
