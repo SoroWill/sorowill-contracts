@@ -128,3 +128,144 @@ open_count = 0
 accepted_count = 0
 sign_off = ""
 date = ""
+
+# Contract risk assessment framework (issue #816).
+# Data for manual review, not an automated audit or deployment gate.
+# See docs/CONTRACT_RISK_ASSESSMENT.md for the workflow and record template.
+[audit.risk]
+version = 1
+scope = ["contracts/will", "contracts/beneficiary-whitelist", "cross-contract dependencies", "deployment and upgrade configuration"]
+review_triggers = ["before deployment", "contract behavior or storage change", "dependency or token integration change", "new advisory or incident", "accepted-risk review date"]
+
+[[audit.risk.categories]]
+id = "authorization"
+focus = "Owner/admin auth, guardian consent and quorum, replay protection, permissionless entry points"
+checklist_ids = ["AC-01", "AC-02", "AZ-01"]
+
+[[audit.risk.categories]]
+id = "asset-accounting"
+focus = "Token balances, beneficiary allocations, checked arithmetic, rounding, duplicate payouts"
+checklist_ids = ["AR-01", "AR-02"]
+
+[[audit.risk.categories]]
+id = "external-interactions"
+focus = "Token and whitelist trust boundaries, failed transfers, callbacks, return-value validation"
+checklist_ids = ["AZ-02"]
+
+[[audit.risk.categories]]
+id = "lifecycle-and-time"
+focus = "Check-in/grace deadlines, guardian votes, cancellation, terminal states, transaction ordering"
+checklist_ids = ["ST-01"]
+
+[[audit.risk.categories]]
+id = "storage-and-availability"
+focus = "TTL and rent, archived entries, bounded collections, resource limits, payout availability"
+checklist_ids = ["ST-01", "ST-02"]
+
+[[audit.risk.categories]]
+id = "upgrades-and-operations"
+focus = "Wasm provenance, versioning, migration, pause/recovery procedures, privileged key management"
+checklist_ids = ["ST-02", "UV-01", "UV-02"]
+
+[[audit.risk.categories]]
+id = "privacy-and-observability"
+focus = "Public ledger data, claim pre-images, event completeness, monitoring and incident detection"
+checklist_ids = ["EV-01", "EV-02"]
+
+[[audit.risk.categories]]
+id = "dependencies-and-build"
+focus = "SDK and Rust advisories, lockfile changes, reproducible Wasm build, toolchain provenance"
+checklist_ids = []
+
+[audit.risk.methodology]
+steps = [
+    "Record reviewer, date, commit/Wasm hash, deployment/network, assets, entry points, dependencies and exclusions.",
+    "Review every category and linked checklist item; record evidence or a reason for not-applicable.",
+    "Describe each threat as actor, prerequisites, affected operation/asset, failure scenario and consequence.",
+    "Score inherent likelihood and impact without credit for risk-specific controls; record both rationales and uncertainty.",
+    "List existing controls and verify them with source references, negative/boundary tests and applicable fuzz/build/audit results.",
+    "Score current residual likelihood and impact using only verified controls; retain evidence and record unverified assumptions.",
+    "Assign mitigation, owner, deadline, verification criteria and reviewer; keep target residual scores separate from current scores.",
+    "Independently verify fixes, reassess residual risk and record the deployment decision; revisit on any review trigger.",
+]
+uncertainty = "Missing evidence is not a passing result. Record an open evidence gap and use the highest plausible score until investigated."
+
+[audit.risk.scoring]
+formula = "likelihood * impact"
+minimum = 1
+maximum = 25
+impact_rule = "Use the highest applicable consequence across funds, authorization, availability and privacy; do not average impacts."
+severity_rule = "Use the score band; impact 5 has a minimum severity of high. Escalation with written rationale is allowed; do not downgrade the calculated severity."
+informational_rule = "Observations with no credible adverse consequence are informational (unscored), not a zero-score risk."
+
+[[audit.risk.scoring.likelihood]]
+value = 1
+label = "rare"
+criteria = "Requires multiple exceptional prerequisites with no demonstrated feasible path in the assessed scope."
+[[audit.risk.scoring.likelihood]]
+value = 2
+label = "unlikely"
+criteria = "Feasible only under uncommon conditions or substantial privileged access/collusion."
+[[audit.risk.scoring.likelihood]]
+value = 3
+label = "possible"
+criteria = "A plausible path exists under realistic but non-routine conditions."
+[[audit.risk.scoring.likelihood]]
+value = 4
+label = "likely"
+criteria = "A repeatable path exists with common prerequisites and modest effort."
+[[audit.risk.scoring.likelihood]]
+value = 5
+label = "almost-certain"
+criteria = "A normal or permissionless action reliably produces the adverse outcome."
+
+[[audit.risk.scoring.impact]]
+value = 1
+label = "negligible"
+criteria = "Minor inconvenience with no loss of funds, privilege or sensitive information."
+[[audit.risk.scoring.impact]]
+value = 2
+label = "limited"
+criteria = "Localized, recoverable disruption or limited metadata exposure; no unauthorized transfer."
+[[audit.risk.scoring.impact]]
+value = 3
+label = "significant"
+criteria = "Material but bounded asset exposure, sensitive-data exposure or prolonged disruption for a subset of users."
+[[audit.risk.scoring.impact]]
+value = 4
+label = "major"
+criteria = "Unauthorized transfers or irrecoverable loss affecting one or more wills, or broad service disruption."
+[[audit.risk.scoring.impact]]
+value = 5
+label = "catastrophic"
+criteria = "Systemic fund theft/permanent locking, arbitrary contract control or widespread irreversible compromise."
+
+[[audit.risk.scoring.bands]]
+severity = "low"
+min = 1
+max = 4
+[[audit.risk.scoring.bands]]
+severity = "medium"
+min = 5
+max = 9
+[[audit.risk.scoring.bands]]
+severity = "high"
+min = 10
+max = 16
+[[audit.risk.scoring.bands]]
+severity = "critical"
+min = 17
+max = 25
+
+[audit.risk.mitigation]
+strategies = ["avoid", "reduce", "accept"]
+required_fields = ["risk_id", "finding_id", "owner", "strategy", "actions", "due", "verification", "reviewer", "status"]
+closure_evidence = ["fix commit or configuration change", "regression test/reproduction result", "independent reviewer and date", "current residual score and rationale"]
+acceptance_fields = ["justification", "maintainer_sign_off", "review_date", "reassessment_triggers"]
+release_rule = "Follow SECURITY.md: every critical/high finding must be verified before deployment; accepting or relabeling a finding does not bypass this gate."
+residual_rule = "Unresolved high/critical residual risk blocks deployment. Medium/low residual risk requires remediation or explicit, time-bounded maintainer acceptance."
+tracking = "Link risks to audit.finding and audit.remediation by finding ID; use their existing status vocabularies. Resolved findings require independently verified remediation before closure."
+
+# Per-assessment records belong in the release's assessment report (see guide).
+# Keep exploitable findings private per SECURITY.md; do not commit secrets or
+# active vulnerability details here. No risk ratings are asserted by this file.
