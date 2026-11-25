@@ -5,6 +5,9 @@ mainnet deployment and before any change that alters observable behaviour (see
 the staleness note in [`SECURITY-REVIEW.md`](./SECURITY-REVIEW.md)). It tracks
 the audit status, the risks already known, and the mitigation for each.
 
+For risk categories, evidence-based scoring and mitigation planning, use the
+[contract risk assessment framework](CONTRACT_RISK_ASSESSMENT.md).
+
 ## Audit status
 
 | Item | Status |
